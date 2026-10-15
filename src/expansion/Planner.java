@@ -1174,6 +1174,51 @@ public class Planner{
         return null;
     }
 
+    /**
+     * Two mass drivers, the first linked to the second, each with power where it can be had: the first in front of a yard on
+     * its own ground, the second where the units it carries are to land.
+     */
+    public @Nullable Project ferry(Block driver, int ax, int ay, int arot, int bx, int by, int brot){
+        if(late()) return null;
+        Project project = new Project("mass drivers to carry units across");
+        Part sender = new Part(driver, ax, ay, arot, Point2.pack(bx, by)), receiver = new Part(driver, bx, by, brot, null);
+        add(project, Seq.with(sender));
+        add(project, Seq.with(receiver));
+        //each with a node at its side for the power to come in by: a grid is only ever joined through a node
+        Part senderNode = nodeBeside(sender, arot), receiverNode = nodeBeside(receiver, brot);
+        if(senderNode == null) return drop(project, "no room for a node by the mass driver at " + ax + "," + ay);
+        add(project, Seq.with(senderNode));
+        if(receiverNode != null) add(project, Seq.with(receiverNode));
+        //the only way its army has to the other side: worth a place on a grid that is loaded already
+        boolean before = firstOfKind;
+        firstOfKind = true;
+        try{
+            if(!energize(project, groups(Seq.with(sender, senderNode)), powerUse(Seq.with(sender)))){
+                return drop(project, "no power to be had for the mass driver at " + ax + "," + ay);
+            }
+            //the far one may stand where no grid reaches: it is put up all the same
+            if(receiverNode != null) energize(project, groups(Seq.with(receiver, receiverNode)), powerUse(Seq.with(receiver)));
+        }finally{
+            firstOfKind = before;
+        }
+        if(!buildable(project)) return drop(project, "the game does not allow " + refused);
+        return project;
+    }
+
+    /** A power node on open ground right beside a block, off its front and back, or null with no room. */
+    private @Nullable Part nodeBeside(Part block, int rotation){
+        if(power.node == null) return null;
+        int half = block.block.size / 2;
+        for(int side = 0; side < 4; side++){
+            if(side == rotation || side == (rotation + 2) % 4) continue;
+            for(int slide = -half; slide <= half; slide++){
+                int x = block.x + Geometry.d4x(side) * (half + 1) + Geometry.d4y(side) * slide, y = block.y + Geometry.d4y(side) * (half + 1) + Geometry.d4x(side) * slide;
+                if(ground.fits(power.node, x, y, 0)) return new Part(power.node, x, y, 0);
+            }
+        }
+        return null;
+    }
+
     /** How far from home the crushers of a plant are looked for first. */
     static final int plantNear = 40;
 

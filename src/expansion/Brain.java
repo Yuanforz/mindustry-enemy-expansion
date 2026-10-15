@@ -133,6 +133,8 @@ public class Brain{
             //only ever on its own side of the map, never where the map's own scripts do things, and not where its builders would be driven off
             //for the first source of something it can't do without, any ground will do that its builders can work on
             //where it has been told to keep to its home ground, that holds for this too
+            //(a mass driver to carry units across goes up on the other side's ground, where they are to land)
+            if(ferrying) return !scripted.contains(pos);
             return ((needy && territory.creep) || territory.ours(x, y)) && !scripted.contains(pos) && avoid.get(pos, 0f) <= clock
                 && (ground.laying || shunned.get(pos, 0f) <= clock) && workable(x, y);
         };
@@ -279,6 +281,8 @@ public class Brain{
         health.clear();
         assets.clear();
         retiring.clear();
+        ferried.clear();
+        lands.clear();
         siegeSpots.clear();
         director.reset();
         rested.clear();
@@ -858,7 +862,7 @@ public class Brain{
         }
         Unit away = lookout;
         //what can't get to the other side stays as a guard
-        Seq<Unit> out = army.select(unit -> field.contains(unit.id)), home = army.select(unit -> !field.contains(unit.id) && unit != away && reaches(unit.type));
+        Seq<Unit> out = army.select(unit -> field.contains(unit.id)), home = army.select(unit -> !field.contains(unit.id) && unit != away && canAttack(unit));
         //a group out on an attack that has not got any nearer what it went for in a minute, and is not there yet, is stuck: its
         //way out is shut. it comes home, the way is looked into afresh, and that place is let be for a while. (on the fourth
         //sector a group was sent against a turret and stood by its own core for a quarter of an hour)
@@ -1688,6 +1692,33 @@ public class Brain{
         }
     }
 
+    /**
+     * A container of its own to lift into one of its payload loaders, and that loader, where the loader has power and nothing
+     * to fill, and no container goes round the payload blocks near it: a loader fills what is put into it, and a map that
+     * carries ore across water by mass drivers leaves the first container to be put there by hand. (on the sixth sector the
+     * line of tungsten ran into the loader, the drivers had power, and the container stood beside them all game)
+     */
+    private @Nullable Building[] liftJob(Unit unit, TeamData data){
+        if(!(unit instanceof Payloadc pay)) return null;
+        for(Building build : data.buildings){
+            if(!(build instanceof mindustry.world.blocks.payloads.PayloadLoader.PayloadLoaderBuild loader) || build instanceof mindustry.world.blocks.payloads.PayloadUnloader.PayloadUnloaderBuild
+                || loader.getPayload() != null || loader.power == null || loader.power.status < 0.5f) continue;
+            //a container going round already
+            boolean going = false;
+            for(Building other : data.buildings){
+                if(other instanceof mindustry.world.blocks.payloads.PayloadBlock.PayloadBlockBuild<?> blocks && blocks.getPayload() != null && other.within(loader, tilesize * 60f)) going = true;
+            }
+            if(going || data.units.contains(other -> other.controller() instanceof ExpansionAI ai && ai.carryTo == loader) || data.units.contains(other -> other instanceof Payloadc held && held.hasPayload())) continue;
+            Building best = null;
+            for(Building other : data.buildings){
+                if(!(other.block instanceof mindustry.world.blocks.storage.StorageBlock) || other instanceof CoreBuild || !pay.canPickup(other) || !other.within(loader, tilesize * 40f)) continue;
+                if(best == null || other.dst(loader) < best.dst(loader)) best = other;
+            }
+            if(best != null) return new Building[]{best, loader};
+        }
+        return null;
+    }
+
     private void assign(ExpansionAI ai, Unit unit, TeamData data){
         //builders work from this far away
         reach = (unit.type.buildRange - tilesize * 2f) * 0.8f;
@@ -1732,6 +1763,15 @@ public class Brain{
             }else{
                 ai.haul = spare;
             }
+            return;
+        }
+        //a loader the map's mass drivers carry across water, with no container going round: one is lifted into it
+        Building[] lift = liftJob(unit, data);
+        if(lift != null){
+            ai.stopDigging();
+            ai.carry = lift[0];
+            ai.carryTo = lift[1];
+            notes.put("lift", "the " + lift[0].block.name + " at " + lift[0].tileX() + "," + lift[0].tileY() + " is lifted into the " + lift[1].block.name + " at " + lift[1].tileX() + "," + lift[1].tileY());
             return;
         }
         //with nothing to build and nothing to carry: what of its own is hurt is mended first, where that can be done in peace
@@ -3438,6 +3478,21 @@ public class Brain{
             net.things.add(new Net.Thing(Net.Kind.yard, x, y, (Item)null, 0f));
             assets.add(new Asset(Net.Kind.yard, plain.name, x, y, Mathf.mod(build.rotation - first.rotation, 4), false, 1, x, y));
         }
+        //and what a payload unloader empties out of what the map's mass drivers bring it: a source like a drill, whose line runs
+        //home from the duct at its side, and is led on again where it stops short. (on the sixth sector a container of tungsten
+        //stood in the unloader all game, its line ending in the open twenty tiles off, and the core had none of it)
+        for(Building build : team().data().buildings){
+            if(!(build instanceof mindustry.world.blocks.payloads.PayloadUnloader.PayloadUnloaderBuild unloader)) continue;
+            Item item = null;
+            if(unloader.getPayload() instanceof mindustry.world.blocks.payloads.BuildPayload held && held.build.items != null && held.build.items.any()) item = held.build.items.first();
+            for(Building near : build.proximity){
+                if(!(near.block instanceof mindustry.world.blocks.distribution.Duct) || near.team != team() || near.front() == build) continue;
+                Item carried = item != null ? item : near.items != null && near.items.any() ? near.items.first() : null;
+                int x = near.tileX(), y = near.tileY();
+                if(carried == null || net.things.contains(thing -> thing.x == x && thing.y == y)) continue;
+                net.things.add(new Net.Thing(Net.Kind.mine, x, y, carried, 1f));
+            }
+        }
     }
 
     /** Whether one of the blocks an asset was laid out with stands at a place. */
@@ -4255,6 +4310,8 @@ public class Brain{
     private @Nullable Project army(TeamData data, Seq<CoreBuild> targets){
         if(!Options.yards.on()) return null;
         retireStranded();
+        Project ferry = ferry(data);
+        if(ferry != null) return ferry;
         //with as many yards as it may have, the ones it has are made to turn out better units; and where one has no room
         //for that, a better yard is built somewhere else and the old one taken down once the new one is up
         boolean full = net.count(Net.Kind.yard, null) - retiring.size >= data.cores.size * Options.yardsPerCore.get();
@@ -5057,6 +5114,138 @@ public class Brain{
         float cost = 0f;
         for(ItemStack stack : plan.requirements) cost += stack.amount / Math.max(stock.have(stack.item) / (float)Math.max(stock.cap(), 1), 0.05f);
         return cost;
+    }
+
+    /** Whether a mass driver to carry units across is being found a place on the other side's ground. */
+    private boolean ferrying;
+    /** The yards that have a mass driver in front of them carrying their units across, by the yard's position. */
+    private final IntSet ferried = new IntSet();
+
+    /**
+     * A way across for the units of a yard whose kind can't get to the other side's cores over the ground: a payload mass
+     * driver right in front of the yard, which takes each unit as it is made, and another on the ground the other side's
+     * cores stand on, within its range and out of reach of their turrets, where the units land. (on the sixth sector the
+     * other side's core stood on ground no walker or ship could get to, sixteen walkers stood at home all game, and the map
+     * had given it mass drivers to learn from)
+     */
+    private @Nullable Project ferry(TeamData data){
+        Block driver = Blocks.payloadMassDriver;
+        if(!may(driver) || !ready("ferry") || planner.late() || !(driver instanceof mindustry.world.blocks.payloads.PayloadMassDriver mass)) return null;
+        CoreBuild theirs = foe().cores().isEmpty() ? null : foe().cores().first();
+        if(theirs == null) return null;
+        for(Building build : data.buildings){
+            if(!(build instanceof UnitFactory.UnitFactoryBuild yard) || ferried.contains(build.pos())) continue;
+            UnitType type = turnsOut(yard);
+            if(type == null || type.flying || reaches(type)) continue;
+            int reachIn = build.block.size / 2 + 1 + driver.size / 2;
+            int ax = build.tileX() + Geometry.d4x(build.rotation) * reachIn, ay = build.tileY() + Geometry.d4y(build.rotation) * reachIn;
+            if(world.build(ax, ay) instanceof mindustry.world.blocks.payloads.PayloadMassDriver.PayloadDriverBuild){
+                ferried.add(build.pos());
+                continue;
+            }
+            if(!pays(sum(driver.requirements, driver.requirements))){
+                saveFor(driver, sum(driver.requirements, driver.requirements));
+                notes.put("ferry", "saving for two mass drivers");
+                return null;
+            }
+            boolean[] land = region(type, theirs);
+            if(land == null) continue;
+            float range = mass.range - tilesize * 3f;
+            int best = -1;
+            float bestScore = Float.MAX_VALUE;
+            ferrying = true;
+            try{
+                //the ground kept bare in front of the yard for its units to leave by is where they leave by now
+                fronts.clear();
+                frontOf(build.block, build.tileX(), build.tileY(), build.rotation, fronts);
+                for(int i = 0; i < fronts.size; i++) ground.kept.remove(fronts.get(i));
+                if(!ground.fits(driver, ax, ay, build.rotation)){
+                    notes.put("ferry", "no room for a mass driver in front of the " + build.block.name + " at " + build.tileX() + "," + build.tileY());
+                    continue;
+                }
+                int width = world.width();
+                for(int i = 0; i < land.length; i += 1){
+                    if(!land[i]) continue;
+                    int x = i % width, y = i / width;
+                    if((x & 1) == 1 || (y & 1) == 1 || Mathf.dst(x, y, ax, ay) * tilesize > range || danger(x * tilesize, y * tilesize, tilesize * 4f) > 0) continue;
+                    //as near the drivers' own side as it lands safely: the further in, the sooner it is found and shot
+                    float score = Mathf.dst(x, y, ax, ay);
+                    if(score >= bestScore || !ground.fits(driver, x, y, 0)) continue;
+                    best = i;
+                    bestScore = score;
+                }
+                if(best == -1){
+                    notes.put("ferry", "nowhere on the other side's ground within reach of a mass driver in front of the " + build.block.name);
+                    continue;
+                }
+                int bx = best % width, by = best / width;
+                int facing = Mathf.mod(Math.round(Angles.angle(bx, by, theirs.tileX(), theirs.tileY()) / 90f), 4);
+                Project project = planner.ferry(driver, ax, ay, build.rotation, bx, by, facing);
+                if(project == null){
+                    notes.put("ferry", planner.note);
+                    retry.put("ferry", clock + 60f * 60f);
+                    return null;
+                }
+                ferried.add(build.pos());
+                notes.put("ferry", "a mass driver in front of the " + build.block.name + " at " + build.tileX() + "," + build.tileY() + " carries its units to " + bx + "," + by);
+                return done("ferry", project);
+            }finally{
+                ferrying = false;
+                syncGround();
+            }
+        }
+        return null;
+    }
+
+    /** Whether a unit can get to the other side's cores: its kind can from home, or it stands on ground that leads there, as one carried across does. */
+    boolean canAttack(Unit unit){
+        if(reaches(unit.type)) return true;
+        CoreBuild theirs = foe().cores().isEmpty() ? null : foe().cores().first();
+        if(theirs == null || unit.type.flying) return true;
+        int key = unit.type.pathCostId;
+        if(clock - landClock > 60f * 60f){
+            lands.clear();
+            landClock = clock;
+        }
+        boolean[] land = lands.get(key);
+        if(land == null){
+            land = region(unit.type, theirs);
+            if(land == null) land = new boolean[0];
+            lands.put(key, land);
+        }
+        int at = unit.tileX() + unit.tileY() * world.width();
+        return at >= 0 && at < land.length && land[at];
+    }
+
+    private final IntMap<boolean[]> lands = new IntMap<>();
+    private float landClock = -1e9f;
+
+    /** The ground a kind of unit can get over to one of the other side's cores, by tile, or null with none. */
+    private @Nullable boolean[] region(UnitType type, CoreBuild core){
+        mindustry.ai.Pathfinder.PathCost cost = type.pathCost != null ? type.pathCost : mindustry.ai.ControlPathfinder.costTypes.get(type.pathCostId);
+        int width = world.width(), height = world.height(), side = team().id;
+        boolean[] seen = new boolean[width * height];
+        IntQueue queue = new IntQueue();
+        int offset = -(core.block.size - 1) / 2 - 1, across = core.block.size + 2;
+        for(int dx = 0; dx < across; dx++){
+            for(int dy = 0; dy < across; dy++){
+                int x = core.tileX() + offset + dx, y = core.tileY() + offset + dy;
+                if(x < 0 || y < 0 || x >= width || y >= height || seen[x + y * width] || cost.getCost(side, pathfinder.get(x, y)) < 0) continue;
+                seen[x + y * width] = true;
+                queue.addLast(x + y * width);
+            }
+        }
+        if(queue.isEmpty()) return null;
+        while(!queue.isEmpty()){
+            int at = queue.removeFirst(), ax = at % width, ay = at / width;
+            for(int d = 0; d < 4; d++){
+                int x = ax + Geometry.d4x(d), y = ay + Geometry.d4y(d);
+                if(x < 0 || y < 0 || x >= width || y >= height || seen[x + y * width] || !world.isInMapArea(x, y) || cost.getCost(side, pathfinder.get(x, y)) < 0) continue;
+                seen[x + y * width] = true;
+                queue.addLast(x + y * width);
+            }
+        }
+        return seen;
     }
 
     private final IntIntMap reachNow = new IntIntMap();

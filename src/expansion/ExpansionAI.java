@@ -40,6 +40,12 @@ public class ExpansionAI extends BuilderAI{
      */
     public final arc.struct.Queue<Order> more = new arc.struct.Queue<>();
     public @Nullable Haul haul;
+    /**
+     * A block to pick up and set down into something that takes blocks, such as a container into a loader that the map's
+     * mass drivers carry across water: the builder can lift a block of its size, and nothing else would put it there.
+     */
+    public @Nullable Building carry, carryTo;
+    private float carryAge;
 
     /**
      * Spare output being carried to a core. That is all the enemy carries by hand: on this planet nothing
@@ -105,7 +111,7 @@ public class ExpansionAI extends BuilderAI{
 
     /** Whether it has nothing it was told to do. Mining by hand does not count: that is dropped for any real work. */
     public boolean idle(){
-        return order == null && haul == null && scout == null && unit.buildPlan() == null;
+        return order == null && haul == null && scout == null && carry == null && unit.buildPlan() == null;
     }
 
     /** Hands back whatever this builder was doing. */
@@ -114,6 +120,8 @@ public class ExpansionAI extends BuilderAI{
         haul = null;
         scout = null;
         repair = null;
+        if(carry != null && unit instanceof Payloadc pay && pay.hasPayload()) pay.dropLastPayload();
+        carry = carryTo = null;
         stopDigging();
     }
 
@@ -150,6 +158,8 @@ public class ExpansionAI extends BuilderAI{
             updateOrder();
         }else if(haul != null){
             updateHaul();
+        }else if(carry != null){
+            updateCarry();
         }else if(scout != null){
             //there when the place is well within what it sees; given up if it can't be got to
             if(unit.within(scout, tilesize * 6f) || (scoutAge += Time.delta) > 60f * 90f){
@@ -163,6 +173,36 @@ public class ExpansionAI extends BuilderAI{
         }else if(dig != null){
             updateDig();
         }
+    }
+
+    private void updateCarry(){
+        Payloadc pay = unit instanceof Payloadc p ? p : null;
+        boolean holding = pay != null && pay.hasPayload();
+        if(pay == null || carryTo == null || !carryTo.isValid() || (carryAge += Time.delta) > haulPatience * 2f || (!holding && (carry == null || !carry.isValid()))){
+            if(holding) pay.dropLastPayload();
+            carry = carryTo = null;
+            carryAge = 0f;
+            return;
+        }
+        if(!holding){
+            if(!unit.within(carry, tilesize * 1.5f)){
+                travel(carry, tilesize);
+                return;
+            }
+            if(!pay.canPickup(carry)){
+                carry = carryTo = null;
+                return;
+            }
+            Call.pickedBuildPayload(unit, carry, true);
+            return;
+        }
+        if(!unit.within(carryTo, tilesize * 0.8f)){
+            travel(carryTo, tilesize * 0.5f);
+            return;
+        }
+        pay.dropLastPayload();
+        carry = carryTo = null;
+        carryAge = 0f;
     }
 
     private void updateRepair(){
