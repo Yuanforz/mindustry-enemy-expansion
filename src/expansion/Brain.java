@@ -3467,7 +3467,11 @@ public class Brain{
 
     /** A line the player has cut is led on to a core again before anything new is begun. */
     private @Nullable Project mend(){
-        for(Net.Thing source : net.things){
+        //the line of an item it has no other source of first: one line is looked into a round, and with raids cutting a
+        //dozen, the one line of tungsten on the fifth sector waited behind the beryllium lines for good
+        Seq<Net.Thing> order = net.things.copy();
+        order.sort(thing -> thing.item == null ? 2 : net.things.count(other -> (other.kind == Net.Kind.mine || other.kind == Net.Kind.maker) && other.item == thing.item && net.whole(other)) == 0 ? 0 : 1);
+        for(Net.Thing source : order){
             if((source.kind != Net.Kind.mine && source.kind != Net.Kind.maker) || source.item == null || detached(source)) continue;
             String key = "mend:" + source.x + "," + source.y;
             if(net.whole(source)){
@@ -3475,7 +3479,16 @@ public class Brain{
                 continue;
             }
             if(!ready(key) || planner.late()) continue;
-            Project mended = done(key, planner.mend(source, laid));
+            //and for that one, the whole map is searched for a way, as for a first source
+            boolean sole = !net.things.contains(other -> other != source && (other.kind == Net.Kind.mine || other.kind == Net.Kind.maker) && other.item == source.item && net.whole(other));
+            boolean before = planner.needy;
+            planner.needy = before || sole;
+            Project mended;
+            try{
+                mended = done(key, planner.mend(source, laid));
+            }finally{
+                planner.needy = before;
+            }
             if(mended != null && clock - tidiedAt < 60f * 90f){
                 //a line cut right after lines were put in order: putting them in order is what cut it. that waits a good while
                 tidyAfter = clock + 60f * 60f * 10f;
@@ -3564,6 +3577,17 @@ public class Brain{
             if(yard.currentPlan == -1 && first.config != null) build.configure(first.config);
             net.things.add(new Net.Thing(Net.Kind.yard, x, y, (Item)null, 0f));
             assets.add(new Asset(Net.Kind.yard, plain.name, x, y, Mathf.mod(build.rotation - first.rotation, 4), false, 1, x, y));
+        }
+        //and a drill on the floor whose line was given up and forgotten while the drill stood: a source again, one with no
+        //line, to be led home like any other. (on the fifth sector the one tungsten drill stood cut off for half an hour,
+        //forgotten, with its patch taken up by itself, and none of its tungsten ever came home)
+        for(int i = 0; i < assets.size; i++){
+            Asset asset = assets.get(i);
+            if(asset.kind != Net.Kind.mine || !(world.build(asset.x, asset.y) instanceof Drill.DrillBuild drill) || drill.team != team() || drill.tileX() != asset.x || drill.tileY() != asset.y) continue;
+            if(drill.dominantItem == null || net.things.contains(thing -> thing.x == asset.thingX && thing.y == asset.thingY)) continue;
+            float rate = 60f / ((Drill)drill.block).getDrillTime(drill.dominantItem) * drill.dominantItems;
+            net.things.add(new Net.Thing(Net.Kind.mine, asset.x, asset.y, drill.dominantItem, rate));
+            assets.set(i, new Asset(asset.kind, asset.blueprint, asset.x, asset.y, asset.turns, asset.mirrored, asset.copies, asset.x, asset.y));
         }
         //and what a payload unloader empties out of what the map's mass drivers bring it: a source like a drill, whose line runs
         //home from the duct at its side, and is led on again where it stops short. (on the sixth sector a container of tungsten
@@ -4409,11 +4433,15 @@ public class Brain{
         //with a couple of yards and its units near what it may have, better units before more of them: the cap does not
         //count what a unit can do. (the yards only ever got a refabricator once there were eight of them, and no sector saw
         //a unit of the second tier)
+        Building old = null;
         if(!full && Options.refit.on() && net.count(Net.Kind.yard, null) >= 2 && mostOfAKind(data) >= unitCap(data) * 0.6f){
             Project added = additions(data);
             if(added != null || saving) return added;
+            //with no room by any of them for what would make their units better, a better yard goes up where there is room,
+            //and the old one comes down once that stands. (on the fifth sector the refabricator could not be led its tungsten
+            //at the one yard it was tried on, round after round, with the tungsten coming home)
+            old = outdatedYard(data);
         }
-        Building old = null;
         if(full){
             if(!Options.refit.on()) return null;
             Project added = additions(data);
@@ -4428,7 +4456,7 @@ public class Brain{
             //its turrets were waiting for)
             return power(data);
         }
-        Building hungry = full ? null : starving(Net.Kind.yard, null);
+        Building hungry = full || old != null ? null : starving(Net.Kind.yard, null);
         if(hungry != null){
             notes.put("yard", "its " + hungry.block.name + " at " + hungry.tileX() + "," + hungry.tileY() + " is short of " + shortOf(hungry).name + ": more of that first");
             Project relief = relieve(hungry, data, 0);

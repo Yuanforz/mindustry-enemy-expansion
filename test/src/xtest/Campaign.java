@@ -444,6 +444,17 @@ public class Campaign{
                     minute, holds(me), rules.objectives.all.count(MapObjective::isCompleted), rules.objectives.all.size, task(rules), built, buildingsLost, made, lost, killed,
                     enemy.cores().size, rules.waves ? ", wave " + Vars.state.wave : "", brain.director.posture + (brain.homeShort ? " homeShort" : "") + (brain.turretsHold ? "" : " turretsShort") + armyAt(me), researched.size));
                 if(System.getProperty("xp.zones") != null && (minute % every == 0 || result != null)) System.out.print(brain.atlas.describe());
+                if(System.getProperty("xp.sources") != null){
+                    //each source of the items named that its plan knows of: what it is, where, and whether its line runs whole
+                    for(String name : System.getProperty("xp.sources").split(",")){
+                        StringBuilder out = new StringBuilder("           sources " + name + ":");
+                        for(var thing : brain.net.things){
+                            if(thing.item == null || !thing.item.name.equals(name)) continue;
+                            out.append(' ').append(thing.kind).append('@').append(thing.x).append(',').append(thing.y).append(brain.net.whole(thing) ? "" : "(cut)");
+                        }
+                        System.out.println(out);
+                    }
+                }
                 if(System.getProperty("xp.notes") != null){
                     //what it last said about the goals named
                     for(String key : System.getProperty("xp.notes").split(",")) System.out.println("           note " + key + ": " + brain.note(key));

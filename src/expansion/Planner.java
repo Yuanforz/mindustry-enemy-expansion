@@ -1025,11 +1025,14 @@ public class Planner{
             int looked = 0;
             Lines.Line line = null;
             int[] from = null;
+            boolean wasNeedy = needy;
+            needy = true;
             for(int i = 0; i < Math.min(starts.size, 6) && line == null && !late(); i++){
                 from = starts.get(i);
                 line = routeHome(from[0], from[1], own, joins);
                 looked += lines.lastLooked;
             }
+            needy = wasNeedy;
             if(line == null) return drop(project, "still no way to a core from " + loose.x + "," + loose.y + " (" + Math.min(starts.size, 6) + " ways out tried, looked at " + looked + " places)");
             add(project, line.parts);
             project.removals.addAll(line.removals);
