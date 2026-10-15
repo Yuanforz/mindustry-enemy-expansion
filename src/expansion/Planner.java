@@ -214,9 +214,11 @@ public class Planner{
         lines.budget = budget * 4;
         lines.allowance = Math.max(allowance, lines.budget);
         lines.deadline = Math.max(limit, Clock.now()) + (long)(timeLimit * 2e6f);
+        lines.chains = true;
         try{
             return lines.route(x, y, feeders, Lines.Goal.core(joins));
         }finally{
+            lines.chains = false;
             lines.budget = budget;
             lines.allowance = Math.max(allowance - lines.lastLooked, 0);
             lines.deadline = limit;

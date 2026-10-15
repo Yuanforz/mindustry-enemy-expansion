@@ -64,6 +64,8 @@ public class Lines{
     public Block duct;
     /** Left null where the enemy may not build bridges. */
     public @Nullable Block bridge;
+    /** Whether bridges may hand on to one another in a chain, for a line it can't do without. */
+    public boolean chains;
     /** What a line is branched with. Left null where the enemy may not build it. */
     public @Nullable Block router;
     /**
@@ -262,6 +264,22 @@ public class Lines{
             if(reached(x, y, d, fx, fy, goal)) return line(current, fx, fy, goal);
 
             float base = cost[current];
+            //a bridge just landed on hands on to the next one straight on: a chain of them crosses lines laid side by side with a
+            //tile between, which bridges that each have to land on a duct before the next never can. only for a line it can't do
+            //without: the bridges cost fifteen times what duct does, and let into every line they were laid all over every base
+            //(on the fifth sector the only tungsten drill stood fenced in by its base's lines, with a way home over them)
+            if(chains && jump[current] > 0 && bridge != null){
+                int range = ((DirectionBridge)bridge).range;
+                for(int length = 2; length <= range; length++){
+                    int ex = x + Geometry.d4x(d) * length, ey = y + Geometry.d4y(d) * length;
+                    int mx = ex - Geometry.d4x(d), my = ey - Geometry.d4y(d);
+                    if(ground.look(mx, my) && ground.block == bridge) break;
+                    if(ex < 0 || ey < 0 || ex >= width || ey >= height) break;
+                    if(!ground.open(ex, ey) || fed(ex, ey, d, noTiles) || bridgeClash(ex, ey, d, true, x, y)) continue;
+                    if(usedStamp[ex + ey * width] == generation && onPath(current, ex, ey)) continue;
+                    visit(state(ex, ey, d), current, base + bridgeCost + length, length, goal);
+                }
+            }
             if(fx < 0 || fy < 0 || fx >= width || fy >= height) continue;
             look(fx, fy);
             int at = fx + fy * width, back = (d + 2) % 4;
@@ -613,9 +631,10 @@ public class Lines{
         for(int i = 0; i < line.parts.size; i++){
             Part part = line.parts.get(i);
             if(part.block != bridge) continue;
-            //the bridge it hands on to, if it is the first of a pair: the next part of the line
+            //the bridge it hands on to, if it is the first of a pair: the next part of the line. in a chain, one that lands hands
+            //on to the next as well
             Part partner = i + 1 < line.parts.size && line.parts.get(i + 1).block == bridge && line.parts.get(i + 1).rotation == part.rotation
-                && (i == 0 || line.parts.get(i - 1).block != bridge || !pair(line.parts.get(i - 1), part)) ? line.parts.get(i + 1) : null;
+                && (chains || i == 0 || line.parts.get(i - 1).block != bridge || !pair(line.parts.get(i - 1), part)) ? line.parts.get(i + 1) : null;
             int dx = Geometry.d4x(part.rotation), dy = Geometry.d4y(part.rotation);
             for(int step = 1; step <= range; step++){
                 int x = part.x + dx * step, y = part.y + dy * step;
@@ -713,11 +732,14 @@ public class Lines{
         out.endY = endY;
         out.joins = !goal.port && !(world.build(endX, endY) instanceof CoreBlock.CoreBuild) && !(goal.into != null && goal.into.contains(Point2.pack(endX, endY)));
 
+        IntSet placed = new IntSet();
         for(int state = last; state != -1; state = parent[state]){
             int tile = state / 4, d = state % 4, x = tile % width, y = tile / width;
             if(jump[state] > 0){
-                out.parts.add(new Part(bridge, x, y, d));
-                out.parts.add(new Part(bridge, x - Geometry.d4x(d) * jump[state], y - Geometry.d4y(d) * jump[state], d));
+                //(in a chain, where one lands is where the next starts: that bridge is put down once)
+                if(placed.add(Point2.pack(x, y))) out.parts.add(new Part(bridge, x, y, d));
+                int ix = x - Geometry.d4x(d) * jump[state], iy = y - Geometry.d4y(d) * jump[state];
+                if(placed.add(Point2.pack(ix, iy))) out.parts.add(new Part(bridge, ix, iy, d));
             }else{
                 out.parts.add(new Part(duct, x, y, d));
                 Building wall = world.build(x, y);
