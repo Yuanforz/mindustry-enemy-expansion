@@ -802,14 +802,34 @@ public class Brain{
             return;
         }
 
-        //the enemy at the gates comes before any attack of its own
-        Unit raider = null;
-        float nearest = Float.MAX_VALUE;
-        for(CoreBuild core : data.cores){
-            Unit close = Units.closestEnemy(team(), core.x, core.y, tilesize * 45f, unit -> !unit.spawnedByCore && world.isInMapArea(unit.tileX(), unit.tileY()));
-            if(close != null && close.dst2(core) < nearest){
-                raider = close;
-                nearest = close.dst2(core);
+        //the enemy at the gates comes before any attack of its own: by its cores, or at anything of its own out to its furthest
+        //drills. (with only what came near a core counted, the fifth sector's outlying drills were taken one by one while
+        //nineteen tanks stood at home)
+        Seq<Unit> raiders = new Seq<>();
+        for(CoreBuild core : data.cores) Units.nearbyEnemies(team(), core.x, core.y, tilesize * 45f, unit -> {
+            if(!unit.spawnedByCore && world.isInMapArea(unit.tileX(), unit.tileY()) && !raiders.contains(unit)) raiders.add(unit);
+        });
+        for(TeamData other : state.teams.active){
+            if(other.team == team() || other.team == Team.derelict) continue;
+            for(Unit unit : other.units){
+                if(unit.spawnedByCore || !fights(unit) || raiders.contains(unit) || !world.isInMapArea(unit.tileX(), unit.tileY()) || unit.inFogTo(team())) continue;
+                CoreBuild near = Geometry.findClosest(unit.x, unit.y, data.cores);
+                if(near == null || !near.within(unit, tilesize * 100f)) continue;
+                if(indexer.findTile(team(), unit.x, unit.y, tilesize * 12f, build -> !(build instanceof ConstructBuild)) != null) raiders.add(unit);
+            }
+        }
+        //what is near a core holds the attack up, and what is out at its drills does too where its turrets do not hold home by
+        //themselves; else those are for the units at home alone. (holding every attack up for raids on outlying drills, the
+        //third sector's ships hardly went out; letting them go out, the fifth sector's base fell while its tanks were away)
+        Unit raider = raiders.min(unit -> !turretsHold || data.cores.contains(core -> core.within(unit, tilesize * 45f)), unit -> {
+            CoreBuild near = Geometry.findClosest(unit.x, unit.y, data.cores);
+            return near == null ? 0f : unit.dst2(near);
+        });
+        if(raider == null && raiders.any()){
+            for(Unit unit : army){
+                if(field.contains(unit.id)) continue;
+                Unit mine = raiders.min(other -> other.checkTarget(unit.type.targetAir, unit.type.targetGround), other -> other.dst2(unit));
+                if(mine != null) send(unit, mine);
             }
         }
         //what is at home turns on them. the group out on an attack keeps on, unless home is in real danger (it is losing
@@ -821,10 +841,6 @@ public class Brain{
             boolean dire = director.losses >= Director.pressure || data.cores.contains(core -> core.health < core.maxHealth * 0.6f);
             //each on the nearest raider it can hit: walkers fire at nothing in the air, and all of them sent after the one
             //nearest, a ship, stood firing at it while the walkers of the same wave took the core
-            Seq<Unit> raiders = new Seq<>();
-            for(CoreBuild core : data.cores) Units.nearbyEnemies(team(), core.x, core.y, tilesize * 45f, unit -> {
-                if(!unit.spawnedByCore && world.isInMapArea(unit.tileX(), unit.tileY()) && !raiders.contains(unit)) raiders.add(unit);
-            });
             for(Unit unit : army){
                 if(!dire && field.contains(unit.id)) continue;
                 Unit mine = raiders.min(other -> other.checkTarget(unit.type.targetAir, unit.type.targetGround), other -> other.dst2(unit));
@@ -894,11 +910,17 @@ public class Brain{
         }else{
             closestAt = -1f;
         }
-        //the quick ones at home stand round the core, each in a place of its own, and not in one heap
-        for(Unit unit : army){
-            if(raider != null || field.contains(unit.id) || unit == away || base == null || !(unit.controller() instanceof FighterAI ai)) continue;
-            float angle = (unit.id * 137.5f) % 360f, far = tilesize * (8f + unit.id % 5 * 2f);
-            ai.standAt(base.x + Angles.trnsx(angle, far), base.y + Angles.trnsy(angle, far));
+        //those at home stand where it has been losing things lately, each in a place of its own and not in one heap; with
+        //nothing lost, round the core. (standing round the core, they were nowhere near the drills the raiders went for)
+        if(raider == null && raiders.isEmpty() && base != null){
+            Vec2 at = guardPoint(base);
+            for(Unit unit : army){
+                if(field.contains(unit.id) || unit == away) continue;
+                float angle = (unit.id * 137.5f) % 360f, far = tilesize * (6f + unit.id % 5 * 2f);
+                float gx = at.x + Angles.trnsx(angle, far), gy = at.y + Angles.trnsy(angle, far);
+                if(unit.controller() instanceof FighterAI ai) ai.standAt(gx, gy);
+                else if(unit.controller() instanceof CommandAI ai && (ai.targetPos == null || !ai.targetPos.within(gx, gy, tilesize * 8f)) && !unit.within(gx, gy, tilesize * 8f)) ai.commandPosition(Tmp.v1.set(gx, gy));
+            }
         }
         //a group that is mostly gone comes back, and the next has to be stronger
         //(but not with what it went for about to fall: that is finished first)
@@ -6315,6 +6337,27 @@ public class Brain{
         float worth = cellLost.get(cell, 0f);
         return worth <= 0f ? 0f : worth * (float)Math.pow(0.5, (clock - cellLostAt.get(cell, clock)) / (60f * 90f));
     }
+
+    /**
+     * Where its units at home stand: the stretch of ground within a hundred tiles of its core where the most has been lost
+     * lately, by what it cost, if that is more than a little; else by the core.
+     */
+    private Vec2 guardPoint(CoreBuild base){
+        int bx = base.tileX() / 8, by = base.tileY() / 8, best = -1;
+        float most = 150f;
+        for(var entry : cellLost){
+            int cx = Point2.x(entry.key), cy = Point2.y(entry.key);
+            if(Math.abs(cx - bx) > 12 || Math.abs(cy - by) > 12) continue;
+            float worth = lostNear(cx, cy, 1);
+            if(worth > most){
+                most = worth;
+                best = entry.key;
+            }
+        }
+        return best == -1 ? guardAt.set(base.x, base.y) : guardAt.set((Point2.x(best) * 8 + 4) * tilesize, (Point2.y(best) * 8 + 4) * tilesize);
+    }
+
+    private final Vec2 guardAt = new Vec2();
 
     /** What it has lost lately within so many stretches of one. */
     private float lostNear(int cx, int cy, int around){
