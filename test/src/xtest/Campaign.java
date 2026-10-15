@@ -257,6 +257,11 @@ public class Campaign{
             enemy.rules().infiniteResources = true;
             enemy.rules().fillItems = true;
         }
+        //(a question asked of a sector, not a way to play it: whether it is what its side has that it is short of)
+        if(System.getProperty("xp.rich") != null){
+            me.rules().infiniteResources = true;
+            me.rules().fillItems = true;
+        }
         enemy.rules().buildSpeedMultiplier *= planet.enemyBuildSpeedMultiplier;
         enemy.rules().unitFactoryActivationDelay = Math.max(enemy.rules().unitFactoryActivationDelay, planet.enemyFactoryActivationDelay);
         if(preset.captureWave > 0) rules.winWave = preset.captureWave;
@@ -389,6 +394,29 @@ public class Campaign{
                     }
                     System.out.println(out);
                 }
+            }
+            if(System.getProperty("xp.rich") != null && me.core() != null){
+                CoreBuild core = me.core();
+                for(Item item : Vars.content.items()) if(item.buildable || item == Items.sand) core.items.set(item, core.storageCapacity);
+            }
+            if(System.getProperty("xp.corewatch") != null && second % 5 == 0 && me.core() != null && me.core().health < me.core().maxHealth * 0.95f){
+                //while its core is being hurt: who is at it, and where its own fighting units are and what they are about
+                CoreBuild core = me.core();
+                StringBuilder out = new StringBuilder(String.format("    core t=%d hp%d/%d:", second, (int)core.health, (int)core.maxHealth));
+                for(Unit unit : enemy.data().units){
+                    if(unit.spawnedByCore || !unit.within(core, 50f * 8f)) continue;
+                    Teamc aim = unit.mounts.length > 0 ? unit.mounts[0].target : null;
+                    out.append(String.format(" %s@%d,%d hp%d%s", unit.type.name, unit.tileX(), unit.tileY(), (int)unit.health, aim instanceof Building b ? ">" + b.block.name : aim instanceof Unit u ? ">" + u.type.name : ""));
+                }
+                out.append(" || own:");
+                for(Unit unit : me.data().units){
+                    if(unit.spawnedByCore || !unit.type.canAttack) continue;
+                    Teamc aim = unit.mounts.length > 0 ? unit.mounts[0].target : null;
+                    String doing = unit.controller() instanceof FighterAI fa ? (fa.posted ? " post" + (int)(fa.post.x / 8) + "," + (int)(fa.post.y / 8) : "") + (fa.goal instanceof Building g ? " goal" + g.block.name : fa.goal instanceof Unit u ? " goal" + u.type.name : "")
+                        : unit.controller() instanceof mindustry.ai.types.CommandAI ca ? (ca.attackTarget instanceof Unit u ? " cmd>" + u.type.name : ca.attackTarget instanceof Building b ? " cmd>" + b.block.name : ca.targetPos != null ? " cmd@" + (int)(ca.targetPos.x / 8) + "," + (int)(ca.targetPos.y / 8) : "") : "";
+                    out.append(String.format(" %s@%d,%d hp%d%s%s", unit.type.name, unit.tileX(), unit.tileY(), (int)unit.health, doing, aim instanceof Unit u ? ">" + u.type.name : aim instanceof Building b ? ">" + b.block.name : ""));
+                }
+                System.out.println(out);
             }
             if(second % 60 == 0 && System.getProperty("xp.saves") != null && ("," + System.getProperty("xp.saves") + ",").contains("," + (second / 60) + ",")){
                 //a save of how it stands, to be looked at in the game itself
