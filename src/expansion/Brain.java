@@ -1249,6 +1249,65 @@ public class Brain{
         return out;
     }
 
+    /**
+     * A way for a unit to a place that keeps a few tiles out of reach of every turret of the other side, as places to pass
+     * through, nearest first; null where the straight way is clear already, or where there is no such way. (going straight
+     * from one breach taken to the next, ten ships crossed the reach of three others and were two in three seconds)
+     */
+    public @Nullable Seq<Vec2> safeWay(Unit unit, float tx, float ty){
+        int cell = 4, width = world.width() / cell + 1, height = world.height() / cell + 1;
+        Seq<Building> turrets = new Seq<>();
+        for(TeamData other : state.teams.active){
+            if(other.team == team() || other.team == Team.derelict) continue;
+            for(Building build : other.buildings) if(build instanceof Turret.TurretBuild && ((Turret)build.block).targetGround) turrets.add(build);
+        }
+        if(turrets.isEmpty()) return null;
+        boolean[] shut = new boolean[width * height];
+        for(int cx = 0; cx < width; cx++){
+            for(int cy = 0; cy < height; cy++){
+                float wx = (cx * cell + cell / 2f) * tilesize, wy = (cy * cell + cell / 2f) * tilesize;
+                Tile tile = world.tileWorld(wx, wy);
+                boolean blocked = tile == null || (!unit.type.flying && tile.solid() && tile.build == null);
+                for(int i = 0; i < turrets.size && !blocked; i++){
+                    Building t = turrets.get(i);
+                    blocked = t.within(wx, wy, ((Turret)t.block).range + tilesize * siegeMargin);
+                }
+                shut[cx + cy * width] = blocked;
+            }
+        }
+        //clear already: straight there
+        boolean straight = true;
+        float length = Mathf.dst(unit.x, unit.y, tx, ty);
+        for(float along = 0f; along < length && straight; along += tilesize * cell){
+            float px = Mathf.lerp(unit.x, tx, along / length), py = Mathf.lerp(unit.y, ty, along / length);
+            int c = Mathf.clamp((int)(px / tilesize / cell), 0, width - 1) + Mathf.clamp((int)(py / tilesize / cell), 0, height - 1) * width;
+            straight = !shut[c];
+        }
+        if(straight) return null;
+        int start = Mathf.clamp((int)(unit.x / tilesize / cell), 0, width - 1) + Mathf.clamp((int)(unit.y / tilesize / cell), 0, height - 1) * width;
+        int goal = Mathf.clamp((int)(tx / tilesize / cell), 0, width - 1) + Mathf.clamp((int)(ty / tilesize / cell), 0, height - 1) * width;
+        int[] from = new int[width * height];
+        java.util.Arrays.fill(from, -1);
+        from[start] = start;
+        IntQueue queue = new IntQueue();
+        queue.addLast(start);
+        while(!queue.isEmpty() && from[goal] == -1){
+            int at = queue.removeFirst(), ax = at % width, ay = at / width;
+            for(int d = 0; d < 8; d++){
+                int x = ax + Geometry.d8(d).x, y = ay + Geometry.d8(d).y, next = x + y * width;
+                if(x < 0 || y < 0 || x >= width || y >= height || from[next] != -1 || (shut[next] && next != goal)) continue;
+                from[next] = at;
+                queue.addLast(next);
+            }
+        }
+        if(from[goal] == -1) return null;
+        Seq<Vec2> out = new Seq<>();
+        for(int at = goal; at != start; at = from[at]) out.add(new Vec2((at % width * cell + cell / 2f) * tilesize, (at / width * cell + cell / 2f) * tilesize));
+        out.reverse();
+        out.set(out.size - 1, new Vec2(tx, ty));
+        return out;
+    }
+
     /** How far out of the reach of other turrets, in tiles, a place to besiege one from has to be. */
     static final float siegeMargin = 3f;
     private final IntMap<float[]> siegeSpots = new IntMap<>();

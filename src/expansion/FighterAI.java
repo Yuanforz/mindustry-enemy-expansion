@@ -135,8 +135,16 @@ public class FighterAI extends AIController{
                 moveTo(way, tilesize * 1.5f);
             }
         }else if(spot != null){
-            //to that stretch, not to the nearest side of it: coming up on the near side, it came within reach of the others
-            travel(aim.getX() + Angles.trnsx(spot[0], range * 0.9f), aim.getY() + Angles.trnsy(spot[0], range * 0.9f), tilesize * 3f);
+            //to that stretch, not to the nearest side of it: coming up on the near side, it came within reach of the others; and
+            //round the others' reach on the way, not across it
+            float sx = aim.getX() + Angles.trnsx(spot[0], range * 0.9f), sy = aim.getY() + Angles.trnsy(spot[0], range * 0.9f);
+            if(routeFor != goal){
+                routeFor = goal;
+                route = brain.safeWay(unit, sx, sy);
+            }
+            while(route != null && route.size > 1 && unit.within(route.first(), tilesize * 3f)) route.remove(0);
+            if(route != null && route.any()) travel(route.first().x, route.first().y, tilesize * 2f);
+            else travel(sx, sy, tilesize * 3f);
         }else{
             travel(aim.getX(), aim.getY(), range * 0.85f);
         }
@@ -149,6 +157,10 @@ public class FighterAI extends AIController{
     }
 
     /** Goes to a place by the way the game's own path-finding gives for its kind of unit. */
+    /** The places it passes through on its way round the other side's turrets to where it lays siege, and what that is for. */
+    private @Nullable arc.struct.Seq<Vec2> route;
+    private @Nullable Teamc routeFor;
+
     /** How it last moved, for looking into it. */
     public String how = "";
 
