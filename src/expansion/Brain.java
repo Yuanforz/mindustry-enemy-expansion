@@ -92,6 +92,35 @@ public class Brain{
     public final Lines lines = new Lines(ground), pipes = new Lines(ground);
     public final Power power = new Power(ground, terrain);
     public final Net net = new Net(ground);
+    /** When items were last seen on the first tile of each source's line, by its position; set when first looked at. */
+    private final IntFloatMap flowSeen = new IntFloatMap();
+    private float flowLookedAt;
+    {
+        //(what a source's line has been seen to carry, measured, rather than what it is planned to: on the fifth and seventh
+        //sectors rows of turrets went up fed off lines whose drills had stopped, and stood empty all game)
+        net.flows = thing -> this.clock - this.flowSeen.get(Point2.pack(thing.x, thing.y), this.clock) < 60f * 60f;
+    }
+
+    /** Looks at the first tile of every source's line, every few seconds, for whether it is carrying anything. */
+    private void lookAtFlow(){
+        if(clock - flowLookedAt < 60f * 3f) return;
+        flowLookedAt = clock;
+        for(Net.Thing thing : net.things){
+            if(thing.kind != Net.Kind.mine && thing.kind != Net.Kind.maker) continue;
+            int pos = Point2.pack(thing.x, thing.y);
+            if(!flowSeen.containsKey(pos)) flowSeen.put(pos, clock);
+            //the first few tiles of the line: a duct holds what it carries only for a moment
+            IntSeq tiles = net.trace(thing.x, thing.y);
+            boolean carrying = false;
+            for(int i = 0; i < Math.min(tiles.size, 4) && !carrying; i++){
+                Building build = world.build(tiles.get(i));
+                carrying = build != null && build.team == team() && build.items != null && build.items.any();
+            }
+            Building at = world.build(thing.x, thing.y);
+            if(at instanceof Drill.DrillBuild drill && drill.team == team() && drill.efficiency > 0f) carrying = true;
+            if(carrying) flowSeen.put(pos, clock);
+        }
+    }
     public final Planner planner = new Planner(this);
     /** What the enemy is about at the moment: decides in what order it goes about things. */
     public final Director director = new Director();
@@ -289,6 +318,7 @@ public class Brain{
         director.reset();
         rested.clear();
         fallen.clear();
+        flowSeen.clear();
         secureFor = null;
         secureAt = -1;
         cellLost.clear();
@@ -6796,6 +6826,7 @@ public class Brain{
 
     /** Looks for the other side's army near its cores. Only what its own side can see counts. */
     private void lookOut(TeamData data){
+        lookAtFlow();
         contact(data);
         measure(data);
         for(Building build : data.buildings){

@@ -84,6 +84,9 @@ public class Net{
     private final IntSeq path = new IntSeq();
     private final IntSet seen = new IntSet();
 
+    /** Whether what a source puts on its line has been seen on it lately: one that has not is no supply, whatever it is planned to make. */
+    public arc.func.Boolf<Thing> flows = thing -> true;
+
     public Net(Ground ground){
         this.ground = ground;
     }
@@ -205,7 +208,7 @@ public class Net{
         IntFloatMap out = new IntFloatMap();
         carriedNow.put(item, out);
         for(Thing source : things){
-            if((source.kind != Kind.mine && source.kind != Kind.maker) || source.item != item) continue;
+            if((source.kind != Kind.mine && source.kind != Kind.maker) || source.item != item || !flows.get(source)) continue;
             along(trace(source.x, source.y), item, source.rate, out);
         }
         //and the lines that were led off those for something: the next thing along can be supplied from the end of the
