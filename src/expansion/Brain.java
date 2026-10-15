@@ -1028,6 +1028,10 @@ public class Brain{
         //hardest setting, leaving the island outpost alone)
         boolean dodgers = out.allMatch(unit -> unit.controller() instanceof FighterAI fighter && fighter.agile());
         Building lone = dodgers ? loneTurret(out, x, y, aim) : null;
+        //with no turret left that reaches its least guarded side, what it was sent against is besieged the same way: from that
+        //side, and only with health enough. (going straight for the third sector's core with what was left after the
+        //breaches, ships brought it down to a third, were thrown back, and the next group found it guarded again)
+        if(dodgers && lone == null && !(aim instanceof Turret.TurretBuild)) lone = aim;
         if(lone != null){
             aimAt = lone;
             strike = true;
