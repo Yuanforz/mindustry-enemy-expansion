@@ -279,6 +279,7 @@ public class Brain{
         health.clear();
         assets.clear();
         retiring.clear();
+        siegeSpots.clear();
         director.reset();
         rested.clear();
         fallen.clear();
@@ -1134,12 +1135,12 @@ public class Brain{
         Building best = null;
         float bestScore = Float.MAX_VALUE;
         for(Building build : guarding){
-            //the others whose guns reach where the group would stand to fire on it: on its far side from them
-            float side = siegeSide(build);
+            //the others whose guns reach where the group would stand to fire on it: where it is furthest out of their reach
+            float[] spot = siegeSpot(build, r);
             float px = build.x, py = build.y;
-            if(!Float.isNaN(side)){
-                px += Angles.trnsx(side, r * 0.6f);
-                py += Angles.trnsy(side, r * 0.6f);
+            if(spot != null){
+                px += Angles.trnsx(spot[0], r * 0.6f);
+                py += Angles.trnsy(spot[0], r * 0.6f);
             }
             int cover = 0;
             for(Building other : turrets){
@@ -1155,25 +1156,61 @@ public class Brain{
     }
 
     /**
-     * Which way from a turret under siege its besiegers stand, in degrees: away from the other side's turrets near it, so
-     * that as few of them as can be reach them while they dodge this one's fire. NaN with no others near.
+     * Where its besiegers stand round a turret under siege: of the ring at the distance they fire from, the stretch
+     * furthest out of reach of every other turret near it, as the angle at its middle and how many degrees either side of
+     * that stay out of their reach (0 where nowhere does, and the angle is then where their reach is least). Null with no
+     * other turret near. (going by which way the others lay on the whole, ships spread a third of the way round the ring,
+     * and the next turret's guns took half of them before the one besieged had fired its last)
      */
-    public float siegeSide(Teamc aim){
-        float sx = 0f, sy = 0f;
-        int n = 0;
+    public @Nullable float[] siegeSpot(Teamc aim, float range){
+        int key = (aim instanceof Building build ? build.pos() : 0) * 31 + (int)(range / tilesize);
+        float[] known = siegeSpots.get(key);
+        if(known != null && clock - known[2] < 60f) return known[3] == 0f ? null : known;
+        Seq<Building> others = new Seq<>();
         for(TeamData other : state.teams.active){
             if(other.team == team() || other.team == Team.derelict) continue;
-            for(Building build : other.buildings){
-                if(!(build instanceof Turret.TurretBuild) || build == aim || !build.within(aim, tilesize * 45f)) continue;
-                //the nearer, the more it counts
-                float weight = 1f / Math.max(build.dst(aim), tilesize);
-                sx += (build.x - aim.getX()) * weight;
-                sy += (build.y - aim.getY()) * weight;
-                n++;
+            indexer.eachBlock(other.team, aim.getX(), aim.getY(), tilesize * 45f, build -> build instanceof Turret.TurretBuild && build != aim, others::add);
+        }
+        float[] out = known != null ? known : new float[4];
+        out[2] = clock;
+        out[3] = others.isEmpty() ? 0f : 1f;
+        siegeSpots.put(key, out);
+        if(others.isEmpty()) return null;
+        int steps = 36;
+        float r = range * 0.6f;
+        float[] clear = new float[steps];
+        for(int i = 0; i < steps; i++){
+            float px = aim.getX() + Angles.trnsx(i * 360f / steps, r), py = aim.getY() + Angles.trnsy(i * 360f / steps, r);
+            float least = Float.MAX_VALUE;
+            for(Building other : others) least = Math.min(least, (other.dst(px, py) - ((Turret)other.block).range) / tilesize);
+            clear[i] = least;
+        }
+        //the widest run round the ring of places a few tiles out of every other's reach
+        int bestStart = -1, bestLength = 0;
+        for(int start = 0; start < steps; start++){
+            if(clear[start] < siegeMargin || clear[(start + steps - 1) % steps] >= siegeMargin && bestStart != -1) continue;
+            int length = 0;
+            while(length < steps && clear[(start + length) % steps] >= siegeMargin) length++;
+            if(length > bestLength){
+                bestStart = start;
+                bestLength = length;
             }
         }
-        return n == 0 ? Float.NaN : Angles.angle(-sx, -sy);
+        if(bestStart == -1){
+            int most = 0;
+            for(int i = 1; i < steps; i++) if(clear[i] > clear[most]) most = i;
+            out[0] = most * 360f / steps;
+            out[1] = 0f;
+        }else{
+            out[0] = (bestStart + (bestLength - 1) / 2f) * 360f / steps;
+            out[1] = bestLength >= steps ? 180f : (bestLength - 1) * 180f / steps;
+        }
+        return out;
     }
+
+    /** How far out of the reach of other turrets, in tiles, a place to besiege one from has to be. */
+    static final float siegeMargin = 3f;
+    private final IntMap<float[]> siegeSpots = new IntMap<>();
 
     /** Whether the group out on the attack is strong enough to go straight for what it was sent against. */
     private boolean strike;

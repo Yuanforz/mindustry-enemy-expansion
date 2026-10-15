@@ -77,21 +77,27 @@ public class FighterAI extends AIController{
         float range = unit.range();
         //laying siege to a turret, it keeps to that turret's far side from its neighbours whatever it fires at: what feeds the
         //turret runs in among the others, and going after it there brought every turret round within reach
-        boolean siege = agile() && goal instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild && !Float.isNaN(brain.siegeSide(goal));
-        if(siege) aim = goal;
+        float[] spot = agile() && goal instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild ? brain.siegeSpot(goal, range) : null;
+        if(spot != null) aim = goal;
         //it steers itself only once within reach of its own guns: before that it goes by the game's path-finding. (steering
         //itself from three dozen tiles off, it went straight at what it was sent against, into the wall between, and stood
         //there; what walks has to go round)
-        if(unit.within(aim, range + tilesize * (unit.type.flying ? 12f : 4f))){
+        //(laying siege, only once on its own stretch of the ring: going round from the side it came up on, it passed under
+        //the next turret's guns)
+        if(unit.within(aim, range + tilesize * (unit.type.flying ? 12f : 4f)) && (spot == null || Angles.angleDist(Angles.angle(aim.getX(), aim.getY(), unit.x, unit.y), spot[0]) <= spot[1] + 30f)){
             //each comes at it from a side of its own, spread over half the ring that faces its own base: what defends it
             //has to turn from one to the next and back. one that is quick enough moves to and fro within its side as well,
             //turning one way and then the other every second or two, so that what aims where it is going misses
             //but when the whole group goes for one thing it comes from one side: what is fired at a turret hits the walls round
             //it first, and walls are only got through where all the fire falls on the same ones
             boolean together = brain.striking(aim);
-            //against a turret, from the side its neighbours do not reach
-            float away = goal instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild && agile() ? brain.siegeSide(goal) : Float.NaN;
-            float home = Float.isNaN(away) ? homeBearing(aim) : away, sector = home + (together && !agile() ? 0f : ((unit.id % 7) - 3) * 22f), spread = together && !agile() ? 12f : 30f;
+            //against a turret, from the stretch of the ring round it its neighbours do not reach, and no further round than that
+            float home = spot == null ? homeBearing(aim) : spot[0];
+            float sector = home + (together && !agile() ? 0f : ((unit.id % 7) - 3) * 22f), spread = together && !agile() ? 12f : 30f;
+            if(spot != null){
+                sector = spot[0] + Mathf.clamp(((unit.id % 7) - 3) * 22f, -spot[1] * 0.5f, spot[1] * 0.5f);
+                spread = Math.max(spot[1] * 0.5f, 8f);
+            }
             if(agile()){
                 //never at a steady speed: a turret aims where its target will be if it keeps going as it goes, and its shot
                 //takes a while to come; what is always changing speed across the line of fire is not there when it does. it
@@ -120,6 +126,9 @@ public class FighterAI extends AIController{
                 way.trns(sector, range * 0.85f).add(aim.getX(), aim.getY());
                 moveTo(way, tilesize * 1.5f);
             }
+        }else if(spot != null){
+            //to that stretch, not to the nearest side of it: coming up on the near side, it came within reach of the others
+            travel(aim.getX() + Angles.trnsx(spot[0], range * 0.9f), aim.getY() + Angles.trnsy(spot[0], range * 0.9f), tilesize * 3f);
         }else{
             travel(aim.getX(), aim.getY(), range * 0.85f);
         }
