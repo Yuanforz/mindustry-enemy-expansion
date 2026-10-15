@@ -3,6 +3,7 @@ package expansion;
 import arc.math.*;
 import arc.math.geom.*;
 import arc.util.*;
+import mindustry.entities.*;
 import mindustry.entities.units.*;
 import mindustry.gen.*;
 
@@ -190,6 +191,8 @@ public class FighterAI extends AIController{
 
     @Override
     public Teamc findMainTarget(float x, float y, float range, boolean air, boolean ground){
+        Unit armed = armedNear(x, y, range, air, ground);
+        if(armed != null) return armed;
         Teamc aim = choice();
         if(aim != null && aim.within(x, y, range + size(aim))) return aim;
         return super.findMainTarget(x, y, range, air, ground);
@@ -197,9 +200,20 @@ public class FighterAI extends AIController{
 
     @Override
     public Teamc findTarget(float x, float y, float range, boolean air, boolean ground){
+        Unit armed = armedNear(x, y, range, air, ground);
+        if(armed != null) return armed;
         Teamc aim = choice();
         if(aim != null && aim.within(x, y, range + size(aim))) return aim;
         return super.findTarget(x, y, range, air, ground);
+    }
+
+    /**
+     * The other side's nearest unit within reach that fights, which it fires at before anything it was sent against, as
+     * the game's own units do: a building stands still for it later, a unit shooting at it does not. (besieging the third
+     * sector's breaches, ships shot at the turret while two of the other side's wore them down)
+     */
+    private @Nullable Unit armedNear(float x, float y, float range, boolean air, boolean ground){
+        return Units.closestEnemy(unit.team, x, y, range, other -> other.checkTarget(air, ground) && other.type.weapons.any() && !other.spawnedByCore);
     }
 
 
