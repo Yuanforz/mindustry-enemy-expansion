@@ -3638,8 +3638,10 @@ public class Brain{
         }
         int bx = Point2.x(best), by = Point2.y(best);
         if(state.rules.staticFog && state.rules.fog && !fogControl.isDiscovered(team(), bx, by)){
-            //it may not build where it has not looked
+            //it may not build where it has not looked. with no unit to send, something that sees far goes up towards it (the
+            //fourth sector stood with no units and a vent unseen, and so with no power for the yards that would make some)
             scout = best;
+            if(!data.units.contains(Brain::fights)) revealAt = best;
             notes.put("vents", "a vent at " + bx + "," + by + " not seen yet: a unit goes to look");
             retry.put("vents", clock + 60f * 30f);
             return null;
