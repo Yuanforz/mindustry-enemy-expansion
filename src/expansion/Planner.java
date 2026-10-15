@@ -1033,7 +1033,7 @@ public class Planner{
                 looked += lines.lastLooked;
             }
             needy = wasNeedy;
-            if(line == null) return drop(project, "still no way to a core from " + loose.x + "," + loose.y + " (" + Math.min(starts.size, 6) + " ways out tried, looked at " + looked + " places)");
+            if(line == null) return drop(project, "still no way to a core from " + loose.x + "," + loose.y + " (" + Math.min(starts.size, 6) + " ways out tried, looked at " + looked + " places; the last: built on " + lines.shutBy[1] + ", closed " + lines.shutBy[0] + ", pushed into " + lines.shutBy[2] + ", no bridge " + lines.shutBy[3] + ")");
             add(project, line.parts);
             project.removals.addAll(line.removals);
             project.things.add(new Thing(Net.Kind.mine, from[0], from[1], loose.item, loose.rate));

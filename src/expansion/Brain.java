@@ -289,6 +289,8 @@ public class Brain{
         director.reset();
         rested.clear();
         fallen.clear();
+        secureFor = null;
+        secureAt = -1;
         cellLost.clear();
         cellLostAt.clear();
         firsts.clear();
@@ -1009,6 +1011,8 @@ public class Brain{
         //minutes of gathering and fighting, not the half minute of walking, and the next wave took the base while they were
         //out; sized by the walk, eleven of sixteen were lost that way)
         boolean waveDue = state.rules.waves && state.rules.winWave > 0 && state.wave < state.rules.winWave && !turretsHold && out.isEmpty();
+        //while it is getting what its better units are made of, its units hold the ground that is to come from instead
+        if(secureAt != -1 && out.isEmpty() && !able) waveDue = true;
         if(!waveDue && (home.size >= enough || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
             //those waiting at home go out, as a group of their own or to join the one that is out
             for(Unit unit : home) field.add(unit.id);
@@ -3472,7 +3476,19 @@ public class Brain{
         Seq<Net.Thing> order = net.things.copy();
         order.sort(thing -> thing.item == null ? 2 : net.things.count(other -> (other.kind == Net.Kind.mine || other.kind == Net.Kind.maker) && other.item == thing.item && net.whole(other)) == 0 ? 0 : 1);
         for(Net.Thing source : order){
-            if((source.kind != Net.Kind.mine && source.kind != Net.Kind.maker) || source.item == null || detached(source)) continue;
+            if((source.kind != Net.Kind.mine && source.kind != Net.Kind.maker) || source.item == null) continue;
+            //a drill of the only source there is that stands without a line is led home here too, at the start of a round with
+            //the round's time before it: left to the round's end, its long way home never got the time it takes
+            if(detached(source)){
+                if(net.things.contains(other -> other != source && (other.kind == Net.Kind.mine || other.kind == Net.Kind.maker) && other.item == source.item && net.whole(other))) continue;
+                Asset standing = assets.find(asset -> asset.thingX == source.x && asset.thingY == source.y && asset.kind == Net.Kind.mine);
+                Layout layout = standing == null ? null : standing.layout(blueprints);
+                String key = "connect:" + source.item.name;
+                if(layout == null || !ready(key) || planner.late()) continue;
+                Project led = done(key, planner.connect(source, layout));
+                if(led != null) return led;
+                break;
+            }
             String key = "mend:" + source.x + "," + source.y;
             if(net.whole(source)){
                 notes.remove(key);
@@ -3801,6 +3817,7 @@ public class Brain{
                 //what it is fed with or built from has to be had first
                 Project first = provide(lack, data, 0);
                 if(first != null || saving) return first;
+                secure(lack);
                 notes.put(key, "needs " + lack.name + ", which is not to be had");
                 retry.put(key, clock + retryPeriod * 2f);
                 continue;
@@ -6191,6 +6208,22 @@ public class Brain{
             int startX = Tmp.p1.x, startY = Tmp.p1.y;
             for(int i = 0; i < rows; i++) out.add(Point2.pack(startX + dx * i, startY + dy * i));
         }
+        //and where the lines of what will make its units better are to come in, either way round, with the tile each comes in
+        //from: room left for what comes next. (on the fifth sector a refabricator fitted in front of its yard, and could never
+        //be led its silicon and tungsten: the base had grown over the places its lines would end)
+        if(rows > 3 && block instanceof UnitFactory){
+            for(Blueprint addition : blueprints){
+                if(!addition.addon() || addition.main() != block || !addition.allowed(this::may)) continue;
+                for(int flip = 0; flip < 2; flip++){
+                    Layout layout = addition.at(x, y, rotation, flip == 1, 1);
+                    for(Port port : layout.ports){
+                        if(port.role != Role.in) continue;
+                        out.add(Point2.pack(port.x, port.y));
+                        out.add(Point2.pack(port.x - Geometry.d4x(port.rotation), port.y - Geometry.d4y(port.rotation)));
+                    }
+                }
+            }
+        }
     }
 
     /** Yards being built in the place of old ones: where the new one's main block goes, and the old one's. The old comes down when the new stands. */
@@ -6318,12 +6351,26 @@ public class Brain{
     private void loops(){
         coverFirst.clear();
         defenceNeeds();
+        if(secureFor != null){
+            //it comes in, and has for a couple of minutes: the ground is held as any other from now on
+            if(!hasSource(secureFor)) securedSince = clock;
+            if(clock - securedSince > 60f * 120f){
+                Log.info("[EnemyExpansion] @ comes in: its units go back to what they were doing.", secureFor.name);
+                secureFor = null;
+                secureAt = -1;
+            }else{
+                //a turret over it, before the rest goes up there again
+                int zone = atlas.zoneAt(Point2.x(secureAt), Point2.y(secureAt));
+                if(zone >= 0 && !avoided(Task.Kind.turret, zone)) coverFirst.add(zone);
+            }
+        }
         LongSeq loops = ledger.loops(clock);
         for(int i = 0; i < loops.size; i++){
             long key = loops.get(i);
             Task.Kind kind = Task.Kind.values()[(int)(key >>> 48)];
             int zone = (int)((key >>> 16) & 0xffffffffL) - 1;
             if(zone < 0 || kind.army()) continue;
+            if(secureAt != -1 && atlas.zoneAt(Point2.x(secureAt), Point2.y(secureAt)) == zone) continue;
             Float until = keptOut.get(key);
             if(until == null || until <= clock){
                 keptOut.put(key, clock + 60f * 60f * (kind == Task.Kind.turret ? 3f : 5f));
@@ -6473,6 +6520,7 @@ public class Brain{
      * lately, by what it cost, if that is more than a little; else by the core.
      */
     private Vec2 guardPoint(CoreBuild base){
+        if(secureAt != -1) return guardAt.set(Point2.x(secureAt) * tilesize, Point2.y(secureAt) * tilesize);
         int bx = base.tileX() / 8, by = base.tileY() / 8, best = -1;
         float most = 150f;
         for(var entry : cellLost){
@@ -6488,6 +6536,38 @@ public class Brain{
     }
 
     private final Vec2 guardAt = new Vec2();
+
+    /**
+     * What its better units are made of and it has no source of, and the ore of it nearest home, as a packed tile; or -1.
+     * Until that comes in, its units stand guard over the ore rather than go out, and that ground is not given up for what
+     * is lost there: a source that a raid takes every few minutes is no source. (on the fifth sector the only tungsten lay
+     * ninety tiles out on open ground the raids crossed, and the tanks that would have held it were away attacking)
+     */
+    private Item secureFor;
+    private int secureAt = -1;
+    private float securedSince;
+
+    private void secure(Item item){
+        if(secureFor == item && secureAt != -1) return;
+        CoreBuild home = team().core();
+        if(home == null) return;
+        IntSeq tiles = new IntSeq(survey.floor(item));
+        tiles.addAll(survey.ore(item));
+        int best = -1;
+        float bestFar = Float.MAX_VALUE;
+        for(int i = 0; i < tiles.size; i++){
+            int x = Point2.x(tiles.get(i)), y = Point2.y(tiles.get(i));
+            float far = Mathf.dst(x, y, home.tileX(), home.tileY());
+            if(far < bestFar && world.isInMapArea(x, y)){
+                best = tiles.get(i);
+                bestFar = far;
+            }
+        }
+        if(best == -1) return;
+        secureFor = item;
+        secureAt = best;
+        Log.info("[EnemyExpansion] Its better units are made of @, which it has no source of: its units hold the ground at @,@ until it comes in.", item.name, Point2.x(best), Point2.y(best));
+    }
 
     /** What it has lost lately within so many stretches of one. */
     private float lostNear(int cx, int cy, int around){
