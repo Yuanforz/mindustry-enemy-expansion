@@ -124,6 +124,8 @@ public class Campaign{
         return total;
     }
     static Team me = Team.sharded;
+    static final IntSet births = new IntSet();
+    static final ObjectIntMap<String> bornAt = new ObjectIntMap<>();
 
     public static void main(String[] args){
         Sim.boot(args[0], args[1]);
@@ -394,6 +396,18 @@ public class Campaign{
                     }
                     System.out.println(out);
                 }
+            }
+            if(System.getProperty("xp.births") != null){
+                //where the other side's units come from: each new one counted against the nearest of its yards when first seen
+                for(Unit unit : enemy.data().units){
+                    if(unit.spawnedByCore || !births.add(unit.id)) continue;
+                    Building from = null;
+                    for(Building build : enemy.data().buildings){
+                        if((build.block instanceof mindustry.world.blocks.units.UnitFactory || build.block instanceof mindustry.world.blocks.units.Reconstructor) && (from == null || build.dst(unit) < from.dst(unit))) from = build;
+                    }
+                    bornAt.increment(unit.type.name + (from == null ? "@?" : "@" + from.tileX() + "," + from.tileY()));
+                }
+                if(second % 300 == 0) System.out.println("           born " + bornAt);
             }
             if(System.getProperty("xp.rich") != null && me.core() != null){
                 CoreBuild core = me.core();
