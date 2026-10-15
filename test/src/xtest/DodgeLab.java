@@ -58,6 +58,15 @@ public class DodgeLab{
         Tile tile = Vars.world.tile(12, 35);
         tile.setBlock(Blocks.breach, enemy, 0);
         ItemTurretBuild breach = (ItemTurretBuild)tile.build;
+        //-Dlab.second=dx,dy: a second breach that far from the first, covering it, as the other side's turrets stand round a core
+        ItemTurretBuild cover = null;
+        if(System.getProperty("lab.second") != null){
+            String[] at = System.getProperty("lab.second").split(",");
+            Tile other = Vars.world.tile(12 + Integer.parseInt(at[0]), 35 + Integer.parseInt(at[1]));
+            if(System.getProperty("lab.land") == null) for(int dx = -2; dx <= 2; dx++) for(int dy = -2; dy <= 2; dy++) Vars.world.tile(other.x + dx, other.y + dy).setFloor((mindustry.world.blocks.environment.Floor)Blocks.darksand);
+            other.setBlock(Blocks.breach, enemy, 0);
+            cover = (ItemTurretBuild)other.build;
+        }
         float before = 0f;
         Unit[] units = new Unit[count];
         for(int i = 0; i < count; i++){
@@ -78,6 +87,10 @@ public class DodgeLab{
         }
         for(int second = 0; second < seconds; second++){
             while(breach.isValid() && breach.acceptItem(null, Items.beryllium)) breach.handleItem(null, Items.beryllium);
+            //-Dlab.fed=n: the turrets are given only n beryllium a second, as a line feeds them, instead of being kept full
+            if(cover != null && cover.isValid() && System.getProperty("lab.fed") == null) while(cover.acceptItem(null, Items.beryllium)) cover.handleItem(null, Items.beryllium);
+            if(cover != null && cover.isValid() && System.getProperty("lab.fed") != null) for(int n = 0; n < Integer.getInteger("lab.fed") && cover.acceptItem(null, Items.beryllium); n++) cover.handleItem(null, Items.beryllium);
+            if(System.getProperty("lab.cool") != null && cover != null && cover.isValid() && cover.liquids != null) cover.liquids.add(Liquids.water, Math.max(cover.block.liquidCapacity - cover.liquids.get(Liquids.water), 0f));
             //-Dlab.cool: the turret has water, as the other side's turrets on the third sector have, and fires two and a half times as fast
             if(System.getProperty("lab.cool") != null && breach.isValid() && breach.liquids != null) breach.liquids.add(Liquids.water, Math.max(breach.block.liquidCapacity - breach.liquids.get(Liquids.water), 0f));
             Boot.frames(60);
@@ -85,6 +98,7 @@ public class DodgeLab{
                 StringBuilder out = new StringBuilder("  t=" + second);
                 for(Unit unit : units) if(unit.isValid()) out.append(String.format(" | %d,%d hp%d%s%s", unit.tileX(), unit.tileY(), (int)unit.health, unit.isShooting ? " firing" : "", unit.mounts.length > 0 && unit.mounts[0].target != null ? " at" : ""));
                 out.append(" || breach hp" + (int)breach.health + " ammo" + breach.totalAmmo + (breach.target != null ? " aiming" : ""));
+                if(cover != null) out.append(" || second hp" + (int)cover.health + " ammo" + cover.totalAmmo);
                 System.out.println(out);
             }
             if(!breach.isValid()) break;
