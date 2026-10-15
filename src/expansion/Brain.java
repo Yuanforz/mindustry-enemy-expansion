@@ -283,6 +283,8 @@ public class Brain{
         director.reset();
         rested.clear();
         fallen.clear();
+        cellLost.clear();
+        cellLostAt.clear();
         firsts.clear();
         inherited = looked = ventsKnown = false;
         ground.vent.clear();
@@ -5461,9 +5463,15 @@ public class Brain{
                 if(world.isInMapArea(core.tileX(), core.tileY()) && !guarded(core.x, core.y)) hit.add(new int[]{core.tileX(), core.tileY(), -1});
             }
             IntSet cells = new IntSet(), fresh = new IntSet();
+            //only where more has been lost lately, within what a turret there would cover, than the turret costs: raiders that
+            //pick off a drill here and a duct there cost less than a turret at each place (the third sector put up fifteen
+            //breaches, each the graphite of two and a half of its ships, after raids on its outlying drills)
+            float price = total(main.requirements) * state.rules.buildCostMultiplier;
+            int around = Math.max(1, Math.round(cover / tilesize / 8f));
             for(var entry : fallen){
                 if(clock - entry.value >= fallenTime) continue;
                 int cell = Point2.pack(Point2.x(entry.key) / 8, Point2.y(entry.key) / 8);
+                if(cells.contains(cell) || lostNear(Point2.x(cell), Point2.y(cell), around) < price) continue;
                 cells.add(cell);
                 if(clock - entry.value < 60f * 30f) fresh.add(cell);
             }
@@ -6005,6 +6013,9 @@ public class Brain{
         fallen.put(tile.pos(), clock);
         lastLossAt = clock;
         lostWorth += total(tile.block().requirements);
+        int cell = Point2.pack(tile.x / 8, tile.y / 8);
+        cellLost.put(cell, lostIn(cell) + total(tile.block().requirements));
+        cellLostAt.put(cell, clock);
         //what stood and was destroyed counts against the task it was built for; a site still going up does not
         Long key = tileTask.get(tile.pos());
         if(key != null && !(tile.build instanceof ConstructBuild)){
@@ -6016,6 +6027,23 @@ public class Brain{
 
     /** When it last lost a building. */
     private float lastLossAt = -1e9f;
+
+    /** What it has lost lately on each stretch of ground eight tiles across, by the cost of what stood there, halving every minute and a half. */
+    private final IntFloatMap cellLost = new IntFloatMap(), cellLostAt = new IntFloatMap();
+
+    private float lostIn(int cell){
+        float worth = cellLost.get(cell, 0f);
+        return worth <= 0f ? 0f : worth * (float)Math.pow(0.5, (clock - cellLostAt.get(cell, clock)) / (60f * 90f));
+    }
+
+    /** What it has lost lately within so many stretches of one. */
+    private float lostNear(int cx, int cy, int around){
+        float sum = 0f;
+        for(int dx = -around; dx <= around; dx++){
+            for(int dy = -around; dy <= around; dy++) sum += lostIn(Point2.pack(cx + dx, cy + dy));
+        }
+        return sum;
+    }
 
     /**
      * Whether the other side's army is at its base: something of its own was destroyed a moment ago
