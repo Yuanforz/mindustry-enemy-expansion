@@ -963,7 +963,12 @@ public class Brain{
                 able = overwhelms(half, first);
             }
         }
-        if(home.size >= enough || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold)){
+        //not with a wave of the map's due before long that the turrets do not hold by themselves: the army is the rest of what
+        //holds home. (on the fourth sector fourteen walkers set out a minute before its seventh wave, and the wave took the base
+        //while they were thrown back)
+        boolean waveDue = state.rules.waves && state.rules.waveTimer && (state.rules.winWave <= 0 || state.wave < state.rules.winWave)
+            && state.wavetime < 60f * 150f && !turretsHold && out.isEmpty();
+        if(!waveDue && (home.size >= enough || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
             //those waiting at home go out, as a group of their own or to join the one that is out
             for(Unit unit : home) field.add(unit.id);
             Log.info("[EnemyExpansion] @ units set out (@ out already; it may have @).", home.size, out.size, most);
