@@ -3901,7 +3901,7 @@ public class Brain{
                 }
                 Project project = planner.mine(wall, item, copies, reachFor(item));
                 //no wall with it left within reach: what there is of it is taken up
-                if(project == null && planner.lacking == null && !planner.timedOut && planner.note.endsWith("no wall with it in reach") && home.isEmpty()) minedOut.put(item.id, clock);
+                if(project == null && planner.lacking == null && !planner.timedOut && planner.note.contains("no wall with it in reach") && home.isEmpty()) minedOut.put(item.id, clock);
                 if(project != null) minedOut.remove(item.id, 0f);
                 if(project == null && planner.lacking != null){
                     //the ore is there; what the drills run on is not. that first, and the drills the next time round
@@ -3969,13 +3969,18 @@ public class Brain{
                 //cores are short of what it makes: with plenty of that in them, more of the same would only stand about
                 if(stock.have(item) >= stock.cap() / 2) return null;
             }
+            //cores half full of it want no more made: the factories it has keep up
+            if(factory != null && stock.have(item) >= stock.cap() / 2){
+                notes.put(key, "not another: the cores hold plenty");
+                return null;
+            }
             Building weak = factory == null ? null : underpowered(Net.Kind.maker, item);
             if(weak != null){
-                //more power for the ones it has, where there is any to be had; not another to share what there is. where none is
-                //to be had for it, another goes up somewhere that has power, rather than none at all
+                //more power for the ones it has, where there is any to be had; not another to share what there is. (where none was
+                //to be had, another went up all the same on the same grid, and a sector stood with seven furnaces on the power
+                //of two, and its yards still)
                 notes.put(key, "its " + weak.block.name + " at " + weak.tileX() + "," + weak.tileY() + " has not the power to run flat out: more power first");
-                Project more = power(data);
-                if(more != null || saving) return more;
+                return power(data);
             }
             if(factory != null && ready(key)){
                 //sand can't go by way of a core: a factory that takes it gets crushers of its own
@@ -3984,6 +3989,21 @@ public class Brain{
                 if(sandy && crushers == null){
                     notes.put(key, "nothing it may build gets sand");
                     return null;
+                }
+                //what it takes out of the walls, where there is ore of that free near home: it goes up where drills of its own
+                //put that out, and needs nothing other lines carry
+                if(sandy){
+                    for(Port port : factory.ports){
+                        if(port.role != Role.in || port.item == Items.sand || survey.ore(port.item).isEmpty()) continue;
+                        Blueprint drills = mineFor(port.item);
+                        if(drills == null) continue;
+                        //(not saved up for: what can't be paid for now goes up the other way, or waits there)
+                        ItemStack[] whole = sum(sum(factory.cost(), ItemStack.mult(crushers.cost(), 2)), ItemStack.mult(drills.cost(), 2));
+                        if(!pays(whole)) continue;
+                        Project cell = planner.plantAtOre(drills, port.item, crushers, factory, reachFor(port.item));
+                        if(cell != null) return done(key, cell);
+                        notes.put(key, planner.note);
+                    }
                 }
                 for(Port port : factory.ports){
                     if(port.role != Role.in || port.item == Items.sand) continue;
@@ -4510,7 +4530,9 @@ public class Brain{
      */
     private @Nullable Project mines(TeamData data){
         flows(data);
-        Seq<Item> ores = useful().select(item -> builtWith(item) && hasSource(item) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null)));
+        //(whatever comes in counts, the drills the map came with too: by its own drills alone, an ore the map's drills brought in
+        //was never mined more, and a turret took the faces of it by home)
+        Seq<Item> ores = useful().select(item -> builtWith(item) && comesIn(item) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null)));
         ores.sort(item -> stock.have(item) + stock.income(item) * 2f);
         minesOnly = true;
         try{
@@ -5245,9 +5267,10 @@ public class Brain{
         //stood empty: each had been put where a line passed, and no line from the furnaces could get to them again)
         Seq<int[]> beside = new Seq<>();
         int size = blueprint.main().size;
-        //(only once its turrets hold home by themselves: a yard there takes the silicon at the source, before the turrets
-        //get any, and a sector's opening was lost to the first raids with three turrets and a yard at the furnace)
-        if(turretsHold) for(Net.Thing thing : net.things){
+        //(this once waited until its turrets held home by themselves, a sector's opening having been lost with three turrets
+        //and a yard at the furnace, when a furnace made a tenth of what it can. with furnaces where their ore comes out, a
+        //yard put where a line passes instead stood unsupplied all game beside cores full of silicon)
+        for(Net.Thing thing : net.things){
             if(thing.kind != Net.Kind.maker || thing.item == null || !blueprint.has(Role.in, thing.item)) continue;
             Building maker = works(thing);
             if(maker == null) continue;

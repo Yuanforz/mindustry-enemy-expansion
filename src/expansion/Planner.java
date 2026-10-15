@@ -862,7 +862,10 @@ public class Planner{
 
         for(int attempt = 0; attempt < 4 && !late(); attempt++){
             Layout layout = fitter.row(blueprint, item, want, reach);
-            if(layout == null) return null;
+            if(layout == null){
+                if(attempt == 0) note += " [" + fitter.rowNote + "]";
+                return null;
+            }
             fitter.skip.add(Point2.pack(layout.main().x, layout.main().y));
             //if this place comes to nothing it is left alone for a while, so that the next look goes somewhere else
             brain.shun(layout.main().x, layout.main().y);
@@ -1290,6 +1293,152 @@ public class Planner{
             return project;
         }
         return null;
+    }
+
+    /**
+     * A factory that takes an ore out of the walls, put up where drills of its own put that ore out: a row of drills on
+     * the ore with its line straight into the factory, crushers on the sand wall nearest those drills with theirs, and
+     * the factory between the two. Where cores can't be unloaded, ore that has gone into a core is lost to every factory,
+     * and a factory put down by its crushers waits on a branch from whatever line of the ore it can be led from.
+     * (played by hand, the fourth sector's furnace stood beside two graphite bores and made four and a half silicon a
+     * second three minutes in; laid out by its crushers, it stood twenty tiles from the graphite and made a tenth of that)
+     */
+    public @Nullable Project plantAtOre(Blueprint drills, Item ore, Blueprint crushers, Blueprint factory, int reach){
+        if(!(drills.main() instanceof BeamDrill drill) || !(factory.main() instanceof GenericCrafter crafter) || !(crushers.main() instanceof WallCrafter crusher)) return null;
+        Item made = crafter.outputItems[0].item;
+        if(late()) return null;
+        fitter.skip.clear();
+        note = "plant for " + made.name + " by its " + ore.name + ": no wall with it near";
+        float oreUse = Rates.uses(crafter, ore), sandUse = Rates.uses(crafter, crusher.output), perBeam = Rates.beam(drill, ore);
+        //as many drills as the factory takes of the ore, each with all its beams on it; and crushers likewise
+        int want = Math.max(1, (int)Math.ceil(oreUse / Math.max(perBeam * drill.size, 0.01f)));
+        int crushersWanted = Math.max(2, (int)Math.ceil(sandUse / Math.max(Rates.crusher(crusher, crusher.size), 0.05f)));
+
+        for(int attempt = 0; attempt < 3 && !late(); attempt++){
+            Layout row = fitter.row(drills, ore, want, Math.min(reach, plantNear));
+            if(row == null) return null;
+            fitter.skip.add(Point2.pack(row.main().x, row.main().y));
+            brain.shun(row.main().x, row.main().y);
+            if(!brain.reachable(row.main().block, row.main().x, row.main().y)) continue;
+
+            Project project = new Project("plant for " + made.name);
+            //counted before the row is planned: its own blocks do not stand in the way of its beams
+            int beams = 0;
+            for(Part part : row.parts){
+                if(part.block instanceof BeamDrill) beams += fitter.beams(drill, part.x, part.y, part.rotation, ore);
+            }
+            float oreRate = beams * perBeam;
+            add(project, row);
+            Port from = row.port(Role.out, null);
+            IntSet rowTiles = footprint(row.parts);
+
+            Layout sandRow;
+            boolean far = fitter.farOk;
+            try{
+                fitter.order = (x, y) -> Math.abs(x - from.x) + Math.abs(y - from.y);
+                fitter.farOk = false;
+                sandRow = fitter.row(crushers, null, crushersWanted, Math.min(reach, plantNear));
+            }finally{
+                fitter.order = null;
+                fitter.farOk = far;
+            }
+            if(sandRow == null || Math.abs(sandRow.main().x - from.x) + Math.abs(sandRow.main().y - from.y) > 30){
+                drop(project, "no sand wall near the drills at " + row.main().x + "," + row.main().y);
+                continue;
+            }
+            add(project, sandRow);
+            Port sandFrom = sandRow.port(Role.out, null);
+            IntSet sandTiles = footprint(sandRow.parts);
+            float sand = 0f;
+            for(Part part : sandRow.parts){
+                if(!(part.block instanceof WallCrafter)) continue;
+                float worth = 0f;
+                for(int lane = 0; lane < crusher.size; lane++){
+                    crusher.nearbySide(part.x, part.y, part.rotation, lane, Tmp.p1);
+                    worth += world.tile(Tmp.p1.x, Tmp.p1.y).block().attributes.get(crusher.attribute);
+                }
+                sand += Rates.crusher(crusher, worth);
+            }
+            float share = Mathf.clamp(Math.min(sand / Math.max(sandUse, 0.001f), oreRate / Math.max(oreUse, 0.001f)));
+
+            //the factory between where the two put out, as near both as it goes
+            int cx = (from.x + sandFrom.x) / 2, cy = (from.y + sandFrom.y) / 2;
+            Layout placed = null;
+            int tries = 0;
+            String why = "no room for the factory";
+            search:
+            for(int radius = 0; radius <= 10; radius++){
+                for(int dx = -radius; dx <= radius; dx++){
+                    for(int dy = -radius; dy <= radius; dy++){
+                        if(Math.max(Math.abs(dx), Math.abs(dy)) != radius) continue;
+                        int x = cx + dx, y = cy + dy;
+                        if(!ground.clear(crafter, x, y)) continue;
+                        if(late()) break search;
+                        for(int way = 0; way < 8; way++){
+                            Layout layout = factory.at(x, y, way % 4, way >= 4, 1);
+                            if(!clear(layout) || !fitter.valid(layout)) continue;
+                            if(++tries > 12 || late()) break search;
+
+                            int before = project.parts.size, lastBefore = project.last.size, thingsBefore = project.things.size, removalsBefore = project.removals.size;
+                            add(project, layout);
+                            boolean fed = into(project, layout, from, rowTiles, ore) && into(project, layout, sandFrom, sandTiles, crusher.output);
+                            if(fed && lead(project, layout, Net.Kind.maker, made, Rates.makes(crafter, made) * share)){
+                                placed = layout;
+                                break search;
+                            }
+                            why = fed ? "no way to a core for what it makes from " + x + "," + y : supplyNote;
+                            Seq<Part> undone = new Seq<>();
+                            while(project.parts.size > before) undone.add(project.parts.pop());
+                            ground.unplan(undone);
+                            project.last.truncate(lastBefore);
+                            project.things.truncate(thingsBefore);
+                            project.removals.size = removalsBefore;
+                            brain.syncGround();
+                            ground.plan(project.parts);
+                        }
+                    }
+                }
+            }
+            if(placed == null){
+                drop(project, "no place between the drills at " + row.main().x + "," + row.main().y + " and the crushers at " + sandRow.main().x + "," + sandRow.main().y + " [" + tries + " tried; the last: " + why + "]");
+                continue;
+            }
+            project.things.add(new Thing(Net.Kind.mine, from.x, from.y, ore, oreRate));
+            project.things.add(new Thing(Net.Kind.quarry, sandRow.main().x, sandRow.main().y, crusher.output, sand));
+            if(!energize(project, groups(row.parts, sandRow.parts, placed.parts), powerUse(row.parts) + powerUse(sandRow.parts) + powerUse(placed.parts))){
+                drop(project, "no power to be had at " + placed.main().x + "," + placed.main().y);
+                continue;
+            }
+            if(!buildable(project)){
+                drop(project, "the game does not allow " + refused);
+                continue;
+            }
+            brain.unshun(row.main().x, row.main().y);
+            project.assets.add(new Asset(Net.Kind.mine, row, from.x, from.y));
+            project.assets.add(new Asset(Net.Kind.quarry, sandRow, sandRow.main().x, sandRow.main().y));
+            Port out = placed.port(Role.out, null);
+            project.assets.add(new Asset(Net.Kind.maker, placed, out.x, out.y));
+            return project;
+        }
+        return null;
+    }
+
+    /** Lays a line from where a row puts out into a layout's input for an item, if a short one will do. */
+    private boolean into(Project project, Layout layout, Port from, IntSet fromTiles, Item item){
+        Port in = layout.port(Role.in, item);
+        if(in == null){
+            supplyNote = "it takes no " + item.name;
+            return false;
+        }
+        holdPorts(layout, in, true);
+        Lines.Line line = lines.route(from.x, from.y, fromTiles, Lines.Goal.port(in));
+        holdPorts(layout, in, false);
+        if(line == null || line.parts.size > 30){
+            supplyNote = "no way for the " + item.name + " to " + in.x + "," + in.y + (line == null ? " (looked at " + lines.lastLooked + ")" : " in 30 ducts");
+            return false;
+        }
+        add(project, line.parts);
+        return true;
     }
 
     /** Lays the lines into a factory: sand straight from the crushers, everything else off the enemy's own lines. */

@@ -69,6 +69,7 @@ public class Fitter{
             int face = faces.get(i), x = survey.x(face), y = survey.y(face);
             if((territory.fromHome(x, y) <= reach) != beyond && ground.open(x, y) && !avoid.at(x, y)) near.add(face);
         }
+        rowNote = "faces " + near.size + (beyond ? " further out" : "");
         if(near.isEmpty()) return null;
         sortByHome(near);
         if(near.size > faceLimit) near.size = faceLimit;
@@ -77,12 +78,18 @@ public class Fitter{
         Layout best = null;
         float bestScore = Float.NEGATIVE_INFINITY;
         int gaps = item == null ? 0 : gapLimit;
+        int notClear = 0, noOre = 0, invalid = 0, noOutlet = 0, looked = 0;
 
         for(int i = 0; i < near.size; i++){
             int face = near.get(i), fx = survey.x(face), fy = survey.y(face), d = Survey.direction(face);
-            int home = rank(fx, fy);
+            //(crushers by the narrow way between a sector's home and its next ore took the room every line to that ore needed)
+            int home = rank(fx, fy) + (item == null && Ground.narrow(fx, fy) ? passagePenalty : 0);
             Clock.spend(4);
-            if((i & 15) == 0 && Clock.now() > deadline) break;
+            if((i & 15) == 0 && Clock.now() > deadline){
+                rowNote += ", out of time";
+                break;
+            }
+            looked++;
             //nothing further out can beat a full row found nearer
             if(best != null && best.copies >= want && want * 100f - home < bestScore) break;
 
@@ -91,25 +98,39 @@ public class Fitter{
                     main.nearbySide(0, 0, d, lane, Tmp.p1);
                     //the main block of the first copy, placed so that this lane of it meets the wall at this face
                     int ox = fx + Geometry.d4x(d) * (1 - gap) - Tmp.p1.x, oy = fy + Geometry.d4y(d) * (1 - gap) - Tmp.p1.y;
-                    if(!ground.clear(main, ox, oy) || skip.contains(Point2.pack(ox, oy))) continue;
+                    if(!ground.clear(main, ox, oy) || skip.contains(Point2.pack(ox, oy))){
+                        notClear++;
+                        continue;
+                    }
 
                     for(int flip = 0; flip < 2; flip++){
                         if(!tried.add(((ox + oy * world.width()) * 4 + d) * 2 + flip)) continue;
                         Layout all = blueprint.at(ox, oy, d, flip == 1, blueprint.copies);
                         int count = Math.min(prefix(all, item), want);
-                        if(count == 0) continue;
+                        if(count == 0){
+                            noOre++;
+                            continue;
+                        }
 
                         //a row that can later be given what makes it faster stands one tile back from the wall, where there is room for that
                         float score = count * 100f - home - (blueprint.boosts.isEmpty() ? gap * 2f : gap == 1 ? 0f : gap == 0 ? 3f : 4f);
                         if(score <= bestScore) continue;
                         Layout layout = count == all.copies ? all : blueprint.at(ox, oy, d, flip == 1, count);
-                        if(!valid(layout) || !outlet(layout)) continue;
+                        if(!valid(layout)){
+                            invalid++;
+                            continue;
+                        }
+                        if(!outlet(layout)){
+                            noOutlet++;
+                            continue;
+                        }
                         best = layout;
                         bestScore = score;
                     }
                 }
             }
         }
+        rowNote += ", looked at " + looked + ": no room " + notClear + ", no ore " + noOre + ", not allowed " + invalid + ", no way out " + noOutlet;
         return best;
     }
 
@@ -122,6 +143,9 @@ public class Fitter{
         Blueprint.Port out = layout.port(Blueprint.Role.out, null);
         return out == null || ground.open(out.x, out.y);
     }
+
+    /** How the last search for a row went, for looking into it. */
+    public String rowNote = "";
 
     /** When a search for a place has to stop with the best it has found so far. */
     public long deadline = Long.MAX_VALUE;
@@ -251,6 +275,9 @@ public class Fitter{
     private int rank(int x, int y){
         return order != null ? order.get(x, y) : territory.near(x, y);
     }
+
+    /** How much further off a row of crushers in a narrow passage counts as standing: the passage is the way every line has to take. */
+    static final int passagePenalty = 150;
 
     private void sortByHome(IntSeq faces){
         //few enough for this
