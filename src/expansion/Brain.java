@@ -1085,7 +1085,7 @@ public class Brain{
                         out.remove(stays, true);
                     }
                 }
-                stage(lone);
+                stageNear(lone, x, y);
                 //a place just taken is held from where it was besieged, out of reach of the rest: the other side builds again what
                 //was pushed down, and units standing there keep it down while more come out to them. (gathering again further
                 //back, the group came on to find the breach it had taken built again)
@@ -1196,6 +1196,35 @@ public class Brain{
             stageY = target.y + dy / len * far;
             if(danger(stageX, stageY, tilesize * 6f) == 0) break;
         }
+    }
+
+    /**
+     * For a siege, the place out of reach of every turret round what is to be besieged nearest where the group stands now, not
+     * on the side towards home: it goes on from the side it took. (on the third sector, with the two breaches on the north
+     * side of the core taken, the group went round to the south to gather for the next, and waited there five minutes while
+     * the two it had taken were built again)
+     */
+    private void stageNear(Building target, float gx, float gy){
+        float best = Float.MAX_VALUE, bx = 0f, by = 0f;
+        for(float far = tilesize * 20f; far <= tilesize * 44f; far += tilesize * 4f){
+            for(int angle = 0; angle < 360; angle += 15){
+                float px = target.x + Angles.trnsx(angle, far), py = target.y + Angles.trnsy(angle, far);
+                Tile tile = world.tileWorld(px, py);
+                if(tile == null || tile.solid() || !world.isInMapArea(tile.x, tile.y) || danger(px, py, tilesize * 6f) > 0) continue;
+                float d = Mathf.dst(px, py, gx, gy);
+                if(d < best){
+                    best = d;
+                    bx = px;
+                    by = py;
+                }
+            }
+        }
+        if(best == Float.MAX_VALUE){
+            stage(target);
+            return;
+        }
+        stageX = bx;
+        stageY = by;
     }
 
     /** Its units left to hold places taken, by id, with the place. */
