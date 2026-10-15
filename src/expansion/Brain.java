@@ -890,7 +890,10 @@ public class Brain{
                 cx += unit.x / out.size;
                 cy += unit.y / out.size;
             }
-            float gap = Mathf.dst(cx, cy, aimAt.x, aimAt.y);
+            //how near the nearest of it has got: with units coming up from a yard far off to join it, the middle of the group
+            //stood a hundred tiles back while its head fought, and the group was called home as stuck
+            float gap = Float.MAX_VALUE;
+            for(Unit unit : out) gap = Math.min(gap, unit.dst(aimAt));
             if(gap < closest - tilesize * 3f || closestAt < 0f){
                 closest = gap;
                 closestAt = clock;
