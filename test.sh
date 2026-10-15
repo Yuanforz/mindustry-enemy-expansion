@@ -81,6 +81,7 @@ case "$what" in
     # The campaign played many times over, as many at once as the machine has cores for. Each run has its
     # own data and its own record of where it got to; logs go to build/logs/<name>-<n>.log.
     # JOBS=n runs n at a time (default 4, one for each fast core: measured, more gains nothing, and a machine with no fan slows down under it); JAVA_OPTS is passed to every run.
+    # Planning is timed by its steps, not the wall (WALL=1 for the wall); SEEDED=1 also fixes each run's random seed.
     mkdir -p build/test-maps build/logs
     [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
     name="$1"; runs="$2"; minutes="$3"; difficulty="${4:-hard}"; first="$5"; sectors="${6:-99}"
