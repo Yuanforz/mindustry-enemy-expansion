@@ -3601,6 +3601,9 @@ public class Brain{
             Asset asset = assets.get(i);
             if(asset.kind != Net.Kind.mine || !(world.build(asset.x, asset.y) instanceof Drill.DrillBuild drill) || drill.team != team() || drill.tileX() != asset.x || drill.tileY() != asset.y) continue;
             if(drill.dominantItem == null || net.things.contains(thing -> thing.x == asset.thingX && thing.y == asset.thingY)) continue;
+            //(one whose line was led on from beside it since has its note there)
+            int half = drill.block.size / 2 + 2;
+            if(net.things.contains(thing -> thing.kind == Net.Kind.mine && thing.item == drill.dominantItem && Math.abs(thing.x - drill.tileX()) <= half && Math.abs(thing.y - drill.tileY()) <= half)) continue;
             float rate = 60f / ((Drill)drill.block).getDrillTime(drill.dominantItem) * drill.dominantItems;
             net.things.add(new Net.Thing(Net.Kind.mine, asset.x, asset.y, drill.dominantItem, rate));
             assets.set(i, new Asset(asset.kind, asset.blueprint, asset.x, asset.y, asset.turns, asset.mirrored, asset.copies, asset.x, asset.y));
