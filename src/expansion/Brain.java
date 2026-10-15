@@ -324,6 +324,8 @@ public class Brain{
         revealed.clear();
         field.clear();
         setOut = 0;
+        thrownFrom = -1;
+        garrison.clear();
         strike = false;
         stageFor = null;
         siegeLoss = -1f;
@@ -882,7 +884,18 @@ public class Brain{
         }
         Unit away = lookout;
         //what can't get to the other side stays as a guard
-        Seq<Unit> out = army.select(unit -> field.contains(unit.id)), home = army.select(unit -> !field.contains(unit.id) && unit != away && canAttack(unit));
+        //those left to hold a place taken stay there
+        IntSeq gone = new IntSeq();
+        for(var entry : garrison.entries()){
+            Unit holder = Groups.unit.getByID(entry.key);
+            if(holder == null || holder.dead() || holder.team != team()){
+                gone.add(entry.key);
+                continue;
+            }
+            post(holder, entry.value.x, entry.value.y);
+        }
+        for(int i = 0; i < gone.size; i++) garrison.remove(gone.get(i));
+        Seq<Unit> out = army.select(unit -> field.contains(unit.id) && !garrison.containsKey(unit.id)), home = army.select(unit -> !field.contains(unit.id) && unit != away && canAttack(unit) && !garrison.containsKey(unit.id));
         //a group out on an attack that has not got any nearer what it went for in a minute, and is not there yet, is stuck: its
         //way out is shut. it comes home, the way is looked into afresh, and that place is let be for a while. (on the fourth
         //sector a group was sent against a turret and stood by its own core for a quarter of an hour)
@@ -961,6 +974,7 @@ public class Brain{
         }
         if(setOut > 0 && !holding && (out.size < Math.max(setOut / 3, 2) || spent) && !finishing){
             Log.info("[EnemyExpansion] The attack of @ is thrown back with @ left; @.", setOut, out.size, sizedUp);
+            if(aimAt instanceof CoreBuild) thrownFrom = aimAt.pos();
             if(aimAt != null){
                 int zone = atlas.zoneAt(aimAt.tileX(), aimAt.tileY());
                 long key = Task.key(Task.Kind.attack, zone, null);
@@ -1055,6 +1069,21 @@ public class Brain{
                     float now = 0f;
                     for(Unit unit : out) now += unit.health;
                     siegeLoss = siegeLoss < 0f ? siegeFrom - now : (siegeLoss + siegeFrom - now) / 2f;
+                }
+                //two of the group stay where it stood, to keep it down: the other side puts back what was pushed down, and the
+                //rest of the group moves on. (on the third sector the breaches the ships took were standing again, full, when they
+                //came back from the core, attack after attack; a player leaves a few units at a key place taken, and sends more
+                //when they run low)
+                if(took){
+                    int x0 = stageFor.tileX(), y0 = stageFor.tileY();
+                    Seq<Unit> nearest = out.copy();
+                    nearest.sort(unit -> unit.dst2(x0 * tilesize, y0 * tilesize));
+                    for(int i = 0; i < nearest.size && i < 2 && garrison.size < 4 && out.size > 4; i++){
+                        Unit stays = nearest.get(i);
+                        garrison.put(stays.id, new Vec2(x0 * tilesize, y0 * tilesize));
+                        field.remove(stays.id);
+                        out.remove(stays, true);
+                    }
                 }
                 stage(lone);
                 //a place just taken is held from where it was besieged, out of reach of the rest: the other side builds again what
@@ -1168,6 +1197,12 @@ public class Brain{
             if(danger(stageX, stageY, tilesize * 6f) == 0) break;
         }
     }
+
+    /** Its units left to hold places taken, by id, with the place. */
+    private final IntMap<Vec2> garrison = new IntMap<>();
+
+    /** The other side's core its last attack on was thrown back from, as a packed position; or -1. */
+    private int thrownFrom = -1;
 
     /** What the group out on the attack is going for at the moment. */
     private @Nullable Building aimAt;
@@ -1702,6 +1737,19 @@ public class Brain{
                     if(at != null && at.team != team() && world.isInMapArea(at.tileX(), at.tileY())) return at;
                 }
             }
+        }
+        //a core it was thrown back from: what turns out the units that guard it comes down first. its turrets taken one by one
+        //were built again, and every attack on the core itself met ships just made beside it (on the third sector the timed-out
+        //games went round that way for an hour and more). only then: going for the yards from the start made the second sector
+        //slower than going straight for its core
+        if(world.build(thrownFrom) instanceof CoreBuild thrown && thrown.team != team() && thrown.pos() == thrownFrom){
+            Building yard = null;
+            for(Building build : thrown.team.data().buildings){
+                if(!(build.block instanceof UnitFactory) || !build.within(thrown, tilesize * 35f) || !world.isInMapArea(build.tileX(), build.tileY())) continue;
+                if(state.rules.fog && state.rules.staticFog && !fogControl.isDiscovered(team(), build.tileX(), build.tileY())) continue;
+                if(yard == null || build.dst2(x, y) < yard.dst2(x, y)) yard = build;
+            }
+            if(yard != null) return yard;
         }
         //then the other side's cores: with the last of those down the map is won, whatever else still stands. people
         //who play these maps go for the core with one strong group and do not fight their way through the whole base
