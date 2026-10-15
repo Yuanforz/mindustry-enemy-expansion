@@ -1295,8 +1295,18 @@ public class Planner{
             IntSet furnaceTiles = footprint(furnace.parts);
             Port startB = fromB;
             IntSet rowBTiles = tilesB;
-            //right against the furnace it is handed what the furnace makes with no line at all
-            Layout yard = placeNear(project, yardBp, out.x, out.y, 10, layout -> (touches(layout, furnaceTiles) || into(done, layout, out, furnaceTiles, made)) && into(done, layout, startB, rowBTiles, ore));
+            //right against the furnace it is handed what the furnace makes with no line at all: the places against each of the
+            //furnace's sides first, then further off with a line from it
+            Layout yard = null;
+            Part fm = furnaceLayout.main();
+            int reachOut = fm.block.size / 2 + yardBp.main().size / 2 + 1;
+            for(int side = 0; side < 4 && yard == null; side++){
+                for(int slide = -1; slide <= 1 && yard == null; slide++){
+                    int x = fm.x + Geometry.d4x(side) * reachOut + Geometry.d4y(side) * slide, y = fm.y + Geometry.d4y(side) * reachOut + Geometry.d4x(side) * slide;
+                    yard = placeAt(project, yardBp, x, y, layout -> touches(layout, furnaceTiles) && into(done, layout, startB, rowBTiles, ore));
+                }
+            }
+            if(yard == null) yard = placeNear(project, yardBp, out.x, out.y, 10, layout -> (touches(layout, furnaceTiles) || into(done, layout, out, furnaceTiles, made)) && into(done, layout, startB, rowBTiles, ore));
             if(yard == null) return drop(project, "no place for the " + yardBp.name + " by the " + furnaceBp.name + " [" + supplyNote + "]");
 
             if(!energize(project, groups(rowA.parts, rowB.parts, sandRow.parts, furnace.parts, yard.parts), powerUse(rowA.parts) + powerUse(rowB.parts) + powerUse(sandRow.parts) + powerUse(furnace.parts) + powerUse(yard.parts))){
@@ -1340,6 +1350,27 @@ public class Planner{
         return beams * Rates.beam(drill, ore);
     }
 
+    /** A layout of a blueprint at one place, turned whichever way joins it up by what is asked; what is tried and fails is taken back. */
+    private @Nullable Layout placeAt(Project project, Blueprint blueprint, int x, int y, arc.func.Boolf<Layout> join){
+        if(!ground.clear(blueprint.main(), x, y) || late()) return null;
+        for(int way = 0; way < 8; way++){
+            Layout layout = blueprint.at(x, y, way % 4, way >= 4, 1);
+            if(!clear(layout) || !fitter.valid(layout)) continue;
+            int parts = project.parts.size, last = project.last.size, things = project.things.size, removals = project.removals.size;
+            add(project, layout);
+            if(join.get(layout)) return layout;
+            Seq<Part> undone = new Seq<>();
+            while(project.parts.size > parts) undone.add(project.parts.pop());
+            ground.unplan(undone);
+            project.last.truncate(last);
+            project.things.truncate(things);
+            project.removals.size = removals;
+            brain.syncGround();
+            ground.plan(project.parts);
+        }
+        return null;
+    }
+
     /** A layout of a blueprint placed as near a place as it goes, and joined up by what is asked; what is tried and fails is taken back. */
     private @Nullable Layout placeNear(Project project, Blueprint blueprint, int cx, int cy, int radius, arc.func.Boolf<Layout> join){
         int tries = 0;
@@ -1352,7 +1383,7 @@ public class Planner{
                     for(int way = 0; way < 8; way++){
                         Layout layout = blueprint.at(x, y, way % 4, way >= 4, 1);
                         if(!clear(layout) || !fitter.valid(layout)) continue;
-                        if(++tries > 14) return null;
+                        if(++tries > 40) return null;
                         int parts = project.parts.size, last = project.last.size, things = project.things.size, removals = project.removals.size;
                         add(project, layout);
                         if(join.get(layout)) return layout;
