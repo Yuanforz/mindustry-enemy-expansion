@@ -1219,6 +1219,176 @@ public class Planner{
         return null;
     }
 
+    /**
+     * A yard where ore lies that no line can bring home: two rows of drills on it, a furnace fed by the first and by crushers
+     * on the nearest sand wall, and the yard, fed by the second row and by the furnace, all with short lines of their own and
+     * power from the grid. What the yard turns out goes from there. (the third sector's graphite beyond the water and its own
+     * crowded edge would have tripled what its ship yards had; no line could bring it in)
+     */
+    public @Nullable Project outpost(Blueprint yardBp, Blueprint drills, Item ore, Blueprint crushers, Blueprint furnaceBp, int sx, int sy){
+        if(!(drills.main() instanceof BeamDrill drill) || !(furnaceBp.main() instanceof GenericCrafter crafter) || !(crushers.main() instanceof WallCrafter crusher) || late()) return null;
+        Item made = crafter.outputItems[0].item;
+        Lines.Far before = fitter.order;
+        boolean far = fitter.farOk;
+        fitter.skip.clear();
+        try{
+            //the first row where the line from it can be led on to a furnace: a row on a narrow strip between rock and water has
+            //no way out for its line, and the ore's other face is tried
+            Project project = null;
+            Layout rowA = null, furnace = null;
+            float rateA = 0f;
+            Port fromA = null;
+            IntSet tilesA = null;
+            for(int attempt = 0; attempt < 4 && furnace == null && !late(); attempt++){
+                project = new Project("an outpost for " + yardBp.name);
+                fitter.farOk = true;
+                fitter.order = (x, y) -> Math.abs(x - sx) + Math.abs(y - sy);
+                rowA = fitter.row(drills, ore, 2, Integer.MAX_VALUE / 4);
+                if(rowA == null) return drop(project, "no row of drills on the " + ore.name + " by " + sx + "," + sy);
+                fitter.skip.add(Point2.pack(rowA.main().x, rowA.main().y));
+                rateA = beamRate(rowA, drill, ore);
+                add(project, rowA);
+                Port start = rowA.port(Role.out, null);
+                IntSet startTiles = footprint(rowA.parts);
+                Project building = project;
+                furnace = placeNear(project, furnaceBp, start.x, start.y, 9, layout -> into(building, layout, start, startTiles, ore));
+                if(furnace == null){
+                    note = "an outpost for " + yardBp.name + ": no place for the " + furnaceBp.name + " by the drills at " + rowA.main().x + "," + rowA.main().y + " [" + supplyNote + "]";
+                    brain.syncGround();
+                    continue;
+                }
+                fromA = start;
+                tilesA = startTiles;
+            }
+            if(furnace == null) return null;
+            final Project done = project;
+            final Layout furnaceLayout = furnace;
+            Port sandIn = furnace.port(Role.in, crusher.output);
+            //on the nearest sand wall to the furnace, however far that is from home: it is the furnace it feeds
+            fitter.order = (x, y) -> Math.abs(x - sandIn.x) + Math.abs(y - sandIn.y);
+            fitter.farOk = true;
+            Layout sandRow = fitter.row(crushers, null, 2, Integer.MAX_VALUE / 4);
+            if(sandRow == null || Math.abs(sandRow.main().x - sandIn.x) + Math.abs(sandRow.main().y - sandIn.y) > 30) return drop(project, "no sand wall by the " + furnaceBp.name);
+            add(project, sandRow);
+            if(!into(project, furnace, sandRow.port(Role.out, null), footprint(sandRow.parts), crusher.output)) return drop(project, "no way for the sand: " + supplyNote);
+            float sand = 0f;
+            for(Part part : sandRow.parts){
+                if(!(part.block instanceof WallCrafter)) continue;
+                float worth = 0f;
+                for(int lane = 0; lane < crusher.size; lane++){
+                    crusher.nearbySide(part.x, part.y, part.rotation, lane, Tmp.p1);
+                    worth += world.tile(Tmp.p1.x, Tmp.p1.y).block().attributes.get(crusher.attribute);
+                }
+                sand += Rates.crusher(crusher, worth);
+            }
+
+            //the second row of drills only now, so that it does not stand where the first one's line had to go
+            fitter.order = (x, y) -> Math.abs(x - sx) + Math.abs(y - sy);
+            fitter.farOk = true;
+            Layout rowB = fitter.row(drills, ore, 2, Integer.MAX_VALUE / 4);
+            if(rowB == null) return drop(project, "room for one row of drills only on the " + ore.name + " by " + sx + "," + sy);
+            float rateB = beamRate(rowB, drill, ore);
+            add(project, rowB);
+            Port fromB = rowB.port(Role.out, null);
+            IntSet tilesB = footprint(rowB.parts);
+            Port out = furnace.port(Role.out, null);
+            IntSet furnaceTiles = footprint(furnace.parts);
+            Port startB = fromB;
+            IntSet rowBTiles = tilesB;
+            //right against the furnace it is handed what the furnace makes with no line at all
+            Layout yard = placeNear(project, yardBp, out.x, out.y, 10, layout -> (touches(layout, furnaceTiles) || into(done, layout, out, furnaceTiles, made)) && into(done, layout, startB, rowBTiles, ore));
+            if(yard == null) return drop(project, "no place for the " + yardBp.name + " by the " + furnaceBp.name + " [" + supplyNote + "]");
+
+            if(!energize(project, groups(rowA.parts, rowB.parts, sandRow.parts, furnace.parts, yard.parts), powerUse(rowA.parts) + powerUse(rowB.parts) + powerUse(sandRow.parts) + powerUse(furnace.parts) + powerUse(yard.parts))){
+                return drop(project, "no power to be had for the outpost by " + sx + "," + sy);
+            }
+            if(!buildable(project)) return drop(project, "the game does not allow " + refused);
+            float share = Mathf.clamp(Math.min(sand / Math.max(Rates.uses(crafter, crusher.output), 0.001f), rateA / Math.max(Rates.uses(crafter, ore), 0.001f)));
+            project.things.add(new Thing(Net.Kind.mine, fromA.x, fromA.y, ore, rateA));
+            project.things.add(new Thing(Net.Kind.mine, fromB.x, fromB.y, ore, rateB));
+            project.things.add(new Thing(Net.Kind.quarry, sandRow.main().x, sandRow.main().y, crusher.output, sand));
+            project.things.add(new Thing(Net.Kind.maker, out.x, out.y, made, Rates.makes(crafter, made) * share));
+            project.things.add(new Thing(Net.Kind.yard, yard.main().x, yard.main().y, (Item)null, 0f));
+            project.assets.add(new Asset(Net.Kind.mine, rowA, fromA.x, fromA.y));
+            project.assets.add(new Asset(Net.Kind.mine, rowB, fromB.x, fromB.y));
+            project.assets.add(new Asset(Net.Kind.quarry, sandRow, sandRow.main().x, sandRow.main().y));
+            project.assets.add(new Asset(Net.Kind.maker, furnace, out.x, out.y));
+            project.assets.add(new Asset(Net.Kind.yard, yard, yard.main().x, yard.main().y));
+            return project;
+        }finally{
+            fitter.order = before;
+            fitter.farOk = far;
+        }
+    }
+
+    /** Whether the main block of a layout stands right against any of some tiles. */
+    private boolean touches(Layout layout, IntSet tiles){
+        Part main = layout.main();
+        int offset = -(main.block.size - 1) / 2, size = main.block.size;
+        for(int i = 0; i < size; i++){
+            for(int side = 0; side < 4; side++){
+                int x = main.x + offset + (side == 0 ? size : side == 2 ? -1 : i), y = main.y + offset + (side == 1 ? size : side == 3 ? -1 : i);
+                if(tiles.contains(Point2.pack(x, y))) return true;
+            }
+        }
+        return false;
+    }
+
+    private float beamRate(Layout row, BeamDrill drill, Item ore){
+        int beams = 0;
+        for(Part part : row.parts) if(part.block instanceof BeamDrill) beams += fitter.beams(drill, part.x, part.y, part.rotation, ore);
+        return beams * Rates.beam(drill, ore);
+    }
+
+    /** A layout of a blueprint placed as near a place as it goes, and joined up by what is asked; what is tried and fails is taken back. */
+    private @Nullable Layout placeNear(Project project, Blueprint blueprint, int cx, int cy, int radius, arc.func.Boolf<Layout> join){
+        int tries = 0;
+        for(int r = 1; r <= radius; r++){
+            for(int dx = -r; dx <= r; dx++){
+                for(int dy = -r; dy <= r; dy++){
+                    if(Math.max(Math.abs(dx), Math.abs(dy)) != r) continue;
+                    int x = cx + dx, y = cy + dy;
+                    if(!ground.clear(blueprint.main(), x, y) || late()) continue;
+                    for(int way = 0; way < 8; way++){
+                        Layout layout = blueprint.at(x, y, way % 4, way >= 4, 1);
+                        if(!clear(layout) || !fitter.valid(layout)) continue;
+                        if(++tries > 14) return null;
+                        int parts = project.parts.size, last = project.last.size, things = project.things.size, removals = project.removals.size;
+                        add(project, layout);
+                        if(join.get(layout)) return layout;
+                        Seq<Part> undone = new Seq<>();
+                        while(project.parts.size > parts) undone.add(project.parts.pop());
+                        ground.unplan(undone);
+                        project.last.truncate(last);
+                        project.things.truncate(things);
+                        project.removals.size = removals;
+                        brain.syncGround();
+                        ground.plan(project.parts);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Lays a line from where something puts out into a layout's input for an item, if a short one will do. */
+    private boolean into(Project project, Layout layout, Port from, IntSet fromTiles, Item item){
+        Port in = layout.port(Role.in, item);
+        if(in == null){
+            supplyNote = "it takes no " + item.name;
+            return false;
+        }
+        holdPorts(layout, in, true);
+        Lines.Line line = lines.route(from.x, from.y, fromTiles, Lines.Goal.port(in));
+        holdPorts(layout, in, false);
+        if(line == null || line.parts.size > 30){
+            supplyNote = "no way for the " + item.name + " to " + in.x + "," + in.y + (line == null ? " (looked at " + lines.lastLooked + ")" : " in 30 ducts");
+            return false;
+        }
+        add(project, line.parts);
+        return true;
+    }
+
     /** How far from home the crushers of a plant are looked for first. */
     static final int plantNear = 40;
 

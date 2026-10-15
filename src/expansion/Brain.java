@@ -281,6 +281,8 @@ public class Brain{
         health.clear();
         assets.clear();
         retiring.clear();
+        farOre.clear();
+        outposts.clear();
         ferried.clear();
         lands.clear();
         siegeSpots.clear();
@@ -4179,6 +4181,8 @@ public class Brain{
                 //no wall with it left within reach: what there is of it is taken up
                 if(project == null && planner.lacking == null && !planner.timedOut && planner.note.endsWith("no wall with it in reach") && home.isEmpty()) minedOut.put(item.id, clock);
                 if(project != null) minedOut.remove(item.id, 0f);
+                //ore there that no line of it could bring home: a place for an outpost, should a yard need it
+                if(project == null && planner.note.contains("no way to lay a line") && planner.lastTried != null) farOre.put(item.id, Point2.pack(planner.lastTried.main().x, planner.lastTried.main().y));
                 if(project == null && planner.lacking != null){
                     //the ore is there; what the drills run on is not. that first, and the drills the next time round
                     notes.put(key, planner.note);
@@ -4394,6 +4398,8 @@ public class Brain{
         retireStranded();
         Project ferry = ferry(data);
         if(ferry != null) return ferry;
+        Project outpost = outpost(data);
+        if(outpost != null || saving) return outpost;
         //with as many yards as it may have, the ones it has are made to turn out better units; and where one has no room
         //for that, a better yard is built somewhere else and the old one taken down once the new one is up
         boolean full = net.count(Net.Kind.yard, null) - retiring.size >= data.cores.size * Options.yardsPerCore.get();
@@ -5301,6 +5307,56 @@ public class Brain{
 
     private final IntMap<boolean[]> lands = new IntMap<>();
     private float landClock = -1e9f;
+
+    /** Ore no line could bring home, by item, where drills would stand; and the places an outpost went up for. */
+    private final IntIntMap farOre = new IntIntMap();
+    private final IntSet outposts = new IntSet();
+
+    /**
+     * Where ore that a yard of its own takes lies beyond where any line could bring it home, a yard goes up there instead:
+     * drills, a furnace and crushers, and the yard, as one. Only once it has a yard at home, one outpost for each such place.
+     */
+    private @Nullable Project outpost(TeamData data){
+        if(farOre.isEmpty() || !ready("outpost") || planner.late() || net.count(Net.Kind.yard, null) == 0) return null;
+        Blueprint crushers = find(Kind.quarry);
+        if(crushers == null) return null;
+        for(var entry : farOre){
+            if(outposts.contains(entry.value)) continue;
+            Item ore = content.item(entry.key);
+            Blueprint drills = mineFor(ore);
+            if(drills == null) continue;
+            for(Blueprint yard : yardKinds(data)){
+                Port takesOre = yard.ports.find(port -> port.role == Role.in && port.item == ore);
+                if(takesOre == null) continue;
+                Port other = yard.ports.find(port -> port.role == Role.in && port.item != ore);
+                if(other == null) continue;
+                Blueprint furnace = maker(other.item);
+                if(furnace == null || !furnace.has(Role.in, ore) || !furnace.has(Role.in, Items.sand)) continue;
+                ItemStack[] whole = sum(sum(sum(yard.cost(), furnace.cost()), ItemStack.mult(crushers.cost(), 2)), ItemStack.mult(drills.cost(), 4));
+                if(!pays(whole)){
+                    notes.put("outpost", "saving for an outpost at the " + ore.name + " by " + Point2.x(entry.value) + "," + Point2.y(entry.value));
+                    return null;
+                }
+                ferrying = true;
+                Project project;
+                try{
+                    project = planner.outpost(yard, drills, ore, crushers, furnace, Point2.x(entry.value), Point2.y(entry.value));
+                }finally{
+                    ferrying = false;
+                }
+                outposts.add(entry.value);
+                if(project == null){
+                    syncGround();
+                    notes.put("outpost", planner.note);
+                    retry.put("outpost", clock + 60f * 60f);
+                    return null;
+                }
+                notes.put("outpost", "laid out at the " + ore.name + " by " + Point2.x(entry.value) + "," + Point2.y(entry.value));
+                return done("outpost", project);
+            }
+        }
+        return null;
+    }
 
     /** The ground a kind of unit can get over to one of the other side's cores, by tile, or null with none. */
     private @Nullable boolean[] region(UnitType type, CoreBuild core){
