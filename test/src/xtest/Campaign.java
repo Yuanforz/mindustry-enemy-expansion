@@ -397,6 +397,13 @@ public class Campaign{
                     System.out.println(out);
                 }
             }
+            if(System.getProperty("xp.frames") != null){
+                //a picture of a stretch of the map every few seconds in a span: x0,y0,w,h,from,to,step[,dir]
+                String[] f = System.getProperty("xp.frames").split(",");
+                int fx0 = Integer.parseInt(f[0]), fy0 = Integer.parseInt(f[1]), fw = Integer.parseInt(f[2]), fh = Integer.parseInt(f[3]);
+                int from = Integer.parseInt(f[4]), to = Integer.parseInt(f[5]), step = Integer.parseInt(f[6]);
+                if(second >= from && second <= to && (second - from) % step == 0) Frames.write(new Fi(f.length > 7 ? f[7] : "build/frames").child(String.format("f%05d.png", second)), fx0, fy0, fw, fh, me);
+            }
             if(System.getProperty("xp.births") != null){
                 //where the other side's units come from: each new one counted against the nearest of its yards when first seen
                 for(Unit unit : enemy.data().units){
@@ -468,6 +475,10 @@ public class Campaign{
                         }
                         System.out.println(out);
                     }
+                }
+                if(System.getProperty("xp.area") != null){
+                    Rules r = Vars.state.rules;
+                    System.out.println("           area limit " + r.limitMapArea + " " + r.limitX + "," + r.limitY + " " + r.limitWidth + "x" + r.limitHeight);
                 }
                 if(System.getProperty("xp.whyat") != null){
                     //why nothing may go on the ground about a place, a letter a tile (see Brain.whyNot), at the minutes named

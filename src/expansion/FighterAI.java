@@ -126,7 +126,17 @@ public class FighterAI extends AIController{
                 //as near as six tenths of its range: further out its shots, slow and turning after their target, mostly
                 //went astray (measured against one breach: six ships at six tenths of their range brought it down to a tenth
                 //and lost one; standing still half as near, they lost five and took a third off it)
-                float outward = Mathf.clamp((range * 0.6f - dist) / (tilesize * 2f), -1f, 1f);
+                //but no nearer than keeps it out of reach of the others round it, where it can: firing on a core from six tenths of
+                //their range, the third sector's ships were in reach of two breaches beside it and were lost in ten seconds, where
+                //at nine tenths none would have reached them
+                float stand = range * 0.6f;
+                if(spot != null){
+                    for(float part = 0.6f; part <= 0.951f; part += 0.05f){
+                        stand = range * part;
+                        if(!brain.othersReach(aim.getX() + Angles.trnsx(sector, stand), aim.getY() + Angles.trnsy(sector, stand), aim)) break;
+                    }
+                }
+                float outward = Mathf.clamp((stand - dist) / (tilesize * 2f), -1f, 1f);
                 //and slantwise, in and out as it goes across: straight across, its own shots, which keep its speed, went wide.
                 //(measured against one breach: six ships going straight across brought it to a quarter and lost three; going
                 //slantwise they brought it down and lost one)

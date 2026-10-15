@@ -1638,6 +1638,15 @@ public class Brain{
         }
     }
 
+    /** Whether a turret of the other side's with something to fire, other than the one given, reaches a place. */
+    public boolean othersReach(float x, float y, @Nullable Teamc except){
+        for(TeamData other : state.teams.active){
+            if(other.team == team() || other.team == Team.derelict) continue;
+            if(indexer.findTile(other.team, x, y, tilesize * 40f, build -> build != except && build instanceof Turret.TurretBuild turret && turret.hasAmmo() && build.within(x, y, ((Turret)build.block).range)) != null) return true;
+        }
+        return false;
+    }
+
     /** How many of the other side's turrets that have something to fire cover a place. */
     private int danger(float x, float y){
         return danger(x, y, 0f);
