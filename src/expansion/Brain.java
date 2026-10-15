@@ -966,8 +966,20 @@ public class Brain{
         //not with a wave of the map's due before long that the turrets do not hold by themselves: the army is the rest of what
         //holds home. (on the fourth sector fourteen walkers set out a minute before its seventh wave, and the wave took the base
         //while they were thrown back)
-        boolean waveDue = state.rules.waves && state.rules.waveTimer && (state.rules.winWave <= 0 || state.wave < state.rules.winWave)
-            && state.wavetime < 60f * 150f && !turretsHold && out.isEmpty();
+        //(how soon is how long the attack would take: there and back at the pace of the slowest, and a minute of fighting; with two
+        //and a half minutes for all, walkers set out with three to go before the seventh wave, and were not back for it)
+        boolean waveDue = false;
+        if(state.rules.waves && state.rules.waveTimer && (state.rules.winWave <= 0 || state.wave < state.rules.winWave) && !turretsHold && out.isEmpty() && home.any()){
+            float hx = 0f, hy = 0f, slowest = Float.MAX_VALUE;
+            for(Unit unit : home){
+                hx += unit.x / home.size;
+                hy += unit.y / home.size;
+                slowest = Math.min(slowest, Math.max(unit.speed(), 0.1f));
+            }
+            CoreBuild theirs = Geometry.findClosest(hx, hy, foe().cores());
+            float trip = theirs == null ? 0f : Mathf.dst(hx, hy, theirs.x, theirs.y) / slowest;
+            waveDue = state.wavetime < trip * 2f + 60f * 60f;
+        }
         if(!waveDue && (home.size >= enough || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
             //those waiting at home go out, as a group of their own or to join the one that is out
             for(Unit unit : home) field.add(unit.id);
