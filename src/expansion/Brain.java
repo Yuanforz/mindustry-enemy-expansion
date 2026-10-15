@@ -3264,7 +3264,7 @@ public class Brain{
             for(Liquid liquid : boosters(layout.blueprint)){
                 if((asset.boosted & (1 << liquid.id)) != 0) continue;
                 tried++;
-                Project project = planner.boost(layout, liquid, liquidRouter);
+                Project project = worthIt(planner.boost(layout, liquid, liquidRouter), layout);
                 if(project != null){
                     project.boosts = asset;
                     project.boostWith = liquid;
@@ -3281,6 +3281,23 @@ public class Brain{
             }
         }
         return null;
+    }
+
+    /**
+     * Water laid on to turrets only where it costs less than what it is worth: with it they fire two and a half times as
+     * fast, as much as one and a half more of them. A pipe led from far off costs more than another turret would. (on the
+     * fifth sector two thousand beryllium went into conduits to turrets in the first twenty minutes, more than went into
+     * turrets, while its drills waited for forty)
+     */
+    private @Nullable Project worthIt(@Nullable Project project, Layout layout){
+        if(project == null) return null;
+        float turrets = 0f;
+        for(Part part : layout.parts) if(part.block instanceof Turret) turrets += total(part.block.requirements) * state.rules.buildCostMultiplier;
+        if(turrets > 0f && total(project.cost()) > turrets * 1.5f){
+            planner.drop(project, "the water would cost " + (int)total(project.cost()) + ", more than the " + (int)(turrets * 1.5f) + " it is worth to the turrets");
+            return null;
+        }
+        return project;
     }
 
     /** How long something a map asks for is left to come of its own building before it is put up for the asking. */
@@ -3729,7 +3746,7 @@ public class Brain{
                 if((asset.boosted & (1 << liquid.id)) != 0 || !obtainable(liquid)) continue;
                 String key = "boost:" + liquid.name;
                 tried++;
-                Project project = planner.boost(layout, liquid, liquidRouter);
+                Project project = asset.kind == Net.Kind.post ? worthIt(planner.boost(layout, liquid, liquidRouter), layout) : planner.boost(layout, liquid, liquidRouter);
                 if(project != null){
                     project.boosts = asset;
                     project.boostWith = liquid;
