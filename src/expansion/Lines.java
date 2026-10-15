@@ -35,12 +35,6 @@ public class Lines{
     static final float turnCost = 1.2f, bridgeCost = 9f, wallCost = 8f;
     /** What running alongside a duct already laid costs, a tile. (for comparing, -Dxp.beside) */
     static final float besideCost = 2.5f;
-    /**
-     * What laying on the ground drills mine from costs, a tile: right in front of a vein of ore in a wall, or on ore in the
-     * floor. That is where drills have to stand, and a line laid there takes the place for good (a line run along the face
-     * of a vein near home left four tiles of the only graphite in reach unmined for the rest of the game).
-     */
-    static final float oreCost = 3f;
     /** Whether a line to a core may go through the enemy's own walls, which are then taken down for it. */
     public boolean walls = true;
     /** How many places one search looks at before giving up: for a line to a core, and for one to an input close by. */
@@ -84,7 +78,7 @@ public class Lines{
     private byte[] jump = {};
     //what was found out about each tile in the course of one search: nothing changes on the ground while it runs
     private int[] tileStamp = {}, usedStamp = {};
-    private byte[] tileOpen = {}, tilePushed = {}, tileGives = {}, tileBeside = {}, tileOre = {};
+    private byte[] tileOpen = {}, tilePushed = {}, tileGives = {}, tileBeside = {};
     private int generation, width, height;
     private final IntSeq heap = new IntSeq();
     private final IntSet allowed = new IntSet();
@@ -230,7 +224,6 @@ public class Lines{
             tilePushed = new byte[size / 4];
             tileGives = new byte[size / 4];
             tileBeside = new byte[size / 4];
-            tileOre = new byte[size / 4];
             generation = 0;
         }
         generation++;
@@ -292,7 +285,7 @@ public class Lines{
                 if(liquid && next != d && (gives & (1 << ((next + 2) % 4))) != 0) continue;
                 //right up against another line costs extra: a line with one hard by it on either side can never have anything
                 //led off it, as whatever was put in it to do that would hand things to the other line too
-                visit(state(fx, fy, next), current, base + 1f + (next == d ? 0f : turnCost) + (open ? 0f : wallCost) + tileBeside[at] * besideCost + tileOre[at] * oreCost, 0, goal);
+                visit(state(fx, fy, next), current, base + 1f + (next == d ? 0f : turnCost) + (open ? 0f : wallCost) + tileBeside[at] * besideCost, 0, goal);
             }
             if(!open) continue;
             allowed.clear();
@@ -525,19 +518,6 @@ public class Lines{
         tilePushed[at] = (byte)pushed;
         tileGives[at] = (byte)gives;
         tileBeside[at] = (byte)beside;
-        tileOre[at] = (byte)(oreGround(x, y) ? 1 : 0);
-    }
-
-    /** Whether drills would stand here: ore in the floor, or a vein of ore in a wall right beside. */
-    static boolean oreGround(int x, int y){
-        Tile tile = world.tile(x, y);
-        if(tile == null || tile.solid()) return false;
-        if(tile.overlay() != null && tile.overlay().itemDrop != null && !tile.overlay().wallOre) return true;
-        for(int i = 0; i < 4; i++){
-            Tile near = tile.nearby(i);
-            if(near != null && near.solid() && near.build == null && near.overlay() != null && near.overlay().wallOre && near.overlay().itemDrop != null) return true;
-        }
-        return false;
     }
 
     /**

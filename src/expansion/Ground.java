@@ -164,40 +164,12 @@ public class Ground{
             for(int dx = 0; dx < block.size; dx++){
                 for(int dy = 0; dy < block.size; dy++){
                     if(!open(x + dx + offset, y + dy + offset) || (block.solid && !solidRule.allows(x + dx + offset, y + dy + offset))) return false;
-                    //the ground drills mine from is kept for drills: a turret and its walls put down in front of the only vein of an
-                    //ore by home, before any drill went there, left that ore unmined all game
-                    if(block.solid && !mines(block) && Lines.oreGround(x + dx + offset, y + dy + offset)) return false;
                 }
             }
             return true;
         }finally{
             venting = before;
         }
-    }
-
-    /** Open ground no wider than this, across, is a passage. */
-    static final int passage = 8;
-
-    /** Whether open ground here is a passage between rock, no wider than a few tiles across one way or the other. */
-    public static boolean narrow(int x, int y){
-        return run(x, y, 1, 0) <= passage || run(x, y, 0, 1) <= passage;
-    }
-
-    private static int run(int x, int y, int dx, int dy){
-        int n = 1;
-        for(int sign = -1; sign <= 1; sign += 2){
-            for(int i = 1; i <= passage; i++){
-                Tile tile = world.tile(x + dx * i * sign, y + dy * i * sign);
-                if(tile == null || tile.block().isStatic() || tile.floor().isDeep()) break;
-                n++;
-            }
-        }
-        return n;
-    }
-
-    /** Whether a block gets items out of the ground or the walls. */
-    public static boolean mines(Block block){
-        return block instanceof Drill || block instanceof BeamDrill || block instanceof WallCrafter;
     }
 
     /** Whether a block is one that gets something out of a vent it stands on. */
