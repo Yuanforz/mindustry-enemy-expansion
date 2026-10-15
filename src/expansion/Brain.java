@@ -1197,7 +1197,19 @@ public class Brain{
             }
         }
         float r = reach;
-        Seq<Building> guarding = turrets.select(build -> build.within(aim, ((Turret)build.block).range + r + tilesize * 4f));
+        Seq<Building> guarding;
+        if(aim instanceof Turret.TurretBuild){
+            guarding = turrets.select(build -> build.within(aim, ((Turret)build.block).range + r + tilesize * 4f));
+        }else{
+            //what is not a turret is gone for from its least guarded side: only the turrets that reach the ground there have to
+            //come down first, whatever stands round its other sides. (going round from the side of its own base, the third
+            //sector's ships took the three breaches on the east of the other side's core every time, saw them built again, and
+            //never got to the two that guard its west, which is the side a player takes it from)
+            float[] side = siegeSpot(aim, r);
+            if(side == null) return null;
+            float px = aim.x + Angles.trnsx(side[0], r * 0.6f), py = aim.y + Angles.trnsy(side[0], r * 0.6f);
+            guarding = turrets.select(build -> build != aim && build.within(px, py, ((Turret)build.block).range + tilesize * siegeMargin));
+        }
         if(guarding.isEmpty()) return null;
         Building best = null;
         float bestScore = Float.MAX_VALUE;

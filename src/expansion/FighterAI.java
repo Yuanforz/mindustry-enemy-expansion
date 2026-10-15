@@ -86,7 +86,8 @@ public class FighterAI extends AIController{
         float range = unit.range();
         //laying siege to a turret, it keeps to that turret's far side from its neighbours whatever it fires at: what feeds the
         //turret runs in among the others, and going after it there brought every turret round within reach
-        float[] spot = agile() && goal instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild ? brain.siegeSpot(goal, range) : null;
+        //a turret, or anything else, from the side the other side's turrets reach least
+        float[] spot = agile() && goal instanceof Building ? brain.siegeSpot(goal, range) : null;
         if(spot != null) aim = goal;
         //it steers itself only once within reach of its own guns: before that it goes by the game's path-finding. (steering
         //itself from three dozen tiles off, it went straight at what it was sent against, into the wall between, and stood
