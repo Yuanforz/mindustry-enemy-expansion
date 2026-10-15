@@ -815,7 +815,17 @@ public class Brain{
             //(time spent turning on raiders is not time the group out on an attack failed to get on)
             closestAt = -1f;
             boolean dire = director.losses >= Director.pressure || data.cores.contains(core -> core.health < core.maxHealth * 0.6f);
-            for(Unit unit : army) if(dire || !field.contains(unit.id)) send(unit, raider);
+            //each on the nearest raider it can hit: walkers fire at nothing in the air, and all of them sent after the one
+            //nearest, a ship, stood firing at it while the walkers of the same wave took the core
+            Seq<Unit> raiders = new Seq<>();
+            for(CoreBuild core : data.cores) Units.nearbyEnemies(team(), core.x, core.y, tilesize * 45f, unit -> {
+                if(!unit.spawnedByCore && world.isInMapArea(unit.tileX(), unit.tileY()) && !raiders.contains(unit)) raiders.add(unit);
+            });
+            for(Unit unit : army){
+                if(!dire && field.contains(unit.id)) continue;
+                Unit mine = raiders.min(other -> other.checkTarget(unit.type.targetAir, unit.type.targetGround), other -> other.dst2(unit));
+                if(mine != null) send(unit, mine);
+            }
             if(dire || field.isEmpty()) return;
         }
 
@@ -963,23 +973,11 @@ public class Brain{
                 able = overwhelms(half, first);
             }
         }
-        //not with a wave of the map's due before long that the turrets do not hold by themselves: the army is the rest of what
-        //holds home. (on the fourth sector fourteen walkers set out a minute before its seventh wave, and the wave took the base
-        //while they were thrown back)
-        //(how soon is how long the attack would take: there and back at the pace of the slowest, and a minute of fighting; with two
-        //and a half minutes for all, walkers set out with three to go before the seventh wave, and were not back for it)
-        boolean waveDue = false;
-        if(state.rules.waves && state.rules.waveTimer && (state.rules.winWave <= 0 || state.wave < state.rules.winWave) && !turretsHold && out.isEmpty() && home.any()){
-            float hx = 0f, hy = 0f, slowest = Float.MAX_VALUE;
-            for(Unit unit : home){
-                hx += unit.x / home.size;
-                hy += unit.y / home.size;
-                slowest = Math.min(slowest, Math.max(unit.speed(), 0.1f));
-            }
-            CoreBuild theirs = Geometry.findClosest(hx, hy, foe().cores());
-            float trip = theirs == null ? 0f : Mathf.dst(hx, hy, theirs.x, theirs.y) / slowest;
-            waveDue = state.wavetime < trip * 2f + 60f * 60f;
-        }
+        //not while the map has waves still to come that the turrets do not hold by themselves: the army is the rest of what holds
+        //home, and the map is won by holding them all. (on the fourth sector walkers set out between waves, the attack took
+        //minutes of gathering and fighting, not the half minute of walking, and the next wave took the base while they were
+        //out; sized by the walk, eleven of sixteen were lost that way)
+        boolean waveDue = state.rules.waves && state.rules.winWave > 0 && state.wave < state.rules.winWave && !turretsHold && out.isEmpty();
         if(!waveDue && (home.size >= enough || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
             //those waiting at home go out, as a group of their own or to join the one that is out
             for(Unit unit : home) field.add(unit.id);
