@@ -4606,7 +4606,7 @@ public class Brain{
             //none of the kinds that have a place can be paid for: the one whose turn it was is saved up for
             saveFor(wanted.main(), wanted.needs());
             notes.put("post", "saving for " + wanted.name);
-            if(attacked()){
+            if(attacked() && !futile(wanted.needs())){
                 //and while it is attacked, nothing else is paid for out of what this is short of
                 guardCost = wanted.needs();
                 guardUntil = clock + Math.max(Options.planInterval.get() * 60f * 3f, 60f * 30f);
@@ -4951,9 +4951,21 @@ public class Brain{
     private void saveFor(Block block, ItemStack[] cost){
         //something else is being saved for already, and this is one of the others having its go meanwhile
         if(!kept.isEmpty()) return;
+        //nor is anything kept back for what waiting will never pay for: something it is short of, and has neither coming in nor
+        //a source of. (on the seventh sector the turret it saved for wanted graphite it had no mine of, and the beryllium it kept
+        //back for it was what the graphite mine was waiting for: both waited for an hour and a half)
+        if(futile(cost)) return;
         saving = true;
         savingCost = cost;
         waitFor(block);
+    }
+
+    /** Whether a cost can't be met by waiting: some of it is short, with none of it coming in and no source of it. */
+    private boolean futile(ItemStack[] cost){
+        for(ItemStack stack : cost){
+            if(stock.have(stack.item) < stack.amount && stock.income(stack.item) == 0 && !hasSource(stack.item)) return true;
+        }
+        return false;
     }
 
     private int shift, firstShift;
