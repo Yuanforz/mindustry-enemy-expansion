@@ -316,6 +316,9 @@ public class Brain{
         setOut = 0;
         strike = false;
         stageFor = null;
+        siegeLoss = -1f;
+        siegeFrom = 0;
+        siegeStand = null;
         aimAt = null;
         frontAt = -1;
         contactTime = 0f;
@@ -990,15 +993,31 @@ public class Brain{
             }
             //they come at it together, from out of reach of its guns: one by one they would be picked off as they came up
             if(lone != stageFor){
+                boolean took = stageFor != null && !stageFor.isValid();
+                //what the last siege cost, measured: from when it began to when what it besieged was down
+                if(took && siegeFrom > 0) siegeLoss = siegeLoss < 0f ? siegeFrom - out.size : (siegeLoss + siegeFrom - out.size) / 2f;
+                stage(lone);
+                //a place just taken is held from where it was besieged, out of reach of the rest: the other side builds again what
+                //was pushed down, and units standing there keep it down while more come out to them. (gathering again further
+                //back, the group came on to find the breach it had taken built again)
+                if(took && siegeStand != null && danger(siegeStand.x, siegeStand.y, tilesize * 4f) == 0){
+                    stageX = siegeStand.x;
+                    stageY = siegeStand.y;
+                }
                 stageFor = lone;
                 gathered = false;
                 gatherSince = clock;
-                stage(lone);
             }
             if(!gathered){
+                //until most of it has come up and there are enough of it for what a siege has cost
                 int near = out.count(unit -> unit.within(stageX, stageY, tilesize * 10f));
-                if(near >= out.size * 0.75f || clock - gatherSince > 60f * 45f){
+                int need = Math.min(Math.max(5, (int)Math.ceil(Math.max(siegeLoss, 0f) * 2f) + 2), Math.max(Units.getCap(team()) - 1, 5));
+                boolean strong = out.size >= need;
+                if((near >= out.size * 0.75f && strong) || clock - gatherSince > 60f * (strong ? 45f : 180f)){
                     gathered = true;
+                    siegeFrom = out.size;
+                    float[] spot = siegeSpot(lone, out.first().range());
+                    siegeStand = spot == null ? null : new Vec2(lone.x + Angles.trnsx(spot[0], out.first().range() * 0.6f), lone.y + Angles.trnsy(spot[0], out.first().range() * 0.6f));
                 }else{
                     for(Unit unit : out) post(unit, stageX, stageY);
                     return;
@@ -1058,6 +1077,11 @@ public class Brain{
         }
         for(Unit unit : out) send(unit, aim);
     }
+
+    /** How many units a siege has cost lately, measured, or less than 0 before any; how many began the one going on; and where they stood for it. */
+    private float siegeLoss = -1f;
+    private int siegeFrom;
+    private @Nullable Vec2 siegeStand;
 
     /** Where the group out on the attack comes together before it goes in, and whether it has. */
     private @Nullable Building stageFor;
