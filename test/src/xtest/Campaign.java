@@ -469,6 +469,18 @@ public class Campaign{
                         System.out.println(out);
                     }
                 }
+                if(System.getProperty("xp.whyat") != null){
+                    //why nothing may go on the ground about a place, a letter a tile (see Brain.whyNot), at the minutes named
+                    String[] at = System.getProperty("xp.whyat").split(",");
+                    int wx = Integer.parseInt(at[0]), wy = Integer.parseInt(at[1]), wr = Integer.parseInt(at[2]);
+                    if(minute == Integer.parseInt(at[3])){
+                        for(int y = wy + wr; y >= wy - wr; y--){
+                            StringBuilder row = new StringBuilder(String.format("    why %4d ", y));
+                            for(int x = wx - wr; x <= wx + wr; x++) row.append(brain.whyNot(x, y));
+                            System.out.println(row);
+                        }
+                    }
+                }
                 if(System.getProperty("xp.notes") != null){
                     //what it last said about the goals named
                     for(String key : System.getProperty("xp.notes").split(",")) System.out.println("           note " + key + ": " + brain.note(key));
