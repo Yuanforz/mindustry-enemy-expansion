@@ -323,7 +323,7 @@ public class Brain{
         strike = false;
         stageFor = null;
         siegeLoss = -1f;
-        siegeFrom = 0;
+        siegeFrom = 0f;
         siegeStand = null;
         aimAt = null;
         frontAt = -1;
@@ -1038,7 +1038,11 @@ public class Brain{
             if(lone != stageFor){
                 boolean took = stageFor != null && !stageFor.isValid();
                 //what the last siege cost, measured: from when it began to when what it besieged was down
-                if(took && siegeFrom > 0) siegeLoss = siegeLoss < 0f ? siegeFrom - out.size : (siegeLoss + siegeFrom - out.size) / 2f;
+                if(took && siegeFrom > 0f){
+                    float now = 0f;
+                    for(Unit unit : out) now += unit.health;
+                    siegeLoss = siegeLoss < 0f ? siegeFrom - now : (siegeLoss + siegeFrom - now) / 2f;
+                }
                 stage(lone);
                 //a place just taken is held from where it was besieged, out of reach of the rest: the other side builds again what
                 //was pushed down, and units standing there keep it down while more come out to them. (gathering again further
@@ -1052,13 +1056,20 @@ public class Brain{
                 gatherSince = clock;
             }
             if(!gathered){
-                //until most of it has come up and there are enough of it for what a siege has cost
+                //until most of it has come up and it has health enough for what a siege has cost, measured: twice that, and two
+                //units more. health, not heads: its units do not mend, and twelve ships with a fifth of their health left went
+                //against the third breach of the third sector and were four in six seconds
                 int near = out.count(unit -> unit.within(stageX, stageY, tilesize * 10f));
-                int need = Math.min(Math.max(5, (int)Math.ceil(Math.max(siegeLoss, 0f) * 2f) + 2), Math.max(Units.getCap(team()) - 1, 5));
-                boolean strong = out.size >= need;
-                if((near >= out.size * 0.75f && strong) || clock - gatherSince > 60f * (strong ? 45f : 180f)){
+                float health = 0f, whole = 0f;
+                for(Unit unit : out){
+                    health += unit.health;
+                    whole = Math.max(whole, unit.maxHealth);
+                }
+                float need = Math.min(Math.max(siegeLoss, 0f) * 2f + whole * 2f, whole * Math.max(Units.getCap(team()) - 1, 5));
+                boolean strong = out.size >= 5 && health >= need;
+                if((near >= out.size * 0.75f && strong) || clock - gatherSince > 60f * (strong ? 45f : 300f)){
                     gathered = true;
-                    siegeFrom = out.size;
+                    siegeFrom = health;
                     float[] spot = siegeSpot(lone, out.first().range());
                     siegeStand = spot == null ? null : new Vec2(lone.x + Angles.trnsx(spot[0], out.first().range() * 0.6f), lone.y + Angles.trnsy(spot[0], out.first().range() * 0.6f));
                 }else{
@@ -1121,9 +1132,9 @@ public class Brain{
         for(Unit unit : out) send(unit, aim);
     }
 
-    /** How many units a siege has cost lately, measured, or less than 0 before any; how many began the one going on; and where they stood for it. */
+    /** How much of its units' health a siege has cost lately, measured, or less than 0 before any; how much the one going on began with; and where they stood for it. */
     private float siegeLoss = -1f;
-    private int siegeFrom;
+    private float siegeFrom;
     private @Nullable Vec2 siegeStand;
 
     /** Where the group out on the attack comes together before it goes in, and whether it has. */
@@ -1300,48 +1311,64 @@ public class Brain{
             for(Building build : other.buildings) if(build instanceof Turret.TurretBuild && ((Turret)build.block).targetGround) turrets.add(build);
         }
         if(turrets.isEmpty()) return null;
+        //what each cell costs to cross: one, and a good deal more for each turret that reaches it; ground no unit of its kind
+        //crosses is shut. where no way round every turret is to be had, the way under the fewest guns is the one taken (a way
+        //round all of them or none, ships sent to the far side of the third sector's core went straight past the outposts and
+        //the breaches between, and came up with half their health)
+        int[] exposed = new int[width * height];
         boolean[] shut = new boolean[width * height];
+        boolean straight = true;
         for(int cx = 0; cx < width; cx++){
             for(int cy = 0; cy < height; cy++){
                 float wx = (cx * cell + cell / 2f) * tilesize, wy = (cy * cell + cell / 2f) * tilesize;
                 Tile tile = world.tileWorld(wx, wy);
-                boolean blocked = tile == null || (!unit.type.flying && tile.solid() && tile.build == null);
-                for(int i = 0; i < turrets.size && !blocked; i++){
+                shut[cx + cy * width] = tile == null || (!unit.type.flying && tile.solid() && tile.build == null);
+                int guns = 0;
+                for(int i = 0; i < turrets.size; i++){
                     Building t = turrets.get(i);
-                    blocked = t.within(wx, wy, ((Turret)t.block).range + tilesize * siegeMargin);
+                    if(t.within(wx, wy, ((Turret)t.block).range + tilesize * siegeMargin)) guns++;
                 }
-                shut[cx + cy * width] = blocked;
+                exposed[cx + cy * width] = guns;
             }
         }
-        //clear already: straight there
-        boolean straight = true;
         float length = Mathf.dst(unit.x, unit.y, tx, ty);
         for(float along = 0f; along < length && straight; along += tilesize * cell){
             float px = Mathf.lerp(unit.x, tx, along / length), py = Mathf.lerp(unit.y, ty, along / length);
             int c = Mathf.clamp((int)(px / tilesize / cell), 0, width - 1) + Mathf.clamp((int)(py / tilesize / cell), 0, height - 1) * width;
-            straight = !shut[c];
+            straight = exposed[c] == 0 && !shut[c];
         }
         if(straight) return null;
         int start = Mathf.clamp((int)(unit.x / tilesize / cell), 0, width - 1) + Mathf.clamp((int)(unit.y / tilesize / cell), 0, height - 1) * width;
         int goal = Mathf.clamp((int)(tx / tilesize / cell), 0, width - 1) + Mathf.clamp((int)(ty / tilesize / cell), 0, height - 1) * width;
+        float[] cost = new float[width * height];
         int[] from = new int[width * height];
+        java.util.Arrays.fill(cost, Float.MAX_VALUE);
         java.util.Arrays.fill(from, -1);
+        cost[start] = 0f;
         from[start] = start;
-        IntQueue queue = new IntQueue();
-        queue.addLast(start);
-        while(!queue.isEmpty() && from[goal] == -1){
-            int at = queue.removeFirst(), ax = at % width, ay = at / width;
+        java.util.PriorityQueue<long[]> queue = new java.util.PriorityQueue<>((a, b) -> Long.compare(a[0], b[0]));
+        queue.add(new long[]{0, start});
+        while(!queue.isEmpty()){
+            long[] head = queue.poll();
+            int at = (int)head[1];
+            if(head[0] > (long)(cost[at] * 100f) + 1) continue;
+            if(at == goal) break;
+            int ax = at % width, ay = at / width;
             for(int d = 0; d < 8; d++){
                 int x = ax + Geometry.d8(d).x, y = ay + Geometry.d8(d).y, next = x + y * width;
-                if(x < 0 || y < 0 || x >= width || y >= height || from[next] != -1 || (shut[next] && next != goal)) continue;
+                if(x < 0 || y < 0 || x >= width || y >= height || (shut[next] && next != goal)) continue;
+                float step = (d % 2 == 0 ? 1f : 1.41f) * (1f + exposed[next] * 20f);
+                if(cost[at] + step >= cost[next]) continue;
+                cost[next] = cost[at] + step;
                 from[next] = at;
-                queue.addLast(next);
+                queue.add(new long[]{(long)(cost[next] * 100f), next});
             }
         }
         if(from[goal] == -1) return null;
         Seq<Vec2> out = new Seq<>();
         for(int at = goal; at != start; at = from[at]) out.add(new Vec2((at % width * cell + cell / 2f) * tilesize, (at / width * cell + cell / 2f) * tilesize));
         out.reverse();
+        if(out.isEmpty()) return null;
         out.set(out.size - 1, new Vec2(tx, ty));
         return out;
     }
