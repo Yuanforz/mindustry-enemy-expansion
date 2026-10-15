@@ -880,7 +880,7 @@ public class Planner{
             }
             add(project, layout);
             if(!lead(project, layout, Net.Kind.mine, item, beams * Rates.beam(drill, item))){
-                drop(project, "no way to lay a line from " + layout.main().x + "," + layout.main().y + " to a core (looked at " + lines.lastLooked + " places)");
+                drop(project, "no way to lay a line from " + layout.main().x + "," + layout.main().y + " to a core (looked at " + lines.lastLooked + " places: built on " + lines.shutBy[1] + ", closed " + lines.shutBy[0] + ", pushed into " + lines.shutBy[2] + ", no bridge " + lines.shutBy[3] + ")");
                 continue;
             }
             if(!plumb(project, layout.parts)){
