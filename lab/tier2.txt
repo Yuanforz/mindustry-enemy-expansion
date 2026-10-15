@@ -1,0 +1,137 @@
+# Layouts tried out by hand, to learn how the blocks of the second tier have to stand.
+# Sandbox sources stand in for supplies that are not part of what is being tried.
+
+# water from a sandbox source: does the drill run, and what does it give?
+[drill-source]
+impact-drill 0 0
+liquid-source -2 0 water
+power-source 3 0
+reinforced-vault 0 4
+
+# the same with real water: two turbines on vents, a conduit from each
+[drill-turbines]
+impact-drill 0 0
+turbine-condenser -6 0
+reinforced-conduit -4 0 0
+reinforced-conduit -3 0 0
+reinforced-conduit -2 0 0
+turbine-condenser -6 4
+reinforced-conduit -4 4 0
+reinforced-conduit -3 4 0
+reinforced-conduit -2 4 3
+reinforced-conduit -2 3 3
+reinforced-conduit -2 2 3
+reinforced-conduit -2 1 0
+beam-node -4 2
+reinforced-vault 0 4
+
+# water from a condenser on a vent into an electrolyzer; its two gases into tanks
+[electrolyzer]
+vent-condenser 0 0
+reinforced-conduit 2 0 0
+reinforced-conduit 3 0 0
+electrolyzer 5 0 0
+reinforced-conduit 5 2 1
+reinforced-conduit 5 3 1
+reinforced-liquid-tank 5 5
+reinforced-conduit 5 -2 3
+reinforced-conduit 5 -3 3
+reinforced-liquid-tank 5 -5
+power-source 0 2
+power-source 7 0
+
+# a fabricator facing into a refabricator
+[refab]
+tank-fabricator 0 0 0
+tank-refabricator 3 0 0
+item-source 0 2 beryllium
+item-source 0 -2 silicon
+item-source 3 2 silicon
+item-source 3 -2 tungsten
+liquid-source 4 2 hydrogen
+power-source -2 0
+power-source 2 2
+
+# two turbines give a drill both its water and its power: a node next to one turbine, its beam ending on the drill
+[drill-two-turbines]
+impact-drill 0 0
+turbine-condenser -6 0
+reinforced-conduit -4 0 0
+reinforced-conduit -3 0 0
+reinforced-conduit -2 0 0
+turbine-condenser -6 4
+reinforced-conduit -4 4 0
+reinforced-conduit -3 4 0
+reinforced-conduit -2 4 3
+reinforced-conduit -2 3 3
+reinforced-conduit -2 2 3
+reinforced-conduit -2 1 0
+beam-node -4 1
+beam-node -4 3
+reinforced-vault 0 4
+
+# hydrogen from an electrolyzer to a refabricator by conduit, over a duct on the way by a bridge
+[gas-over-duct]
+vent-condenser 0 0
+reinforced-conduit 2 0 0
+electrolyzer 4 0 0
+reinforced-conduit 4 -2 3
+reinforced-bridge-conduit 4 -3 3
+duct 3 -4 0
+duct 4 -4 0
+duct 5 -4 0
+reinforced-bridge-conduit 4 -5 3
+reinforced-conduit 4 -6 3
+tank-refabricator 4 -8 0
+tank-fabricator 1 -8 0
+item-source 1 -10 beryllium
+item-source 0 -10 silicon
+item-source 4 -10 silicon
+item-source 5 -10 tungsten
+power-source 0 2
+power-source 6 0
+power-source 6 -8
+power-source -1 -8
+item-source 2 -4 graphite
+item-void 6 -4
+
+# does a conduit that only runs past a turbine take water from it? (it should not)
+[conduit-past]
+turbine-condenser 0 0
+reinforced-conduit -1 2 0
+reinforced-conduit 0 2 0
+reinforced-conduit 1 2 0
+reinforced-liquid-tank 3 2
+
+# the same with the tank well away from the turbine, so that only the conduit could bring it water
+[conduit-past-2]
+turbine-condenser 0 0
+reinforced-conduit -1 2 0
+reinforced-conduit 0 2 0
+reinforced-conduit 1 2 0
+reinforced-conduit 2 2 0
+reinforced-conduit 3 2 0
+reinforced-liquid-tank 5 2
+
+# a liquid router next to a turbine, with conduits leading off it two ways: does one source feed two takers?
+[split]
+vent-condenser 0 0
+reinforced-liquid-router 2 0
+reinforced-conduit 3 0 0
+reinforced-conduit 4 0 0
+reinforced-liquid-tank 6 0
+reinforced-conduit 2 1 1
+reinforced-conduit 2 2 1
+reinforced-liquid-tank 2 4
+power-source 0 -2
+
+# two conduits leaving one condenser from two of its sides, no router
+[two-ways]
+vent-condenser 0 0
+reinforced-conduit 2 0 0
+reinforced-conduit 3 0 0
+reinforced-liquid-tank 5 0
+reinforced-conduit 0 2 1
+reinforced-conduit 0 3 1
+reinforced-liquid-tank 0 5
+power-source 0 -2

@@ -1,0 +1,9 @@
+name: "xp-watch"
+displayName: "Enemy Expansion: trial games"
+description: "Only for trying the Enemy Expansion mod out: starts a generated Erekir map to play on or to watch the enemy build. Loaded only by play.sh, in a data folder of its own."
+version: "1.1"
+minGameVersion: "154"
+java: true
+main: "xpwatch.XpWatchMod"
+hidden: true
+dependencies: ["enemy-expansion"]

@@ -1,0 +1,83 @@
+# Layouts tried out by hand for the third tier: oxide, liquid-fed turrets, the big wall drill, heat.
+# Sandbox sources stand in for supplies that are not part of what is being tried.
+
+# an oxidation chamber: ozone by touch, beryllium by touch, oxide out by a duct on its free side
+[oxide]
+oxidation-chamber 0 0 0
+liquid-source -2 0 ozone
+item-source 0 -2 beryllium
+duct 2 0 0
+duct 3 0 0
+duct 4 0 0
+reinforced-vault 6 0
+power-source 0 2
+
+# does the oxide come out of every side, or only where the chamber does not face?
+[oxide-sides]
+oxidation-chamber 0 0 0
+liquid-source -2 1 ozone
+item-source -2 -1 beryllium
+duct 0 2 1
+reinforced-vault 0 4
+duct 0 -2 3
+reinforced-vault 0 -5
+duct 2 0 0
+reinforced-vault 4 0
+power-source -2 0
+
+# a sublimate with a liquid container right behind it, ozone piped into the container
+[sublimate-buffer]
+sublimate 0 0 0
+reinforced-liquid-container -3 0
+reinforced-conduit -4 0 0
+reinforced-conduit -5 0 0
+liquid-source -6 0 ozone
+
+# ozone piped straight into the sublimate, with a container touching it too: does the container fill?
+[sublimate-direct]
+sublimate 0 0 0
+reinforced-liquid-container -3 0
+reinforced-conduit 0 -2 1
+reinforced-conduit 0 -3 1
+liquid-source 0 -4 ozone
+
+# a large plasma bore at a wall, hydrogen by touch
+[large-bore]
+large-plasma-bore 0 0 0
+liquid-source 0 2 hydrogen
+power-source 0 -2
+duct -2 0 2
+duct -3 0 2
+reinforced-vault -5 0
+
+# two large bores side by side with a duct behind, hydrogen led along them by conduit past a router each
+[large-bore-pair]
+large-plasma-bore 0 0 0
+large-plasma-bore 0 3 0
+duct -2 -1 1
+duct -2 0 1
+duct -2 1 1
+duct -2 2 1
+duct -2 3 1
+duct -2 4 1
+duct -2 5 1
+reinforced-vault -2 7
+liquid-source 0 -2 hydrogen
+power-source 2 -2
+beam-node 1 -2
+
+# heat: electric heaters facing into a concentrator, straight on and through a redirector
+[heat-direct]
+atmospheric-concentrator 0 0
+electric-heater -3 0 0
+electric-heater 0 -3 1
+electric-heater 2 0 2
+electric-heater 0 2 3
+power-source -5 0
+power-source 0 -5
+power-source 4 1
+power-source 1 4
+power-source -2 2
+reinforced-conduit -2 -2 2
+reinforced-conduit -3 -2 2
+reinforced-liquid-tank -6 -3

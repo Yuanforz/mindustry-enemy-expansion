@@ -1,0 +1,7 @@
+# 发电 / Power
+
+# 喷口上的涡轮冷凝器，旁边一个节点用来向外连。
+# A turbine condenser on a vent, with a beam node next to it to link up from.
+[turbine]
+turbine-condenser 0 0
+beam-node 2 0

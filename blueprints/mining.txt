@@ -1,0 +1,53 @@
+# 采矿 / Mining
+#
+# 格式见 docs/BLUEPRINTS.md。+x 是正面：钻机的正面朝矿壁。
+# The front is +x: drills face the ore wall.
+
+# 一排等离子钻机，背后一条收集管道，每台钻机旁一个电力节点。
+# A row of plasma bores, a collecting duct behind them, and a beam node for each.
+# boost：以后有了氢气，就在每台钻机正前方放液体路由器把氢送进去（产量 ×2.5）。液体路由器不是实心方块，
+# 放在激光下面不挡激光；一排路由器彼此相贴，氢从任意一个进来就能传遍整排。钻机紧贴岩壁、前面没有空格的地方放不下。
+# boost: once there is hydrogen, liquid routers go right in front of each bore to let it in (2.5 times
+# the ore). A liquid router is not solid, so the beams pass over it, and a column of them hands the
+# gas along from wherever it comes in. Where a bore stands right against the wall there is no room.
+[bore-row]
+plasma-bore 0 0 0
+duct -1 0 1
+duct -1 1 1
+beam-node -2 1
+boost hydrogen 2 0
+boost hydrogen 2 1
+row 0 2 6
+out -1 2
+
+# 一排碎岩机，贴着含沙的岩壁。沙子不能进核心，只能直接送去硅炉。
+# A row of cliff crushers against a wall that yields sand. Sand can't go into a core: it has to be led straight to a furnace.
+[crusher-row]
+cliff-crusher 0 0 0
+duct -1 0 1
+duct -1 1 1
+beam-node -2 1
+row 0 2 8
+out -1 2
+
+# 冲击钻机：压在地面矿上。它要的水由模组自动用导管从涡轮或冷凝器引来；矿石从上方出。
+# 两台涡轮冷凝器正好同时供够一台冲击钻机的水和电。
+# An impact drill, standing on ore in the floor. The water it needs is piped to it from turbines or condensers; ore leaves at the top.
+[impact-pad]
+impact-drill 0 0
+beam-node 3 0
+out 0 3
+
+# 大型等离子钻机：能开采岩壁里的钨和钍。岩壁上的矿脉通常很窄，所以三道光束里有两道打在矿上就算合格。
+# 运转需要氢气，由模组用导管从电解器引来：一台从下面接，并排的第二台从上面接。
+# The large plasma bore gets tungsten and thorium out of walls. Veins are narrow, so two of its three
+# beams on ore will do. It runs on hydrogen, piped from an electrolyzer: to one from below, to a
+# second standing beside it from above.
+[large-bore]
+large-plasma-bore 0 0 0
+duct -2 -1 1
+duct -2 0 1
+duct -2 1 1
+beam-node -3 0
+row 0 3 2
+out -2 2

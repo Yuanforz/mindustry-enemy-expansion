@@ -1,0 +1,6 @@
+# build output, test runs, copied saves
+build/
+# other people's schematics, collected only for reading; each has its own licence (see reference/README.md)
+reference/schematics/
+.DS_Store
+*.class

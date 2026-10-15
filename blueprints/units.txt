@@ -1,0 +1,149 @@
+# 兵营 / Unit yards
+# 正面 +x 是出兵口，朝向玩家。
+# The front, +x, is where units come out, towards the player.
+
+[tank-yard]
+tank-fabricator 0 0 0 stell
+beam-node -2 1
+in beryllium 0 -2 1
+in silicon 0 2 3
+
+[ship-yard]
+ship-fabricator 0 0 0 elude
+beam-node -2 1
+in graphite 0 -2 1
+in silicon 0 2 3
+
+[mech-yard]
+mech-fabricator 0 0 0 merui
+beam-node -2 1
+in beryllium 0 -2 1
+in silicon 0 2 3
+
+# 同一种兵营的其他摆法：场地挤的时候用。两种原料都从背后进。
+# Other ways of laying out the same yards, for where there is little room: both supplies come in from behind.
+
+[tank-yard-back]
+tank-fabricator 0 0 0 stell
+beam-node -2 0
+in beryllium -2 -1 0
+in silicon -2 1 0
+
+[ship-yard-back]
+ship-fabricator 0 0 0 elude
+beam-node -2 0
+in graphite -2 -1 0
+in silicon -2 1 0
+
+[mech-yard-back]
+mech-fabricator 0 0 0 merui
+beam-node -2 0
+in beryllium -2 -1 0
+in silicon -2 1 0
+
+# ---- 二级：兵工厂正对着重构厂，造出来的单位直接进去升级 ----
+# 重构厂要的氢由模组用导管从电解器引来。正面 +x 是重构厂的出口。
+# 两台机器都要硅：一条硅线从上方进来，经过夹在两台机器之间的路由器，同时喂给两边（官方 Onset 基地里两座兵工厂共用补给的做法）。
+# Second tier: a fabricator facing straight into a refabricator, which takes each unit as it comes out.
+# The hydrogen the refabricator needs is piped from an electrolyzer.
+
+[tank-works]
+tank-fabricator 0 0 0 stell
+tank-refabricator 3 0 0
+duct-router 1 2 0
+duct 2 2 3
+beam-node 0 -2
+beam-node 4 -2
+in silicon 0 2 0
+in beryllium -2 0 0
+in tungsten 4 2 3
+
+[mech-works]
+mech-fabricator 0 0 0 merui
+mech-refabricator 3 0 0
+duct-router 1 2 0
+duct 2 2 3
+beam-node 0 -2
+beam-node 4 -2
+in silicon 0 2 0
+in beryllium -2 0 0
+in tungsten 4 2 3
+
+[ship-works]
+ship-fabricator 0 0 0 elude
+ship-refabricator 3 0 0
+duct-router 1 2 0
+duct 2 2 3
+beam-node 0 -2
+beam-node 4 -2
+in silicon 0 2 0
+in graphite -2 0 0
+in tungsten 4 2 3
+
+# ---- 加装：给已经立着的兵工厂接上重构厂 ----
+# 第一行以 @ 开头的是"锚"：必须已经立着的方块，不会再建一次；其余部分相对它摆放。
+# 重构厂正贴在兵工厂的出兵口前，造出来的单位直接进去升级。硅和钨各从上方进来，氢由模组用导管引来。
+# 电力节点写了三个位置，都带 ?：放不下的就不放，有一个就够。
+# Additions: put up against a block that already stands. The first line, with an @, is that block: it is
+# not built again, and everything else is placed from it. The refabricator stands right in front of
+# the fabricator and takes each unit as it comes out. Silicon and tungsten come in from above; the
+# hydrogen is piped. The beam nodes are written three times over, each with a ?: one that has no room is
+# left out, and any one of them will do.
+
+[tank-refit]
+@tank-fabricator 0 0 0 stell
+tank-refabricator 3 0 0
+?beam-node 4 -2
+?beam-node 3 2
+?beam-node 2 -2
+in silicon 4 2 3
+in tungsten 2 2 3
+
+[mech-refit]
+@mech-fabricator 0 0 0 merui
+mech-refabricator 3 0 0
+?beam-node 4 -2
+?beam-node 3 2
+?beam-node 2 -2
+in silicon 4 2 3
+in tungsten 2 2 3
+
+[ship-refit]
+@ship-fabricator 0 0 0 elude
+ship-refabricator 3 0 0
+?beam-node 4 -2
+?beam-node 3 2
+?beam-node 2 -2
+in silicon 4 2 3
+in tungsten 2 2 3
+
+# 同样的加装，另一种进料方式：硅从上方、钨从下方。前一种放不下时用。
+# The same additions with the lines coming in another way, silicon from above and tungsten from below,
+# for where the first will not go.
+
+[tank-refit-split]
+@tank-fabricator 0 0 0 stell
+tank-refabricator 3 0 0
+?beam-node 4 -2
+?beam-node 4 2
+?beam-node 2 -2
+in silicon 3 2 3
+in tungsten 3 -2 1
+
+[mech-refit-split]
+@mech-fabricator 0 0 0 merui
+mech-refabricator 3 0 0
+?beam-node 4 -2
+?beam-node 4 2
+?beam-node 2 -2
+in silicon 3 2 3
+in tungsten 3 -2 1
+
+[ship-refit-split]
+@ship-fabricator 0 0 0 elude
+ship-refabricator 3 0 0
+?beam-node 4 -2
+?beam-node 4 2
+?beam-node 2 -2
+in silicon 3 2 3
+in tungsten 3 -2 1

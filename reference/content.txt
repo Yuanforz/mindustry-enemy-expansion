@@ -1,0 +1,434 @@
+# tech nodes: 152
+block core-bastion | parent=- | research=graphite2900+silicon2900+beryllium2300 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=4 hp=4500 cost=graphite1000+silicon1000+beryllium800 buildTime=1932 rotate=false itemCap=2000 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=true envReq=0
+    consumes:
+    core: unit=evoke capacity=2000 unitCapModifier=15 incinerateNonBuildable=true
+block duct | parent=core-bastion | research=beryllium4 | objectives=[Research:???requirement.research???, OnPlanet:???requirement.onplanet???]
+     size=1 hp=90 cost=beryllium1 buildTime=1 rotate=true itemCap=1 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=false envReq=0
+    consumes:
+    duct: speed=4.0 armored=false
+block duct-router | parent=duct | research=beryllium27 | objectives=[Research:???requirement.research???]
+     size=1 hp=90 cost=beryllium10 buildTime=12 rotate=true itemCap=1 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=false envReq=0
+    consumes:
+block duct-bridge | parent=duct-router | research=beryllium90 | objectives=[Research:???requirement.research???]
+     size=1 hp=90 cost=beryllium15 buildTime=36 rotate=true itemCap=4 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=true envReq=0
+    consumes:
+    ductbridge: range=4 speed=4.0
+block armored-duct | parent=duct-bridge | research=beryllium270+tungsten90 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=140 cost=beryllium2+tungsten1 buildTime=4 rotate=true itemCap=1 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=false envReq=0
+    consumes:
+    duct: speed=4.0 armored=true
+block surge-conveyor | parent=armored-duct | research=surge-alloy21+tungsten72 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=130 cost=surge-alloy1+tungsten1 buildTime=3 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=transportation solid=false envReq=0
+    consumes: power[0.0167/t]
+block surge-router | parent=surge-conveyor | research=surge-alloy70+tungsten72 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=130 cost=surge-alloy5+tungsten1 buildTime=8 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=transportation solid=false envReq=0
+    consumes: power[0.0500/t]
+block unit-cargo-loader | parent=duct-bridge | research=silicon2250+surge-alloy14+oxide15 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=630 cost=silicon80+surge-alloy50+oxide20 buildTime=148 rotate=false itemCap=200 liquidCap=100.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[0.1333/t] liquid[nitrogen 0.1667/t]
+block unit-cargo-unload-point | parent=unit-cargo-loader | research=silicon2700+oxide10 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=285 cost=silicon60+tungsten60 buildTime=138 rotate=false itemCap=100 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes:
+block overflow-duct | parent=duct-router | research=graphite270+beryllium270 | objectives=[Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=1 hp=90 cost=graphite8+beryllium8 buildTime=18 rotate=true itemCap=1 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=false envReq=0
+    consumes:
+block underflow-duct | parent=overflow-duct | research=graphite270+beryllium270 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=90 cost=graphite8+beryllium8 buildTime=18 rotate=true itemCap=1 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=false envReq=0
+    consumes:
+block reinforced-container | parent=overflow-duct | research=graphite1080+tungsten810 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=480 cost=graphite40+tungsten30 buildTime=85 rotate=false itemCap=160 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=true envReq=0
+    consumes:
+block duct-unloader | parent=reinforced-container | research=graphite540+silicon540+tungsten270 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=120 cost=graphite20+silicon20+tungsten10 buildTime=51 rotate=true itemCap=0 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=false envReq=0
+    consumes:
+    unloader: speed=4.0 allowCoreUnload=false
+block reinforced-vault | parent=reinforced-container | research=thorium1980+beryllium2970+tungsten3870 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=1080 cost=thorium70+beryllium100+tungsten125 buildTime=385 rotate=false itemCap=900 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=true envReq=0
+    consumes:
+block reinforced-message | parent=duct-router | research=graphite270+beryllium90 | objectives=[Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=1 hp=100 cost=graphite10+beryllium5 buildTime=16 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=logic solid=true envReq=0
+    consumes:
+block canvas | parent=reinforced-message | research=silicon270+beryllium270 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=255 cost=silicon10+beryllium10 buildTime=20 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes:
+block large-canvas | parent=canvas | research=silicon360+surge-alloy70+beryllium360 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=665 cost=silicon15+surge-alloy5+beryllium15 buildTime=36 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes:
+block reinforced-payload-conveyor | parent=duct | research=tungsten1080 | objectives=[Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=800 cost=tungsten10 buildTime=15 rotate=true itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=payloads solid=false envReq=0
+    consumes:
+block payload-mass-driver | parent=reinforced-payload-conveyor | research=graphite540+silicon1350+tungsten1080 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=645 cost=graphite20+silicon50+tungsten40 buildTime=120 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[0.5000/t]
+block payload-loader | parent=payload-mass-driver | research=graphite2340+silicon5040+tungsten2700 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=645 cost=graphite80+silicon160+tungsten90 buildTime=343 rotate=true itemCap=100 liquidCap=100.0 hasPower=true outputsPower=false consumesPower=true group=payloads solid=false envReq=0
+    consumes: power[0.0000/t]
+block payload-unloader | parent=payload-loader | research=graphite4320+silicon7200+tungsten5760 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=645 cost=graphite140+silicon220+tungsten180 buildTime=586 rotate=true itemCap=100 liquidCap=100.0 hasPower=true outputsPower=true consumesPower=true group=payloads solid=false envReq=0
+    consumes: power[2.0000/t]
+block large-payload-mass-driver | parent=payload-unloader | research=graphite1710+silicon4680+phase-fabric60+tungsten3690+oxide450 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=5 hp=2550 cost=graphite60+silicon150+phase-fabric10+tungsten120+oxide30 buildTime=409 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[3.0000/t]
+block constructor | parent=payload-mass-driver | research=silicon1350+beryllium2160+tungsten1080 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=860 cost=silicon50+beryllium75+tungsten40 buildTime=190 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=payloads solid=true envReq=0
+    consumes: ConsumeItemDynamic power[2.5000/t]
+block small-deconstructor | parent=constructor | research=graphite1350+silicon1980+beryllium1980+oxide350 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=755 cost=graphite50+silicon70+beryllium70+oxide25 buildTime=220 rotate=false itemCap=100 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=payloads solid=true envReq=0
+    consumes: power[1.0000/t]
+block large-constructor | parent=small-deconstructor | research=thorium2340+silicon4680+tungsten6480+oxide1650 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=5 hp=2500 cost=thorium80+silicon150+tungsten200+oxide100 buildTime=628 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=payloads solid=true envReq=0
+    consumes: ConsumeItemDynamic power[5.0000/t]
+block deconstructor | parent=small-deconstructor | research=silicon8280+beryllium8280+oxide1650+carbide450 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=5 hp=3195 cost=silicon250+beryllium250+oxide100+carbide50 buildTime=690 rotate=false itemCap=320 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=payloads solid=true envReq=0
+    consumes: power[3.0000/t]
+block reinforced-payload-router | parent=reinforced-payload-conveyor | research=tungsten1620 | objectives=[Research:???requirement.research???]
+     size=3 hp=800 cost=tungsten15 buildTime=23 rotate=true itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=payloads solid=false envReq=0
+    consumes:
+block plasma-bore | parent=core-bastion | research=beryllium9 | objectives=[Research:???requirement.research???]
+     size=2 hp=255 cost=beryllium40 buildTime=48 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[0.1500/t] liquid[hydrogen 0.0042/t](optional)(booster)
+    beamdrill: tier=3 range=5 drillTime=160.0 optionalBoost=2.5
+block impact-drill | parent=plasma-bore | research=graphite810+silicon990+beryllium1350 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=4 hp=1020 cost=graphite60+silicon70+beryllium90 buildTime=224 rotate=false itemCap=40 liquidCap=100.0 hasPower=true outputsPower=false consumesPower=true group=drills solid=true envReq=0
+    consumes: power[2.6667/t] liquid[water 0.1667/t] liquid[ozone 0.0500/t](optional)(booster)
+    drill: tier=6 drillTime=720.0 class=
+block large-plasma-bore | parent=impact-drill | research=silicon1350+oxide100+beryllium2700+tungsten1080 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1040 cost=silicon100+beryllium100+tungsten70+oxide25 buildTime=335 rotate=true itemCap=20 liquidCap=30.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[0.8000/t] liquid[hydrogen 0.0083/t] liquid[nitrogen 0.0500/t](optional)(booster)
+    beamdrill: tier=5 range=6 drillTime=100.0 optionalBoost=2.5
+block eruption-drill | parent=large-plasma-bore | research=thorium4680+silicon9900+tungsten8280+oxide300 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=5 hp=2500 cost=thorium150+silicon300+tungsten250+oxide20 buildTime=804 rotate=false itemCap=60 liquidCap=40.0 hasPower=true outputsPower=false consumesPower=true group=drills solid=true envReq=0
+    consumes: power[6.0000/t] liquid[hydrogen 0.0667/t] liquid[cyanogen 0.0125/t](optional)(booster)
+    drill: tier=7 drillTime=281.25 class=
+block large-cliff-crusher | parent=large-plasma-bore | research=silicon2340+surge-alloy280+beryllium2970+tungsten1350 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=950 cost=silicon80+surge-alloy15+beryllium100+tungsten50 buildTime=277 rotate=true itemCap=20 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[1.0000/t] liquid[hydrogen 0.0167/t] items[graphite1](optional)(booster)
+    wallcrafter: drillTime=48.0 attribute=sand output=sand
+block turbine-condenser | parent=core-bastion | research=beryllium13 | objectives=[Research:???requirement.research???]
+     size=3 hp=575 cost=beryllium60 buildTime=72 rotate=false itemCap=10 liquidCap=20.0 hasPower=true outputsPower=true consumesPower=false group=liquids solid=true envReq=0
+    consumes:
+    generator: production=0.3333/t
+block beam-node | parent=turbine-condenser | research=beryllium4 | objectives=[Research:???requirement.research???]
+     size=1 hp=90 cost=beryllium8 buildTime=10 rotate=false itemCap=10 liquidCap=10.0 hasPower=true outputsPower=true consumesPower=true group=power solid=true envReq=0
+    consumes: power[0.0000/t buffered 1000.0]
+    beamnode: range=10
+block vent-condenser | parent=beam-node | research=graphite540+beryllium1710 | objectives=[Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=575 cost=graphite20+beryllium60 buildTime=92 rotate=false itemCap=0 liquidCap=60.0 hasPower=true outputsPower=false consumesPower=true group=liquids solid=true envReq=0
+    consumes: power[0.5000/t]
+    crafter: time=120.0 outItems=- outLiquids=water0.500/t liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false attribute=steam base=0.0 boostScale=0.11111111 minEff=8.9999
+block chemical-combustion-chamber | parent=vent-condenser | research=graphite1800+tungsten900+oxide5+silicon1350 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=825 cost=graphite40+silicon30+tungsten20+oxide40 buildTime=142 rotate=false itemCap=10 liquidCap=100.0 hasPower=true outputsPower=true consumesPower=false group=power solid=true envReq=0
+    consumes: liquids[ozone0.033/t+arkycite0.667/t]
+    generator: production=9.1667/t
+block pyrolysis-generator | parent=chemical-combustion-chamber | research=graphite1170+silicon1170+oxide350+carbide210 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=935 cost=graphite100+silicon100+oxide60+carbide60 buildTime=336 rotate=false itemCap=10 liquidCap=150.0 hasPower=true outputsPower=true consumesPower=false group=power solid=true envReq=0
+    consumes: liquids[slag0.333/t+arkycite0.667/t]
+    generator: production=23.3333/t
+block flux-reactor | parent=pyrolysis-generator | research=graphite7920+silicon16200+surge-alloy2870+oxide1300+carbide570 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???, Research:???requirement.research???]
+     size=5 hp=2850 cost=graphite240+silicon480+surge-alloy120+oxide80+carbide60 buildTime=948 rotate=false itemCap=10 liquidCap=30.0 hasPower=true outputsPower=true consumesPower=false group=power solid=true envReq=0
+    consumes: liquid[cyanogen 0.1500/t]
+    generator: production=300.0000/t
+block neoplasia-reactor | parent=flux-reactor | research=silicon17100+phase-fabric1040+surge-alloy5040+tungsten27900+oxide2600+carbide3300 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=5 hp=3900 cost=silicon500+phase-fabric150+surge-alloy200+tungsten750+oxide150+carbide300 buildTime=2560 rotate=true itemCap=10 liquidCap=80.0 hasPower=true outputsPower=true consumesPower=false group=power solid=true envReq=0
+    consumes: liquid[arkycite 1.3333/t] liquid[water 0.1667/t] items[phase-fabric1]
+    generator: production=140.0000/t
+block beam-tower | parent=beam-node | research=silicon270+beryllium810+oxide150 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=810 cost=silicon10+beryllium30+oxide10 buildTime=56 rotate=false itemCap=10 liquidCap=10.0 hasPower=true outputsPower=true consumesPower=true group=power solid=true envReq=0
+    consumes: power[0.0000/t buffered 40000.0]
+    beamnode: range=23
+block beam-link | parent=beam-tower | research=silicon8280+phase-fabric480+surge-alloy1680+beryllium8280+oxide2600+carbide720 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1170 cost=silicon250+phase-fabric75+surge-alloy75+beryllium250+oxide150+carbide75 buildTime=973 rotate=false itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=false group=power solid=true envReq=0
+    consumes:
+block regen-projector | parent=beam-node | research=silicon2340+beryllium2340+tungsten1710+oxide600 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1040 cost=silicon80+beryllium80+tungsten60+oxide40 buildTime=298 rotate=false itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=projectors solid=true envReq=0
+    consumes: power[1.0000/t] liquid[hydrogen 0.0167/t] items[phase-fabric1](optional)(booster)
+block build-tower | parent=regen-projector | research=thorium1710+silicon4680+oxide600 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=610 cost=thorium60+silicon150+oxide40 buildTime=234 rotate=false itemCap=10 liquidCap=30.0 hasPower=true outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: power[3.0000/t] liquid[nitrogen 0.0500/t]
+block shockwave-tower | parent=build-tower | research=silicon4680+surge-alloy1050+tungsten2970+oxide450 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=915 cost=silicon150+surge-alloy50+tungsten100+oxide30 buildTime=366 rotate=false itemCap=10 liquidCap=15.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: liquids[cyanogen0.025/t] power[1.6667/t]
+block reinforced-conduit | parent=turbine-condenser | research=beryllium270 | objectives=[Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=1 hp=250 cost=beryllium2 buildTime=2 rotate=true itemCap=10 liquidCap=50.0 hasPower=false outputsPower=false consumesPower=true group=liquids solid=false envReq=0
+    consumes:
+block reinforced-pump | parent=reinforced-conduit | research=silicon540+beryllium1080+tungsten810 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=2 hp=380 cost=silicon20+beryllium40+tungsten30 buildTime=109 rotate=false itemCap=10 liquidCap=160.0 hasPower=false outputsPower=false consumesPower=true group=liquids solid=true envReq=0
+    consumes: liquid[hydrogen 0.0250/t]
+block reinforced-liquid-junction | parent=reinforced-conduit | research=graphite90+beryllium180 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=250 cost=graphite4+beryllium8 buildTime=41 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=liquids solid=false envReq=0
+    consumes:
+block reinforced-bridge-conduit | parent=reinforced-liquid-junction | research=graphite180+beryllium540 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=250 cost=graphite8+beryllium20 buildTime=32 rotate=true itemCap=10 liquidCap=120.0 hasPower=false outputsPower=false consumesPower=true group=liquids solid=true envReq=0
+    consumes:
+block reinforced-liquid-router | parent=reinforced-liquid-junction | research=graphite630+beryllium360 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=250 cost=graphite8+beryllium4 buildTime=13 rotate=false itemCap=10 liquidCap=150.0 hasPower=false outputsPower=false consumesPower=true group=liquids solid=false envReq=0
+    consumes:
+block reinforced-liquid-container | parent=reinforced-liquid-router | research=beryllium1710+tungsten1080 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=400 cost=beryllium16+tungsten10 buildTime=34 rotate=false itemCap=10 liquidCap=1000.0 hasPower=false outputsPower=false consumesPower=true group=liquids solid=true envReq=0
+    consumes:
+block reinforced-liquid-tank | parent=reinforced-liquid-container | research=beryllium1350+tungsten1080 | objectives=[Research:???requirement.research???, Research:???requirement.research???, SectorComplete:???requirement.capture???]
+     size=3 hp=900 cost=beryllium50+tungsten40 buildTime=120 rotate=false itemCap=10 liquidCap=2700.0 hasPower=false outputsPower=false consumesPower=true group=liquids solid=true envReq=0
+    consumes:
+block cliff-crusher | parent=turbine-condenser | research=beryllium90+graphite36 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=255 cost=graphite25+beryllium20 buildTime=49 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[0.1833/t]
+    wallcrafter: drillTime=110.0 attribute=sand output=sand
+block silicon-arc-furnace | parent=cliff-crusher | research=beryllium135+graphite45 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=575 cost=graphite80+beryllium70 buildTime=164 rotate=false itemCap=30 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: items[graphite1+sand4] power[5.0000/t]
+    crafter: time=50.0 outItems=silicon4 outLiquids=- liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false
+block electrolyzer | parent=silicon-arc-furnace | research=graphite1350+silicon1710+beryllium4860+tungsten2790 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=860 cost=graphite40+silicon50+beryllium130+tungsten80 buildTime=356 rotate=true itemCap=0 liquidCap=50.0 hasPower=true outputsPower=false consumesPower=true group=liquids solid=true envReq=0
+    consumes: liquid[water 0.1667/t] power[1.0000/t]
+    crafter: time=10.0 outItems=- outLiquids=ozone0.067/t+hydrogen0.100/t liquidDirs=[1, 3] dumpExtraLiquid=true ignoreLiquidFullness=false
+block oxidation-chamber | parent=electrolyzer | research=graphite2610+silicon3330+beryllium4050+tungsten4050 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=860 cost=graphite80+silicon100+beryllium120+tungsten120 buildTime=484 rotate=true itemCap=10 liquidCap=30.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: liquid[ozone 0.0333/t] items[beryllium1] power[0.5000/t]
+    crafter: time=120.0 outItems=oxide1 outLiquids=- liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatOut=5.0
+block surge-crucible | parent=oxidation-chamber | research=graphite2340+silicon2970+tungsten2340+oxide1300 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=825 cost=graphite80+silicon100+tungsten80+oxide80 buildTime=376 rotate=false itemCap=20 liquidCap=400.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: items[silicon3] liquid[slag 2.6667/t] power[1.5000/t]
+    crafter: time=45.0 outItems=surge-alloy1 outLiquids=- liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatReq=40.0 overheatScale=1.0 maxEff=1.0
+block heat-redirector | parent=oxidation-chamber | research=graphite2790+tungsten2790 | objectives=[Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=645 cost=graphite10+tungsten10 buildTime=25 rotate=true itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=heat solid=true envReq=0
+    consumes:
+block electric-heater | parent=heat-redirector | research=beryllium3330+tungsten3330+oxide1850 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???, Research:???requirement.research???]
+     size=2 hp=460 cost=beryllium30+tungsten30+oxide30 buildTime=117 rotate=true itemCap=0 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[1.6667/t]
+    crafter: time=80.0 outItems=- outLiquids=- liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatOut=3.0
+block slag-heater | parent=electric-heater | research=tungsten1080+oxide450+beryllium2160 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1040 cost=beryllium20+tungsten50+oxide20 buildTime=123 rotate=true itemCap=0 liquidCap=120.0 hasPower=false outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: liquid[slag 0.6667/t]
+    crafter: time=80.0 outItems=- outLiquids=- liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatOut=8.0
+block atmospheric-concentrator | parent=electric-heater | research=silicon1800+oxide450+beryllium2160 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=755 cost=silicon150+beryllium180+oxide60 buildTime=408 rotate=false itemCap=0 liquidCap=60.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[2.0000/t]
+    crafter: time=80.0 outItems=- outLiquids=nitrogen0.267/t liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatReq=24.0 overheatScale=1.0 maxEff=1.0
+block cyanogen-synthesizer | parent=atmospheric-concentrator | research=silicon3690+beryllium4320+oxide600+carbide780 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1150 cost=silicon120+beryllium140+oxide40+carbide80 buildTime=424 rotate=false itemCap=10 liquidCap=80.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: liquid[arkycite 2.6667/t] items[graphite1] power[2.0000/t]
+    crafter: time=20.0 outItems=- outLiquids=cyanogen0.200/t liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatReq=20.0 overheatScale=1.0 maxEff=1.0
+block carbide-crucible | parent=electric-heater | research=thorium4680+tungsten3330+oxide950 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=900 cost=thorium150+tungsten110+oxide60 buildTime=402 rotate=false itemCap=20 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: items[tungsten2+graphite3] power[2.0000/t]
+    crafter: time=33.75 outItems=carbide1 outLiquids=- liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatReq=40.0 overheatScale=1.0 maxEff=1.0
+block phase-synthesizer | parent=carbide-crucible | research=thorium2970+silicon2970+tungsten6480+carbide900 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1115 cost=thorium100+silicon100+tungsten200+carbide90 buildTime=616 rotate=false itemCap=40 liquidCap=40.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: items[thorium2+sand6] liquid[ozone 0.1333/t] power[8.0000/t]
+    crafter: time=30.0 outItems=phase-fabric1 outLiquids=- liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatReq=32.0 overheatScale=1.0 maxEff=1.0
+block phase-heater | parent=phase-synthesizer | research=beryllium810+oxide450+carbide270 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=510 cost=beryllium30+oxide30+carbide30 buildTime=114 rotate=true itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: items[phase-fabric1]
+    crafter: time=480.0 outItems=- outLiquids=- liquidDirs=[-1] dumpExtraLiquid=true ignoreLiquidFullness=false heatOut=15.0
+block heat-router | parent=electric-heater | research=graphite2790+tungsten4140 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=645 cost=graphite10+tungsten15 buildTime=33 rotate=true itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=heat solid=true envReq=0
+    consumes:
+block small-heat-redirector | parent=heat-router | research=graphite2610+surge-alloy140 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=200 cost=graphite8+surge-alloy3 buildTime=12 rotate=true itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=heat solid=true envReq=0
+    consumes:
+block slag-incinerator | parent=electrolyzer | research=tungsten360 | objectives=[Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=1 hp=70 cost=tungsten15 buildTime=23 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: liquid[slag 0.0000/t]
+block breach | parent=core-bastion | research=graphite180+silicon180+beryllium180 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=1620 cost=graphite125+silicon150+beryllium150 buildTime=540 rotate=true itemCap=10 liquidCap=20.0 hasPower=false outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: liquid[water 0.2500/t](optional)(booster) 
+    turret:  range=23.75t air=true ground=true reload=40.0 heatReq=-1.0 maxAmmo=30 coolant=true ammo=beryllium(dmg 63.75 splash 0.0) tungsten(dmg 71.25 splash 0.0) carbide(dmg 325.0 splash 0.0) 
+block beryllium-wall | parent=breach | research=beryllium180 | objectives=[Research:???requirement.research???]
+     size=1 hp=520 cost=beryllium6 buildTime=58 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes:
+block beryllium-wall-large | parent=beryllium-wall | research=beryllium630 | objectives=[Research:???requirement.research???]
+     size=2 hp=2080 cost=beryllium24 buildTime=144 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes:
+block tungsten-wall | parent=beryllium-wall | research=tungsten180 | objectives=[Research:???requirement.research???]
+     size=1 hp=720 cost=tungsten6 buildTime=72 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes:
+block tungsten-wall-large | parent=tungsten-wall | research=tungsten630 | objectives=[Research:???requirement.research???]
+     size=2 hp=2880 cost=tungsten24 buildTime=180 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes:
+block blast-door | parent=tungsten-wall-large | research=silicon630+tungsten630 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=2800 cost=silicon24+tungsten24 buildTime=331 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=false envReq=0
+    consumes:
+block reinforced-surge-wall | parent=tungsten-wall | research=surge-alloy14+tungsten90 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=1000 cost=surge-alloy6+tungsten2 buildTime=61 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes:
+block reinforced-surge-wall-large | parent=reinforced-surge-wall | research=surge-alloy28+tungsten180 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=4000 cost=surge-alloy24+tungsten8 buildTime=245 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes:
+block shielded-wall | parent=reinforced-surge-wall-large | research=phase-fabric120+surge-alloy210+beryllium270 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=4160 cost=phase-fabric20+surge-alloy12+beryllium12 buildTime=329 rotate=false itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes: power[0.0500/t]
+block carbide-wall | parent=tungsten-wall | research=thorium180+carbide60 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=1 hp=1080 cost=thorium6+carbide6 buildTime=90 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes:
+block carbide-wall-large | parent=carbide-wall | research=thorium630+carbide210 | objectives=[Research:???requirement.research???, Research:???requirement.research???]
+     size=2 hp=4320 cost=thorium24+carbide24 buildTime=360 rotate=false itemCap=10 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=walls solid=true envReq=0
+    consumes:
+block diffuse | parent=breach | research=graphite6480+silicon6480+beryllium4680+tungsten1350 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1890 cost=graphite200+silicon200+beryllium150+tungsten50 buildTime=615 rotate=true itemCap=10 liquidCap=20.0 hasPower=false outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: liquid[water 0.2500/t](optional)(booster) 
+    turret:  range=15.625t air=true ground=true reload=30.0 heatReq=-1.0 maxAmmo=30 coolant=true ammo=graphite(dmg 30.75 splash 0.0) oxide(dmg 67.5 splash 0.0) silicon(dmg 26.25 splash 0.0) 
+block sublimate | parent=diffuse | research=tungsten360+silicon360+oxide40+beryllium720 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1890 cost=silicon200+beryllium400+tungsten150+oxide40 buildTime=913 rotate=true itemCap=10 liquidCap=50.0 hasPower=false outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: 
+    turret:  range=16.25t air=true ground=true reload=10.0 heatReq=-1.0 maxAmmo=30 coolant=false liquidAmmo=ozone(dmg 45.0) cyanogen(dmg 97.5)  use=0.3
+block afflict | parent=sublimate | research=graphite270+silicon180+surge-alloy70+oxide25 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=4 hp=3520 cost=graphite250+silicon200+surge-alloy100+oxide40 buildTime=867 rotate=true itemCap=10 liquidCap=20.0 hasPower=true outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: power[5.0000/t]
+    turret:  range=46.0t air=true ground=true reload=50.0 heatReq=20.0 maxAmmo=30 coolant=false
+block titan | parent=afflict | research=thorium13500+silicon9900+tungsten8280 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=4 hp=4000 cost=thorium400+silicon300+tungsten250 buildTime=1055 rotate=true itemCap=10 liquidCap=20.0 hasPower=false outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: liquid[water 0.5000/t](optional)(booster) liquid[hydrogen 0.0833/t] 
+    turret:  range=48.75t air=false ground=true reload=138.0 heatReq=-1.0 maxAmmo=12 coolant=true ammo=thorium(dmg 262.5 splash 350.0) carbide(dmg 525.0 splash 750.0) oxide(dmg 225.0 splash 180.0) 
+block lustre | parent=titan | research=graphite6480+silicon8280+oxide750+carbide900 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=4 hp=3360 cost=graphite200+silicon250+oxide50+carbide90 buildTime=586 rotate=true itemCap=10 liquidCap=20.0 hasPower=true outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: liquid[nitrogen 0.1000/t] power[3.3333/t]
+    turret:  range=31.25t air=true ground=true reload=10.0 heatReq=-1.0 maxAmmo=30 coolant=false
+block smite | parent=lustre | research=silicon29700+phase-fabric2200+surge-alloy10500+oxide3600+carbide5700 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=5 hp=8750 cost=silicon800+phase-fabric300+surge-alloy400+oxide200+carbide500 buildTime=2450 rotate=true itemCap=10 liquidCap=20.0 hasPower=false outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: liquid[water 0.2500/t](optional)(booster) 
+    turret:  range=37.5t air=true ground=true reload=100.0 heatReq=-1.0 maxAmmo=30 coolant=true ammo=surge-alloy(dmg 187.5 splash 0.0) 
+block disperse | parent=diffuse | research=thorium1350+silicon6480+beryllium11700+oxide750 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=4 hp=4480 cost=thorium50+silicon200+beryllium350+oxide50 buildTime=695 rotate=true itemCap=10 liquidCap=20.0 hasPower=false outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: liquid[water 0.3333/t](optional)(booster) 
+    turret:  range=38.75t air=true ground=false reload=9.0 heatReq=-1.0 maxAmmo=30 coolant=true ammo=tungsten(dmg 48.75 splash 0.0) thorium(dmg 67.5 splash 0.0) silicon(dmg 27.75 splash 0.0) surge-alloy(dmg 48.75 splash 0.0) 
+block scathe | parent=disperse | research=graphite13500+silicon15300+tungsten17100+oxide1650+carbide2160 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=4 hp=3520 cost=graphite400+silicon450+tungsten500+oxide100+carbide200 buildTime=1910 rotate=true itemCap=10 liquidCap=20.0 hasPower=false outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: liquid[water 0.2500/t](optional)(booster) 
+    turret:  range=168.75t air=false ground=true reload=600.0 heatReq=-1.0 maxAmmo=45 coolant=true ammo=carbide(dmg 0.0 splash 0.0) phase-fabric(dmg 0.0 splash 0.0) surge-alloy(dmg 0.0 splash 0.0) 
+block malign | parent=scathe | research=graphite17100+silicon17100+phase-fabric1440+beryllium37800+carbide2160 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, SectorComplete:???requirement.capture???]
+     size=5 hp=9250 cost=graphite500+silicon500+phase-fabric200+beryllium1000+carbide200 buildTime=2640 rotate=true itemCap=10 liquidCap=20.0 hasPower=true outputsPower=false consumesPower=true group=turrets solid=true envReq=0
+    consumes: power[40.0000/t]
+    turret:  range=51.25t air=true ground=true reload=3.5 heatReq=144.0 maxAmmo=30 coolant=false
+block radar | parent=breach | research=silicon63+graphite63 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=1 hp=60 cost=graphite50+silicon60+beryllium10 buildTime=110 rotate=false itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[0.6000/t]
+block core-citadel | parent=core-bastion | research=silicon14400+beryllium29700+tungsten21600+oxide3600 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, SectorComplete:???requirement.capture???]
+     size=5 hp=16000 cost=silicon4000+beryllium4000+tungsten3000+oxide1000 buildTime=9590 rotate=false itemCap=3000 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=true envReq=0
+    consumes:
+    core: unit=incite capacity=3000 unitCapModifier=15 incinerateNonBuildable=true
+block core-acropolis | parent=core-citadel | research=silicon9000+beryllium27900+tungsten22500+oxide7000+carbide4200 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, SectorComplete:???requirement.capture???]
+     size=6 hp=30000 cost=silicon5000+beryllium6000+tungsten5000+oxide3000+carbide3000 buildTime=18550 rotate=false itemCap=4000 liquidCap=10.0 hasPower=false outputsPower=false consumesPower=true group=transportation solid=true envReq=0
+    consumes:
+    core: unit=emanate capacity=4000 unitCapModifier=15 incinerateNonBuildable=true
+block tank-fabricator | parent=core-bastion | research=beryllium180+graphite72+silicon72 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+     size=3 hp=575 cost=silicon200+beryllium150 buildTime=340 rotate=true itemCap=100 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: ConsumeItemDynamic power[1.5000/t]
+    factory: stell[beryllium40+silicon50 2100.0t]
+unit stell | parent=tank-fabricator | research=-
+    unit hp=850.0 armor=6.0 speed=0.75 flying=false hitSize=12.0 canBoost=false allowLegStep=false naval=false
+block unit-repair-tower | parent=tank-fabricator | research=graphite2700+silicon2700+tungsten2340 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???, Research:???requirement.research???]
+     size=2 hp=285 cost=graphite90+silicon90+tungsten80 buildTime=282 rotate=false itemCap=10 liquidCap=30.0 hasPower=true outputsPower=false consumesPower=true group=none solid=true envReq=0
+    consumes: power[1.0000/t] liquid[ozone 0.0500/t]
+block ship-fabricator | parent=tank-fabricator | research=silicon4140+beryllium3240 | objectives=[Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=575 cost=silicon250+beryllium200 buildTime=440 rotate=true itemCap=140 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: ConsumeItemDynamic power[1.5000/t]
+    factory: elude[graphite50+silicon70 2400.0t]
+unit elude | parent=ship-fabricator | research=-
+    unit hp=600.0 armor=1.0 speed=1.8 flying=false hitSize=11.0 canBoost=false allowLegStep=false naval=false
+block mech-fabricator | parent=ship-fabricator | research=silicon4140+beryllium5400+tungsten180 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=860 cost=silicon200+beryllium250+tungsten10 buildTime=475 rotate=true itemCap=140 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: ConsumeItemDynamic power[1.5000/t]
+    factory: merui[beryllium50+silicon70 2400.0t]
+unit merui | parent=mech-fabricator | research=-
+    unit hp=680.0 armor=4.0 speed=0.72 flying=false hitSize=9.0 canBoost=false allowLegStep=true naval=false
+block tank-refabricator | parent=mech-fabricator | research=silicon2250+beryllium4860+tungsten1710 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=860 cost=silicon100+beryllium200+tungsten80 buildTime=440 rotate=true itemCap=80 liquidCap=30.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[3.0000/t] liquid[hydrogen 0.0500/t] items[silicon40+tungsten30]
+    reconstructor: time=1800.0 upgrades=stell>locus 
+unit locus | parent=tank-refabricator | research=- | objectives=[Research:???requirement.research???]
+    unit hp=2100.0 armor=8.0 speed=0.7 flying=false hitSize=18.0 canBoost=false allowLegStep=false naval=false
+block mech-refabricator | parent=tank-refabricator | research=silicon3510+beryllium6210+tungsten4140 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=860 cost=silicon150+beryllium250+tungsten175 buildTime=683 rotate=true itemCap=100 liquidCap=30.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[2.5000/t] liquid[hydrogen 0.0500/t] items[silicon50+tungsten40]
+    reconstructor: time=2700.0 upgrades=merui>cleroi 
+unit cleroi | parent=mech-refabricator | research=silicon450+tungsten360 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+    unit hp=1100.0 armor=5.0 speed=0.6 flying=false hitSize=14.0 canBoost=false allowLegStep=true naval=false
+block ship-refabricator | parent=mech-refabricator | research=beryllium450+tungsten180+silicon270+oxide40 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=3 hp=1040 cost=silicon150+beryllium250+tungsten120+oxide15 buildTime=618 rotate=true itemCap=120 liquidCap=30.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[2.5000/t] liquid[hydrogen 0.0500/t] items[silicon60+tungsten40]
+    reconstructor: time=3000.0 upgrades=elude>avert 
+unit avert | parent=ship-refabricator | research=silicon540+tungsten360 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+    unit hp=1100.0 armor=3.0 speed=2.0 flying=true hitSize=12.0 canBoost=false allowLegStep=false naval=false
+block prime-refabricator | parent=ship-refabricator | research=thorium1620+silicon13500+tungsten6480+oxide3600 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=5 hp=2500 cost=thorium250+silicon400+tungsten200+oxide200 buildTime=1135 rotate=true itemCap=200 liquidCap=100.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[4.5000/t] liquid[nitrogen 0.1667/t] items[thorium80+silicon100]
+    reconstructor: time=3600.0 upgrades=locus>precept cleroi>anthicus avert>obviate 
+unit precept | parent=prime-refabricator | research=- | objectives=[Research:???requirement.research???]
+    unit hp=5000.0 armor=11.0 speed=0.64 flying=false hitSize=24.0 canBoost=false allowLegStep=false naval=false
+unit anthicus | parent=prime-refabricator | research=thorium720+silicon900 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+    unit hp=2700.0 armor=7.0 speed=0.65 flying=false hitSize=21.0 canBoost=false allowLegStep=true naval=false
+unit obviate | parent=prime-refabricator | research=thorium720+silicon900 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+    unit hp=2300.0 armor=6.0 speed=1.8 flying=true hitSize=25.0 canBoost=false allowLegStep=false naval=false
+block tank-assembler | parent=ship-refabricator | research=thorium7110+silicon9000+oxide1050+carbide300 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???, Research:???requirement.research???, Research:???requirement.research???]
+     size=5 hp=2800 cost=thorium500+silicon650+oxide150+carbide80 buildTime=1362 rotate=true itemCap=10 liquidCap=90.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[2.5000/t] liquid[cyanogen 0.1500/t] ConsumePayloadDynamic ConsumeItemDynamic ConsumeLiquidsDynamic
+    assembler: areaSize=13 droneType=assembly-drone drones=4 plan[vanquish time=3000.0 needs=stellx4,tungsten-wall-largex10,] plan[conquer time=10800.0 needs=locusx6,carbide-wall-largex20,]
+unit vanquish | parent=tank-assembler | research=silicon1800+beryllium1440+tungsten2160 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+    unit hp=11000.0 armor=20.0 speed=0.63 flying=false hitSize=28.0 canBoost=false allowLegStep=false naval=false
+unit conquer | parent=vanquish | research=thorium4320+silicon4860+beryllium2160+tungsten1620+carbide1440 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+    unit hp=22000.0 armor=26.0 speed=0.48 flying=false hitSize=46.0 canBoost=false allowLegStep=false naval=false
+block ship-assembler | parent=tank-assembler | research=thorium13500+silicon34200+tungsten19800+oxide3600+carbide990 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=5 hp=3600 cost=thorium400+silicon900+tungsten550+oxide200+carbide100 buildTime=2365 rotate=true itemCap=10 liquidCap=120.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[2.5000/t] liquid[cyanogen 0.2000/t] ConsumePayloadDynamic ConsumeItemDynamic ConsumeLiquidsDynamic
+    assembler: areaSize=13 droneType=assembly-drone drones=4 plan[quell time=3600.0 needs=eludex4,beryllium-wall-largex12,] plan[disrupt time=10800.0 needs=avertx6,carbide-wall-largex20,]
+unit quell | parent=ship-assembler | research=-
+    unit hp=6000.0 armor=4.0 speed=1.1 flying=true hitSize=36.0 canBoost=false allowLegStep=false naval=false
+unit disrupt | parent=quell | research=graphite2700+thorium4320+silicon7020+tungsten2160+carbide1440 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+    unit hp=12000.0 armor=9.0 speed=1.0 flying=true hitSize=46.0 canBoost=false allowLegStep=false naval=false
+block mech-assembler | parent=tank-assembler | research=thorium21600+silicon37800+tungsten19800+oxide3600+carbide2160 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+     size=5 hp=3600 cost=thorium600+silicon1000+tungsten550+oxide200+carbide200 buildTime=2805 rotate=true itemCap=10 liquidCap=120.0 hasPower=true outputsPower=false consumesPower=true group=units solid=true envReq=0
+    consumes: power[3.0000/t] liquid[cyanogen 0.2000/t] ConsumePayloadDynamic ConsumeItemDynamic ConsumeLiquidsDynamic
+    assembler: areaSize=13 droneType=assembly-drone drones=4 plan[tecta time=4200.0 needs=meruix5,tungsten-wall-largex12,] plan[collaris time=10800.0 needs=cleroix6,carbide-wall-largex20,]
+unit tecta | parent=mech-assembler | research=-
+    unit hp=6500.0 armor=5.0 speed=0.6 flying=false hitSize=30.0 canBoost=false allowLegStep=true naval=false
+unit collaris | parent=tecta | research=thorium4320+silicon6480+beryllium2700+tungsten2160+carbide1440 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, OnSector:???requirement.onsector???]
+    unit hp=18000.0 armor=9.0 speed=1.1 flying=false hitSize=44.0 canBoost=false allowLegStep=true naval=false
+block basic-assembler-module | parent=tank-assembler | research=thorium12600+phase-fabric2200+oxide3450+carbide2520 | objectives=[Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, SectorComplete:???requirement.capture???]
+     size=5 hp=3050 cost=thorium500+phase-fabric400+oxide250+carbide300 buildTime=1790 rotate=true itemCap=10 liquidCap=10.0 hasPower=true outputsPower=false consumesPower=true group=payloads solid=false envReq=0
+    consumes: power[3.5000/t]
+sector onset | parent=core-bastion | research=-
+sector aegis | parent=onset | research=- | objectives=[SectorComplete:???requirement.capture???, Research:???requirement.research???, Research:???requirement.research???]
+sector lake | parent=aegis | research=- | objectives=[SectorComplete:???requirement.capture???]
+sector intersect | parent=aegis | research=- | objectives=[SectorComplete:???requirement.capture???, SectorComplete:???requirement.capture???, Research:???requirement.research???, Research:???requirement.research???]
+sector atlas | parent=intersect | research=- | objectives=[SectorComplete:???requirement.capture???, Research:???requirement.research???]
+sector split | parent=atlas | research=- | objectives=[SectorComplete:???requirement.capture???, Research:???requirement.research???, Research:???requirement.research???]
+sector basin | parent=atlas | research=- | objectives=[SectorComplete:???requirement.capture???]
+sector marsh | parent=basin | research=- | objectives=[SectorComplete:???requirement.capture???]
+sector ravine | parent=marsh | research=- | objectives=[SectorComplete:???requirement.capture???, Research:???requirement.research???]
+sector caldera-erekir | parent=ravine | research=- | objectives=[SectorComplete:???requirement.capture???, SectorComplete:???requirement.capture???, Research:???requirement.research???]
+sector stronghold | parent=caldera-erekir | research=- | objectives=[SectorComplete:???requirement.capture???, Research:???requirement.research???]
+sector crevice | parent=stronghold | research=- | objectives=[SectorComplete:???requirement.capture???]
+sector siege | parent=crevice | research=- | objectives=[SectorComplete:???requirement.capture???]
+sector crossroads | parent=siege | research=- | objectives=[SectorComplete:???requirement.capture???]
+sector karst | parent=crossroads | research=- | objectives=[SectorComplete:???requirement.capture???, Research:???requirement.research???]
+sector origin | parent=karst | research=- | objectives=[SectorComplete:???requirement.capture???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???, Research:???requirement.research???]
+sector peaks | parent=marsh | research=- | objectives=[SectorComplete:???requirement.capture???, SectorComplete:???requirement.capture???]
+item beryllium | parent=core-bastion | research=- | objectives=[Produce:???requirement.produce???]
+item sand | parent=beryllium | research=- | objectives=[Produce:???requirement.produce???]
+item silicon | parent=sand | research=- | objectives=[Produce:???requirement.produce???]
+item oxide | parent=silicon | research=- | objectives=[Produce:???requirement.produce???]
+liquid water | parent=beryllium | research=- | objectives=[Produce:???requirement.produce???]
+liquid ozone | parent=water | research=- | objectives=[Produce:???requirement.produce???]
+liquid hydrogen | parent=ozone | research=- | objectives=[Produce:???requirement.produce???]
+liquid nitrogen | parent=hydrogen | research=- | objectives=[Produce:???requirement.produce???]
+liquid cyanogen | parent=hydrogen | research=- | objectives=[Produce:???requirement.produce???]
+liquid neoplasm | parent=cyanogen | research=- | objectives=[Produce:???requirement.produce???]
+item graphite | parent=beryllium | research=- | objectives=[Produce:???requirement.produce???]
+item tungsten | parent=graphite | research=- | objectives=[Produce:???requirement.produce???]
+liquid slag | parent=tungsten | research=- | objectives=[Produce:???requirement.produce???]
+liquid arkycite | parent=tungsten | research=- | objectives=[Produce:???requirement.produce???]
+item thorium | parent=tungsten | research=- | objectives=[Produce:???requirement.produce???]
+item carbide | parent=thorium | research=- | objectives=[Produce:???requirement.produce???]
+item surge-alloy | parent=tungsten | research=- | objectives=[Produce:???requirement.produce???]
+item phase-fabric | parent=surge-alloy | research=- | objectives=[Produce:???requirement.produce???]
+item graphite hardness=0 buildable=true cost=1.0
+item sand hardness=0 buildable=false cost=1.0
+item thorium hardness=4 buildable=true cost=1.1
+item silicon hardness=0 buildable=true cost=0.8
+item phase-fabric hardness=0 buildable=true cost=1.3
+item surge-alloy hardness=0 buildable=true cost=1.2
+item beryllium hardness=3 buildable=true cost=1.2
+item tungsten hardness=5 buildable=true cost=1.5
+item oxide hardness=0 buildable=true cost=1.2
+item carbide hardness=0 buildable=true cost=1.4

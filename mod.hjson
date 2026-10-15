@@ -1,0 +1,9 @@
+name: "enemy-expansion"
+displayName: "敌方扩张 (Enemy Expansion)"
+description: "艾利克尔的敌人按玩家的规则经营基地：核心里是真实库存，没有无限资源。它自己开矿、铺管道、建硅厂和各级工厂、兵营和炮塔阵地，科技不超过你已研究的；从自己的领地出发，挨着已有的建筑一步步向你推进。它的建造机要飞到跟前才能施工，建造速度和你相同；管道被截断会自己改道接回。所有行为都可以在设置里调整。"
+version: "2.5"
+minGameVersion: "154"
+java: true
+main: "expansion.ExpansionMod"
+# client-side only: adds no content, so multiplayer still works
+hidden: true

@@ -1,0 +1,29 @@
+# 液体 / Liquids
+#
+# 液体不用写端口：一个方块要什么液体、从哪一侧出什么液体，直接从游戏数据里读。
+# 蓝图内部相邻的方块会直接互相供给（比如冷凝器紧贴电解器），其余的由模组铺导管。
+# Liquids need no ports: what a block takes and gives, and on which side, is read from the game.
+# Blocks that touch inside a blueprint feed each other directly; the rest is piped.
+
+# 喷口冷凝器：每秒 30 水，够三台冲击钻机。
+# A vent condenser: 30 water a second, enough for three impact drills.
+[water-well]
+vent-condenser 0 0
+beam-node 2 0
+
+# 冷凝器紧贴电解器（社区蓝图里常见的摆法）：水直接递过去，不用导管。
+# 电解器朝右时，臭氧从上侧出，氢从下侧出。
+# A condenser with an electrolyzer right against it, as players build it: the water passes by touch.
+# With the electrolyzer facing right, ozone leaves at the top and hydrogen at the bottom.
+[gas-works]
+electrolyzer 0 0 0
+vent-condenser -3 0
+beam-node -2 2
+beam-node -1 2
+
+# 不占喷口的电解器：喷口都被占了的时候用。水由导管从别处引来，两台涡轮冷凝器顺带出的水（各 5/秒）正好够它。
+# An electrolyzer that needs no vent of its own, for when the vents are all taken. Its water is piped
+# from elsewhere: what two turbine condensers give off besides their power is just enough.
+[gas-plant]
+electrolyzer 0 0 0
+beam-node 2 0

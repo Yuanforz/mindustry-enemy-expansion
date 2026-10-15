@@ -1,0 +1,3 @@
+# what an honest run had after taking onset: research it paid for in full, and what its cores held
+researched graphite,beryllium,duct,plasma-bore,turbine-condenser,beam-node,duct-router,cliff-crusher,duct-bridge,silicon-arc-furnace,silicon,tank-fabricator,stell,breach,beryllium-wall
+bank graphite=208,silicon=970,beryllium=268

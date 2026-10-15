@@ -1,0 +1,24 @@
+# 工厂 / Factories
+#
+# in 物品 x y 朝向：这格上的管道朝这个方向把物品送进来。
+# out x y：产品从这格开始往外铺管道。
+
+# 电弧硅炉：沙从左边来，石墨从下面来，硅从右边出。
+# Silicon arc furnace: sand in from the left, graphite from below, silicon out on the right.
+[arc-furnace]
+silicon-arc-furnace 0 0
+beam-node -2 1
+in sand -2 0 0
+in graphite 0 -2 1
+out 2 0
+
+# ---- 三级：氧化室 ----
+# 铍从左边由管道送入，氧化物从上方出。它要的臭氧不写端口：模组会用导管从电解器的臭氧一侧引来。
+# 氧化室顺带向正面（+x）放热，这里没有用到。
+# Oxidation chamber: beryllium in from the left, oxide out at the top. The ozone it needs is piped
+# from an electrolyzer by the mod. It also gives off heat at its front, which is not used here.
+[oxide-works]
+oxidation-chamber 0 0 0
+beam-node -2 1
+in beryllium -2 0 0
+out 0 2

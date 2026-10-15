@@ -1,0 +1,28 @@
+# What the liquids that only make things faster are worth, and where they can be let in.
+
+[bore-plain]
+plasma-bore 0 0 0
+reinforced-vault -2 0
+power-source 0 -1
+
+# liquid routers in front of the bore, under its beams: they are not solid
+[bore-boost]
+plasma-bore 0 0 0
+reinforced-vault -2 0
+power-source 0 -1
+reinforced-liquid-router 2 0
+reinforced-liquid-router 2 1
+liquid-source 2 2 hydrogen
+
+[drill-plain]
+impact-drill 0 0
+liquid-source -2 0 water
+power-source 3 0
+reinforced-vault 0 4
+
+[drill-boost]
+impact-drill 0 0
+liquid-source -2 0 water
+liquid-source -2 1 ozone
+power-source 3 0
+reinforced-vault 0 4
