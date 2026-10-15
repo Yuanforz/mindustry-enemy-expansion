@@ -68,6 +68,14 @@ public class FighterAI extends AIController{
 
     @Override
     public void updateMovement(){
+        move();
+        //turned towards what it fires at, as the game's own units are: walkers' and some ships' guns do not turn by themselves,
+        //and fire only within a few degrees of where the unit faces. (never turned, fourteen walkers stood firing at a breach
+        //thirteen tiles off and did it no harm at all; one that faced it took a third off it in twenty seconds)
+        faceTarget();
+    }
+
+    private void move(){
         if(gone(goal)) goal = null;
         Teamc aim = choice();
         if(aim == null){
