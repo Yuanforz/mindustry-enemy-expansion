@@ -44,9 +44,12 @@ public class FighterAI extends AIController{
         post.set(x, y);
     }
 
-    /** Whether it is quick enough to dodge: it flies, it hovers, or it is fast on the ground. */
+    /**
+     * Whether it is quick enough to dodge. That is a matter of speed alone: walkers on legs count as hovering, and at under
+     * half a ship's pace they were sent zig-zagging under the guns like ships, and thrown back with one left of seventeen.
+     */
     public boolean agile(){
-        return unit.type.flying || unit.type.hovering || unit.type.speed >= 1.2f;
+        return unit.type.speed >= 1.2f;
     }
 
     private static boolean gone(@Nullable Teamc what){
