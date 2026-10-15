@@ -4940,7 +4940,9 @@ public class Brain{
         int known = reachNow.get(type.pathCostId, -1);
         if(known != -1) return known == 1;
 
-        mindustry.ai.Pathfinder.PathCost cost = mindustry.ai.Pathfinder.costTypes.get(type.pathCostId);
+        //the unit's own cost; its id counts in the control path-finder's list, not in the field path-finder's, whose order
+        //differs (read through the wrong list, ships that hover were taken for walkers on legs and the walkers for boats)
+        mindustry.ai.Pathfinder.PathCost cost = type.pathCost != null ? type.pathCost : mindustry.ai.ControlPathfinder.costTypes.get(type.pathCostId);
         int width = world.width(), height = world.height(), side = team().id;
         boolean[] seen = new boolean[width * height];
         IntQueue queue = new IntQueue();
