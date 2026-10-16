@@ -4354,7 +4354,23 @@ public class Brain{
         CoreBuild core = team().core();
         if(core == null) return false;
         Building node = indexer.findTile(team(), core.x, core.y, tilesize * 30f, build -> build.block instanceof BeamNode && build.power != null && !build.power.graph.producers.isEmpty());
-        return node != null && node.power.graph.getSatisfaction() < 0.9f;
+        if(node == null) return false;
+        mindustry.world.blocks.power.PowerGraph graph = node.power.graph;
+        if(System.getProperty("xp.shortflat") != null) return graph.getSatisfaction() < 0.9f;
+        //what one more drill would add, measured on the grid: power is shared out among all that draw on it, so a drill that
+        //goes up takes its share from the factories as well as the drills, and brings in that much more. only where drills
+        //take nearly all there is does it bring in next to nothing. (counting any shortage as a reason, the fifth sector never
+        //had a drill more than it began with: its grid was short from the first minute, most of it going into a furnace that
+        //had no sand)
+        float made = graph.getLastPowerProduced(), needed = graph.getLastPowerNeeded(), drills = 0f;
+        for(Building build : graph.consumers){
+            if((build.block instanceof Drill || build.block instanceof BeamDrill) && build.block.consPower != null) drills += build.block.consPower.requestedPower(build);
+        }
+        if(needed <= 0f || made >= needed) return false;
+        float use = Blocks.plasmaBore.consPower == null ? 0.15f : Blocks.plasmaBore.consPower.usage;
+        float now = made / needed, after = made / (needed + use);
+        float gain = (drills + use) * after - drills * now;
+        return gain < use * 0.4f;
     }
 
     /** When looking for a wall with an item in it last found none left within reach, by item id. */
