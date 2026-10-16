@@ -309,8 +309,9 @@ public class Fitter{
                     if(drop != null && drop.hardness <= drill.tier && (item == null || drop == item) && (drill.blockedItems == null || !drill.blockedItems.contains(drop))) count++;
                     break;
                 }
-                //what is planned in the way of the beam will stand there
-                if(ground.planned(other.x, other.y) != null) break;
+                //what is planned in the way of the beam will stand there, and stops it if it is solid: a beam goes over ducts
+                Blueprint.Part planned = ground.planned(other.x, other.y);
+                if(planned != null && planned.block.solid) break;
             }
         }
         return count;

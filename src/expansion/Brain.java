@@ -6933,7 +6933,7 @@ public class Brain{
             for(int i = 0; i < drill.range; i++){
                 Tile other = world.tile(startX + dx * i, startY + dy * i);
                 if(other == null || other.solid()) break;
-                ground.kept.add(other.pos());
+                ground.beams.add(other.pos());
             }
         }
     }

@@ -31,8 +31,14 @@ public class Ground{
     public Rule rule = (x, y) -> true;
     /** Ground it keeps clear of what units can't walk over. Ducts may cross it. */
     public Rule solidRule = (x, y) -> true;
-    /** Tiles that are spoken for without anything standing on them, such as the way a drill's beam goes. */
+    /** Tiles that are spoken for without anything standing on them, such as the ground in front of a unit yard. */
     public final IntSet kept = new IntSet();
+    /**
+     * The tiles a drill's beam crosses on its way to the wall it mines. A beam stops at the first solid tile, so nothing solid
+     * goes there; a duct or a conduit does not stop it, and lines may cross. (kept clear of everything, the beams of a base's
+     * drills fenced in its lines, and lines that had to go round them shut ground off for a long way)
+     */
+    public final IntSet beams = new IntSet();
     /**
      * Ducts of its own that the line being worked out may be laid over again: the last few before the
      * place where a line was cut, so that it can turn there. They count as open ground meanwhile.
@@ -62,6 +68,8 @@ public class Ground{
     public final IntSet lane = new IntSet();
     /** Whether what is being laid is the line home from such a drill: that, and nothing else of the drill's, runs along the way kept open for it. */
     public boolean homing;
+    /** Whether a line it can't do without is being laid: such a line may cross a drill's beam, which only what is solid stops. */
+    public boolean crossBeams;
     /** Whether a line is being laid at the moment. Places where putting a block came to nothing are no bar to a line passing over them. */
     public boolean laying;
 
@@ -72,6 +80,7 @@ public class Ground{
     public void clear(){
         planned.clear();
         kept.clear();
+        beams.clear();
         relaid.clear();
     }
 
@@ -126,7 +135,7 @@ public class Ground{
         int pos = Point2.pack(x, y);
         //nothing goes on deep liquid, or on floor that is not for building on
         if(tile == null) return false;
-        if((!drilling && ore.contains(pos)) || (!homing && lane.contains(pos)) || (!venting && vent.contains(pos))) return false;
+        if((!drilling && ore.contains(pos)) || (!homing && lane.contains(pos)) || (!venting && vent.contains(pos)) || (!crossBeams && beams.contains(pos))) return false;
         if(relaid.contains(pos)) return world.isInMapArea(x, y) && rule.allows(x, y);
         return tile.build == null && !tile.solid() && !tile.floor().isDeep() && tile.floor().placeableOn
             && !planned.containsKey(pos) && !kept.contains(pos) && world.isInMapArea(x, y) && rule.allows(x, y);
@@ -163,7 +172,7 @@ public class Ground{
         try{
             for(int dx = 0; dx < block.size; dx++){
                 for(int dy = 0; dy < block.size; dy++){
-                    if(!open(x + dx + offset, y + dy + offset) || (block.solid && !solidRule.allows(x + dx + offset, y + dy + offset))) return false;
+                    if(!open(x + dx + offset, y + dy + offset) || (block.solid && (!solidRule.allows(x + dx + offset, y + dy + offset) || beams.contains(Point2.pack(x + dx + offset, y + dy + offset))))) return false;
                 }
             }
             return true;

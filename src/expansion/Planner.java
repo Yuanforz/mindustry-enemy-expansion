@@ -215,10 +215,12 @@ public class Planner{
         lines.allowance = Math.max(allowance, lines.budget);
         lines.deadline = Math.max(limit, Clock.now()) + (long)(timeLimit * 2e6f);
         lines.chains = true;
+        ground.crossBeams = true;
         try{
             return lines.route(x, y, feeders, Lines.Goal.core(joins));
         }finally{
             lines.chains = false;
+            ground.crossBeams = false;
             lines.budget = budget;
             lines.allowance = Math.max(allowance - lines.lastLooked, 0);
             lines.deadline = limit;
@@ -2203,12 +2205,13 @@ public class Planner{
                     continue;
                 }
                 //what was kept clear for a beam may hold a router: beams pass over those
-                boolean kept = ground.kept.remove(pos);
+                boolean kept = ground.kept.remove(pos), beam = ground.beams.remove(pos);
                 if(ground.fits(router, boost.x, boost.y, 0)){
                     all.add(pos);
                     routers.add(new Part(router, boost.x, boost.y, 0));
-                }else if(kept){
-                    ground.kept.add(pos);
+                }else{
+                    if(kept) ground.kept.add(pos);
+                    if(beam) ground.beams.add(pos);
                 }
             }
             //each group of routers that touch is one place to pipe to; the biggest first
