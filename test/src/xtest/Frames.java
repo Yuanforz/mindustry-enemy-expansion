@@ -22,7 +22,22 @@ public class Frames{
                 if(t.build instanceof mindustry.world.blocks.ConstructBlock.ConstructBuild) c = mine ? 0x60a060 : 0xc06060;
                 else if(t.build.block instanceof mindustry.world.blocks.storage.CoreBlock) c = mine ? 0x00ffff : 0xffff00;
                 else if(t.build.block instanceof mindustry.world.blocks.defense.turrets.Turret) c = mine ? 0x80ff80 : 0xff6060;
-                else c = mine ? 0x208020 : 0x902020;
+                else if(!mine) c = 0x902020;
+                else if(!Boolean.getBoolean("xp.kinds")) c = 0x208020;
+                else{
+                    //by what it is, for looking at how a base is laid out
+                    var blk = t.build.block;
+                    if(blk instanceof mindustry.world.blocks.distribution.Duct || blk instanceof mindustry.world.blocks.distribution.DuctRouter || blk instanceof mindustry.world.blocks.distribution.OverflowDuct || blk instanceof mindustry.world.blocks.distribution.DuctJunction) c = 0x30b030;
+                    else if(blk instanceof mindustry.world.blocks.distribution.DirectionBridge || blk instanceof mindustry.world.blocks.distribution.BufferedItemBridge) c = 0xa0ff40;
+                    else if(blk instanceof mindustry.world.blocks.liquid.LiquidBlock || blk instanceof mindustry.world.blocks.liquid.LiquidBridge || blk instanceof mindustry.world.blocks.liquid.Conduit) c = 0x4080ff;
+                    else if(blk instanceof mindustry.world.blocks.power.BeamNode || blk instanceof mindustry.world.blocks.power.PowerNode) c = 0xe0e040;
+                    else if(blk instanceof mindustry.world.blocks.production.BeamDrill || blk instanceof mindustry.world.blocks.production.Drill || blk instanceof mindustry.world.blocks.production.WallCrafter) c = 0x8a5a2a;
+                    else if(blk instanceof mindustry.world.blocks.units.UnitFactory || blk instanceof mindustry.world.blocks.units.Reconstructor) c = 0xff8000;
+                    else if(blk instanceof mindustry.world.blocks.production.GenericCrafter) c = 0xc040ff;
+                    else if(blk instanceof mindustry.world.blocks.defense.Wall) c = 0x9090a0;
+                    else if(blk instanceof mindustry.world.blocks.power.PowerGenerator) c = 0xffffff;
+                    else c = 0x105010;
+                }
             }else if(t.solid() && t.wallDrop() != null) c = 0x40c0a0;
             else if(t.solid()) c = 0x504040;
             else if(t.floor().isDeep()) c = 0x103070;

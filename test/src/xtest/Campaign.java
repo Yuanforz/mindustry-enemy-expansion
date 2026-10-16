@@ -404,6 +404,17 @@ public class Campaign{
                 int from = Integer.parseInt(f[4]), to = Integer.parseInt(f[5]), step = Integer.parseInt(f[6]);
                 if(second >= from && second <= to && (second - from) % step == 0) Frames.write(new Fi(f.length > 7 ? f[7] : "build/frames").child(String.format("f%05d.png", second)), fx0, fy0, fw, fh, me);
             }
+            if(System.getProperty("xp.feed") != null){
+                //(a question, not a way to play: what its army would do if every yard were always fed) each yard and refit of its own
+                //filled with what it takes
+                for(Building build : me.data().buildings){
+                    if(build instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild yard && yard.currentPlan != -1){
+                        for(var stack : ((mindustry.world.blocks.units.UnitFactory)build.block).plans.get(yard.currentPlan).requirements) build.items.set(stack.item, Math.max(build.items.get(stack.item), stack.amount * 2));
+                    }else if(build instanceof mindustry.world.blocks.units.Reconstructor.ReconstructorBuild){
+                        for(var stack : build.block.consumers) if(stack instanceof mindustry.world.consumers.ConsumeItems items) for(var it : items.items) build.items.set(it.item, Math.max(build.items.get(it.item), it.amount * 2));
+                    }
+                }
+            }
             if(System.getProperty("xp.kill") != null){
                 //what a map does once given buildings of the other side's are down: minute:x,y:x,y...
                 String[] k = System.getProperty("xp.kill").split(":");
@@ -500,7 +511,7 @@ public class Campaign{
                     if(minute == Integer.parseInt(at[3])){
                         for(int y = wy + wr; y >= wy - wr; y--){
                             StringBuilder row = new StringBuilder(String.format("    why %4d ", y));
-                            for(int x = wx - wr; x <= wx + wr; x++) row.append(brain.whyNot(x, y));
+                            for(int x = wx - wr; x <= wx + wr; x++) row.append(built(x, y, brain.whyNot(x, y)));
                             System.out.println(row);
                         }
                     }
@@ -665,6 +676,25 @@ public class Campaign{
     }
 
     /** The task the map is waiting on, if any. */
+    /** What stands on a tile, as one letter: ducts by the way they face, = bridge, ~ conduit, + node, D drill, F factory, Y yard, W wall, T turret, C core, # anything else; else why nothing may go there. */
+    static char built(int x, int y, char why){
+        mindustry.world.Tile t = Vars.world.tile(x, y);
+        if(t == null || t.build == null) return why;
+        var b = t.build.block;
+        if(b instanceof mindustry.world.blocks.distribution.Duct) return ">^<v".charAt(t.build.rotation);
+        if(b instanceof mindustry.world.blocks.distribution.DirectionBridge) return '=';
+        if(b instanceof mindustry.world.blocks.distribution.DuctRouter || b instanceof mindustry.world.blocks.distribution.OverflowDuct) return 'r';
+        if(b instanceof mindustry.world.blocks.liquid.LiquidBlock || b instanceof mindustry.world.blocks.liquid.LiquidBridge) return '~';
+        if(b instanceof mindustry.world.blocks.power.BeamNode || b instanceof mindustry.world.blocks.power.PowerNode) return '+';
+        if(b instanceof mindustry.world.blocks.production.BeamDrill || b instanceof mindustry.world.blocks.production.Drill || b instanceof mindustry.world.blocks.production.WallCrafter) return 'D';
+        if(b instanceof mindustry.world.blocks.units.UnitFactory || b instanceof mindustry.world.blocks.units.Reconstructor) return 'Y';
+        if(b instanceof mindustry.world.blocks.production.GenericCrafter) return 'F';
+        if(b instanceof mindustry.world.blocks.defense.Wall) return 'W';
+        if(b instanceof mindustry.world.blocks.defense.turrets.Turret) return 'T';
+        if(b instanceof mindustry.world.blocks.storage.CoreBlock) return 'C';
+        return '#';
+    }
+
     static String task(Rules rules){
         for(MapObjective objective : rules.objectives.all){
             if(!objective.isCompleted() && objective.dependencyFinished()) return ", now: " + objective.getClass().getSimpleName().replace("Objective", "") + " " + CampaignInfo.fields(objective).replaceAll("(editorX|editorY|markers|parents|flagsAdded|flagsRemoved|text|details)=[^ ]* ?", "").trim()

@@ -676,6 +676,17 @@ public class Planner{
      */
     public @Nullable Project relead(Thing source, @Nullable IntSet toward, int towardX, int towardY, @Nullable IntSet body){
         if(source.item == null || late()) return null;
+        //led into something, the ground kept clear round it is for this
+        IntSet before = ground.intoBody;
+        if(body != null) ground.intoBody = body;
+        try{
+            return releadInto(source, toward, towardX, towardY, body);
+        }finally{
+            ground.intoBody = before;
+        }
+    }
+
+    private @Nullable Project releadInto(Thing source, @Nullable IntSet toward, int towardX, int towardY, @Nullable IntSet body){
         if(body != null && toward == null) toward = new IntSet();
         IntSeq tiles = new IntSeq(net.trace(source.x, source.y));
         //a short line home has no shorter way to be led; led to something going short, a short one does as well as a long one
@@ -781,6 +792,19 @@ public class Planner{
      */
     public @Nullable Project refeed(Building hungry, Item item, float rate){
         if(late()) return null;
+        //the ground kept clear round it is for this
+        IntSet before = ground.intoBody;
+        IntSet own = new IntSet();
+        hungry.tile.getLinkedTiles(tile -> own.add(tile.pos()));
+        ground.intoBody = own;
+        try{
+            return refeedInto(hungry, item, rate);
+        }finally{
+            ground.intoBody = before;
+        }
+    }
+
+    private @Nullable Project refeedInto(Building hungry, Item item, float rate){
         note = "line for " + item.name + " to the " + hungry.block.name + " at " + hungry.tileX() + "," + hungry.tileY() + ": nowhere to lead it off from";
         int size = hungry.block.size, offset = -(size - 1) / 2, x0 = hungry.tileX() + offset, y0 = hungry.tileY() + offset;
         //every open tile at its sides, with a duct on it that faces in

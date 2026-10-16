@@ -38,7 +38,7 @@ public class Lines{
     /** Whether a line to a core may go through the enemy's own walls, which are then taken down for it. */
     public boolean walls = true;
     /** How many places one search looks at before giving up: for a line to a core, and for one to an input close by. */
-    public int budget = 40000, shortBudget = 9000;
+    public int budget = 40000, shortBudget = Integer.getInteger("xp.short", 9000);
     /** Why ways were shut in the last search, for looking into it: something of its own there, ground that is not open, something that would push into a duct there, no bridge from there. */
     public final int[] shutBy = new int[4];
     /**
@@ -66,6 +66,11 @@ public class Lines{
     public @Nullable Block bridge;
     /** Whether bridges may hand on to one another in a chain, for a line it can't do without. */
     public boolean chains;
+    /**
+     * Whether the base has so much of what bridges cost that chains of them are no longer kept for lines it can't do without.
+     * Early on every bridge is taken from a drill or a turret; later the ground between lines is what is short.
+     */
+    public boolean lavish;
     /** What a line is branched with. Left null where the enemy may not build it. */
     public @Nullable Block router;
     /**
@@ -203,10 +208,13 @@ public class Lines{
     public @Nullable Line route(int startX, int startY, int facing, IntSet feeders, Goal goal){
         long prof = Prof.start();
         ground.laying = true;
+        IntSet body = ground.intoBody;
+        if(goal.into != null) ground.intoBody = goal.into;
         try{
             return search(startX, startY, facing, feeders, goal);
         }finally{
             ground.laying = false;
+            ground.intoBody = body;
             Prof.end(liquid ? "conduit" : goal.near() ? "line to input" : "line to core", prof);
         }
     }
@@ -268,7 +276,7 @@ public class Lines{
             //tile between, which bridges that each have to land on a duct before the next never can. only for a line it can't do
             //without: the bridges cost fifteen times what duct does, and let into every line they were laid all over every base
             //(on the fifth sector the only tungsten drill stood fenced in by its base's lines, with a way home over them)
-            if(chains && jump[current] > 0 && bridge != null){
+            if((chains || lavish) && jump[current] > 0 && bridge != null){
                 int range = ((DirectionBridge)bridge).range;
                 for(int length = 2; length <= range; length++){
                     int ex = x + Geometry.d4x(d) * length, ey = y + Geometry.d4y(d) * length;
@@ -634,7 +642,7 @@ public class Lines{
             //the bridge it hands on to, if it is the first of a pair: the next part of the line. in a chain, one that lands hands
             //on to the next as well
             Part partner = i + 1 < line.parts.size && line.parts.get(i + 1).block == bridge && line.parts.get(i + 1).rotation == part.rotation
-                && (chains || i == 0 || line.parts.get(i - 1).block != bridge || !pair(line.parts.get(i - 1), part)) ? line.parts.get(i + 1) : null;
+                && (chains || lavish || i == 0 || line.parts.get(i - 1).block != bridge || !pair(line.parts.get(i - 1), part)) ? line.parts.get(i + 1) : null;
             int dx = Geometry.d4x(part.rotation), dy = Geometry.d4y(part.rotation);
             for(int step = 1; step <= range; step++){
                 int x = part.x + dx * step, y = part.y + dy * step;

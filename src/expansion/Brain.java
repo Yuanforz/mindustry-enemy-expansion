@@ -926,6 +926,10 @@ public class Brain{
         }
         for(int i = 0; i < gone.size; i++) garrison.remove(gone.get(i));
         Seq<Unit> out = army.select(unit -> field.contains(unit.id) && !garrison.containsKey(unit.id)), home = army.select(unit -> !field.contains(unit.id) && unit != away && canAttack(unit) && !garrison.containsKey(unit.id));
+        //what is quick enough to dodge goes out on its own, and lays siege the way only it can; what is slow holds home. (on the
+        //fifth sector, with every yard fed, sixty ships went out mixed in with tanks, so none of them dodged or laid siege, and not
+        //one of the other side's cores fell)
+        if(System.getProperty("xp.mixed") == null && home.contains(FighterAI::agileUnit) && home.contains(unit -> !FighterAI.agileUnit(unit))) home = home.select(FighterAI::agileUnit);
         //a group out on an attack that has not got any nearer what it went for in a minute, and is not there yet, is stuck: its
         //way out is shut. it comes home, the way is looked into afresh, and that place is let be for a while. (on the fourth
         //sector a group was sent against a turret and stood by its own core for a quarter of an hour)
@@ -1153,9 +1157,11 @@ public class Brain{
             return;
         }
         strike = overwhelms(out, aim);
-        //what it set out to bring down it keeps at while it still can: a group that turns from one thing to the next as it
-        //moves gets strung out between them
-        if(!strike && was != null && was.isValid() && was.team != team() && overwhelms(out, was)){
+        //what it set out to bring down it keeps at while it stands: a group that turns from one thing to the next as it moves
+        //gets strung out between them. (weighed afresh as it marched, what stood in front of the turret changed with the side
+        //it came from, and on the fifth sector a group went for three turrets a hundred tiles and more apart in one minute and
+        //was picked off on the way; whether it is too weak for it is what being thrown back is for)
+        if(!strike && was != null && was.isValid() && was.team != team()){
             aim = was;
             strike = true;
         }
@@ -1286,12 +1292,18 @@ public class Brain{
         //the way, rebuilt each time, every attack, and got to the core with a quarter of their number; ships go round it)
         Building aim = marchTarget;
         boolean around = aim != null && group.allMatch(unit -> unit.type.flying || unit.type.hovering);
+        float reach = 0f;
+        for(Unit unit : group) reach = Math.max(reach, unit.range());
+        float r = reach;
         if(around){
-            float reach = 0f;
-            for(Unit unit : group) reach = Math.max(reach, unit.range());
-            float r = reach;
             Seq<Building> guarding = turrets.select(build -> build.within(aim, ((Turret)build.block).range + r + tilesize * 4f));
             if(guarding.any()) turrets = guarding;
+        }else if(aim != null){
+            //what walks takes away only what guards what it was sent against or reaches the way there: on the fifth sector the
+            //nearest turret it could bring down was across the map from both, and the group marched off to it
+            float far = aim.dst(x, y);
+            turrets = turrets.select(build -> build.within(aim, ((Turret)build.block).range + r + tilesize * 4f)
+                || (build.dst(aim) < far && Intersector.distanceSegmentPoint(x, y, aim.x, aim.y, build.x, build.y) < ((Turret)build.block).range + tilesize * 4f));
         }
         turrets.sort(build -> build.dst2(x, y));
         for(int i = 0; i < Math.min(turrets.size, 16); i++){
@@ -2632,6 +2644,7 @@ public class Brain{
         if(!tools()) return;
 
         lines.allowance = searchAllowance;
+        lines.lavish = lavish();
         long began = System.nanoTime();
         Project project = busy ? guard(data, targets) : choose(data, targets);
         Prof.end("all", began);
@@ -4333,6 +4346,15 @@ public class Brain{
     float feedRate(Item item, float want){
         if(stock.have(item) < stock.cap() * 0.4f) return want;
         return Math.min(want, Math.max(spare(item), 0.2f) / Planner.enough);
+    }
+
+    /** Whether its cores hold so much of everything bridges are made of that they may be laid in chains for any line. */
+    private boolean lavish(){
+        if(lines.bridge == null || System.getProperty("xp.nolavish") != null) return false;
+        for(ItemStack stack : lines.bridge.requirements){
+            if(stock.have(stack.item) < stock.cap() * 0.4f) return false;
+        }
+        return true;
     }
 
     /** The most of an item that goes by anywhere on its own lines without having been led off for something. */
@@ -6364,9 +6386,27 @@ public class Brain{
             if(tile == null || standing(tile, plan)) continue;
             ground.plan(new Part(plan.block, plan.x, plan.y, plan.rotation, plan.config));
             keepFront(plan.block, plan.x, plan.y, plan.rotation);
+            apron(plan.block, plan.x, plan.y, plan.rotation);
         }
-        for(Building build : data.buildings) keepFront(build.block, build.tileX(), build.tileY(), build.rotation);
+        for(Building build : data.buildings){
+            keepFront(build.block, build.tileX(), build.tileY(), build.rotation);
+            apron(build.block, build.tileX(), build.tileY(), build.rotation);
+        }
         Prof.end("sync", prof);
+    }
+
+    /** Keeps the ring round a yard clear but for the lines that end in it: its three sides that are not its front. */
+    private void apron(Block block, int x, int y, int rotation){
+        if(!(block instanceof UnitFactory || block instanceof Reconstructor) || System.getProperty("xp.noapron") != null) return;
+        int centre = Point2.pack(x, y);
+        for(int side = 0; side < 4; side++){
+            if(side == rotation) continue;
+            for(int lane = 0; lane < block.size; lane++){
+                block.nearbySide(x, y, side, lane, Tmp.p1);
+                int pos = Point2.pack(Tmp.p1.x, Tmp.p1.y);
+                if(!ground.apron.containsKey(pos)) ground.apron.put(pos, centre);
+            }
+        }
     }
 
     private void keepFront(Block block, int x, int y, int rotation){

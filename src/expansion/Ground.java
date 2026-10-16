@@ -82,7 +82,17 @@ public class Ground{
         kept.clear();
         beams.clear();
         relaid.clear();
+        apron.clear();
     }
+
+    /**
+     * The ring of ground round each of its yards but in front: kept for the lines that end in that yard, by tile, with the tile
+     * of the yard's centre. (lines that only passed by boxed a yard in on all its sides, and what it was short of could never be
+     * led to it again at any length of search; with a tile kept clear by it, a bridge over the lines round it can still get in)
+     */
+    public final IntIntMap apron = new IntIntMap();
+    /** The tiles of what the line being laid ends in, whose ring it may go on; null for anything else. */
+    public @Nullable IntSet intoBody;
 
     /** Counts a block as standing from now on. */
     public void plan(Part part){
@@ -137,6 +147,7 @@ public class Ground{
         if(tile == null) return false;
         if((!drilling && ore.contains(pos)) || (!homing && lane.contains(pos)) || (!venting && vent.contains(pos)) || (!crossBeams && beams.contains(pos))) return false;
         if(relaid.contains(pos)) return world.isInMapArea(x, y) && rule.allows(x, y);
+        if(apron.containsKey(pos) && (intoBody == null || !intoBody.contains(apron.get(pos, -1)))) return false;
         return tile.build == null && !tile.solid() && !tile.floor().isDeep() && tile.floor().placeableOn
             && !planned.containsKey(pos) && !kept.contains(pos) && world.isInMapArea(x, y) && rule.allows(x, y);
     }

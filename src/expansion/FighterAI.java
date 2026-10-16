@@ -53,6 +53,11 @@ public class FighterAI extends AIController{
         return unit.type.speed >= 1.2f;
     }
 
+    /** Whether a unit of its own is steered by one of these and quick enough to dodge. */
+    public static boolean agileUnit(Unit unit){
+        return unit.controller() instanceof FighterAI fighter && fighter.agile();
+    }
+
     private static boolean gone(@Nullable Teamc what){
         return what == null || (what instanceof Healthc health && !health.isValid()) || (what instanceof Building build && !build.isValid());
     }
