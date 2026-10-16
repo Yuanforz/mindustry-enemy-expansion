@@ -6411,11 +6411,14 @@ public class Brain{
             if(tile == null || standing(tile, plan)) continue;
             ground.plan(new Part(plan.block, plan.x, plan.y, plan.rotation, plan.config));
             keepFront(plan.block, plan.x, plan.y, plan.rotation);
-            apron(plan.block, plan.x, plan.y, plan.rotation);
         }
-        for(Building build : data.buildings){
-            keepFront(build.block, build.tileX(), build.tileY(), build.rotation);
-            apron(build.block, build.tileX(), build.tileY(), build.rotation);
+        for(Building build : data.buildings) keepFront(build.block, build.tileX(), build.tileY(), build.rotation);
+        //round a yard that is going short, the ground is kept for what will feed it. (kept round every yard, it took the ground
+        //by the core that the seventh sector's first turrets and lines needed, and every opening there was lost)
+        for(Net.Thing thing : net.things){
+            if(thing.kind != Net.Kind.yard || health.get(thing, 1f) >= 0.5f) continue;
+            Building yard = works(thing);
+            if(yard != null && shortOf(yard) != null) apron(yard.block, yard.tileX(), yard.tileY(), yard.rotation);
         }
         Prof.end("sync", prof);
     }
