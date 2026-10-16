@@ -123,6 +123,8 @@ public class Director{
         public float trouble;
         /** Whether what attacks it hits so lightly that units it can build shrug most of it off. */
         public boolean counter;
+        /** How many things lost lately count as one for a base of its size. */
+        public float scale = 1f;
     }
 
     /**
@@ -178,7 +180,7 @@ public class Director{
             richSince = -1f;
         }
         boolean wealthy = (richSince >= 0f && clock - richSince >= richTime) || idle >= idleRounds;
-        boolean attacked = losses >= pressure || facts.cut;
+        boolean attacked = losses >= pressure * facts.scale || (facts.cut && losses >= facts.scale);
         boolean settled = clock - since >= dwell;
         saturated = facts.saturated;
 

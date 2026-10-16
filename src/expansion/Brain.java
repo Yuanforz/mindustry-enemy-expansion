@@ -3018,6 +3018,7 @@ public class Brain{
         Director.Facts facts = new Director.Facts();
         facts.lacking = staples.contains(item -> !comesIn(item));
         facts.cut = assets.contains(asset -> asset.stage == Asset.Stage.cut);
+        facts.scale = lossScale();
         facts.fill = 1f;
         for(Item item : staples) facts.fill = Math.min(facts.fill, stock.have(item) / (float)Math.max(stock.cap(), 1));
         fill = facts.fill;
@@ -6891,7 +6892,17 @@ public class Brain{
      * has been seen near one of its cores. Seeing it come is worth a turret's building time.
      */
     private boolean attacked(){
-        return director.losses >= 1f || clock < sightedUntil;
+        return director.losses >= lossScale() || clock < sightedUntil;
+    }
+
+    /**
+     * How many things lost lately count as one for a base of its size: a base of a thousand blocks that loses a duct at its edge
+     * now and then is not under attack. (counted the same for every base, the fifth sector's, raided by a unit or two at a
+     * time all game, was under attack from the first minute to the last, kept back what its turrets might need, never laid
+     * another drill, and ran dry)
+     */
+    private float lossScale(){
+        return System.getProperty("xp.flatloss") != null ? 1f : Math.max(1f, team().data().buildings.size / 200f);
     }
 
     /** How near one of its cores a fighting unit of the other side has to be seen for it to make ready, and for how long after it does. */
@@ -7019,7 +7030,7 @@ public class Brain{
                 //in an hour of the third sector it widened its mining once. but while it still loses things now and then, as
                 //in the first minutes there, getting ready at the sight of them is what holds: without it 18 of 48 openings
                 //were lost against 15 of 96)
-                if(clock - lastLossAt > 60f * 120f && guarded(unit.x, unit.y)) return;
+                if((System.getProperty("xp.flatloss") == null ? director.losses < lossScale() : clock - lastLossAt > 60f * 120f) && guarded(unit.x, unit.y)) return;
                 //how hard the hardest-hitting of them hits with a shot
                 if(clock >= sightedUntil) raiderHit = 0f;
                 for(var mount : unit.type.weapons) raiderHit = Math.max(raiderHit, mount.bullet.damage + mount.bullet.splashDamage);
