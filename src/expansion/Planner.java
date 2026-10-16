@@ -2363,6 +2363,13 @@ public class Planner{
         if(late()) return null;
         Project project = new Project("power for " + build.block.name);
         Seq<Part> parts = Seq.with(new Part(build.block, build.tileX(), build.tileY(), build.rotation));
+        //and the nodes of the grid it stands on, which the chain is led from: a chain can only start at a node, and with the
+        //block alone there was never one to start from, and nothing was ever wired up this way
+        if(build.power != null){
+            for(Building other : build.power.graph.all){
+                if(other.block instanceof mindustry.world.blocks.power.BeamNode && other.team == build.team && parts.size < 40) parts.add(new Part(other.block, other.tileX(), other.tileY(), 0));
+            }
+        }
         if(!energize(project, groups(parts), powerUse(parts))) return drop(project, "no power to be had for the " + build.block.name + " at " + build.tileX() + "," + build.tileY());
         if(project.parts.isEmpty() || !buildable(project)) return drop(project, project.parts.isEmpty() ? "nothing to join the " + build.block.name + " to" : "the game does not allow " + refused);
         return project;

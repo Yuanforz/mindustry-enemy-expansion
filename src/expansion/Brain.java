@@ -114,7 +114,7 @@ public class Brain{
             boolean carrying = false;
             for(int i = 0; i < Math.min(tiles.size, 4) && !carrying; i++){
                 Building build = world.build(tiles.get(i));
-                carrying = build != null && build.team == team() && build.items != null && build.items.any();
+                carrying = build != null && build.team == team() && build.items != null && (thing.item == null ? build.items.any() : build.items.has(thing.item));
             }
             Building at = world.build(thing.x, thing.y);
             if(at instanceof Drill.DrillBuild drill && drill.team == team() && drill.efficiency > 0f) carrying = true;
@@ -3176,6 +3176,7 @@ public class Brain{
         posture();
         kept.clear();
         Project project = attempt(Director.Goal.arm, data, targets);
+        if(project == null) project = rewire();
         //a drill that can be paid for still comes first where its home is not what is being hit
         if(project == null && !saving && Options.ratios.on() && !homeHit(data) && minesUnderShare()){
             project = attempt(Director.Goal.ore, data, targets);
@@ -3586,18 +3587,26 @@ public class Brain{
     }
 
     /** A line the player has cut is led on to a core again before anything new is begun. */
-    private @Nullable Project mend(){
+    /**
+     * A drill of something it has no other source of that gets no power is wired up to a grid there is, short or not. Also
+     * while it is being attacked: on the seventh sector, attacked all game, it was never done, and the only graphite drills
+     * stood on a grid of their own with no generator. Not where the fighting is.
+     */
+    private @Nullable Project rewire(){
         //a drill of something it has no other source of, standing on a grid with nothing on it that makes power, is wired up to a
         //grid there is, if need be one that is short already: a share of too little is more than none. (the seventh sector's
         //only graphite drills stood on a grid of their own with no generator all game, and with no graphite there was no
         //silicon and no units)
         if(power.generator != null && ready("rewire")){
             for(Building build : team().data().buildings){
+                //(by the power it gets, not by what stands on its grid: a generator off its vent makes nothing)
                 if(!(build instanceof BeamDrill.BeamDrillBuild || build instanceof Drill.DrillBuild) || build.power == null || build.block.consPower == null
-                    || build instanceof ConstructBuild || !build.power.graph.producers.isEmpty() || !world.isInMapArea(build.tileX(), build.tileY())
-                    || rested.get(build.pos(), 0f) > clock || planner.late()) continue;
+                    || build instanceof ConstructBuild || build.power.status > 0.01f || !world.isInMapArea(build.tileX(), build.tileY())
+                    || rested.get(build.pos(), 0f) > clock || planner.late() || !calm(build.x, build.y, quiet)) continue;
                 Item mined = build instanceof BeamDrill.BeamDrillBuild beam ? beam.lastItem : ((Drill.DrillBuild)build).dominantItem;
-                if(mined == null || hasSource(mined)) continue;
+                //(nothing of it seen coming in, measured: a source whose drill has no power has a line, and nothing on it)
+                if(mined == null || net.things.contains(thing -> (thing.kind == Net.Kind.mine || thing.kind == Net.Kind.maker) && thing.item == mined
+                    && clock - flowSeen.get(Point2.pack(thing.x, thing.y), -1e9f) < 60f * 60f && net.whole(thing))) continue;
                 boolean before = planner.needy;
                 planner.needy = true;
                 Project project;
@@ -3612,6 +3621,12 @@ public class Brain{
                 break;
             }
         }
+        return null;
+    }
+
+    private @Nullable Project mend(){
+        Project rewired = rewire();
+        if(rewired != null) return rewired;
         //the line of an item it has no other source of first: one line is looked into a round, and with raids cutting a
         //dozen, the one line of tungsten on the fifth sector waited behind the beryllium lines for good
         Seq<Net.Thing> order = net.things.copy();
