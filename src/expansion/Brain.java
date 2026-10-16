@@ -938,6 +938,12 @@ public class Brain{
         //fifth sector, with every yard fed, sixty ships went out mixed in with tanks, so none of them dodged or laid siege, and not
         //one of the other side's cores fell)
         if(System.getProperty("xp.mixed") == null && home.contains(FighterAI::agileUnit) && home.contains(unit -> !FighterAI.agileUnit(unit))) home = home.select(FighterAI::agileUnit);
+        //and only what is of the same kind as the group out joins it: tanks that came out to a group of ships laying siege made it
+        //a group that could not, and twenty-nine went straight at a breach
+        if(System.getProperty("xp.mixed") == null && System.getProperty("xp.joinany") == null && out.any()){
+            boolean agileOut = out.allMatch(FighterAI::agileUnit);
+            home = home.select(unit -> FighterAI.agileUnit(unit) == agileOut);
+        }
         //a group out on an attack that has not got any nearer what it went for in a minute, and is not there yet, is stuck: its
         //way out is shut. it comes home, the way is looked into afresh, and that place is let be for a while. (on the fourth
         //sector a group was sent against a turret and stood by its own core for a quarter of an hour)
@@ -1571,9 +1577,9 @@ public class Brain{
         }
         float[] shield = {0f};
         float fx = gx, fy = gy, edge = target.block.size * tilesize / 2f + tilesize * 2.5f;
-        //(not what shots pass over: ducts, conduits and nodes, counted in, had a breach with nothing round it reckoned to stand
-        //behind four thousand of health)
-        indexer.eachBlock(target.team, target.x, target.y, edge, build -> build != target && !(build.block instanceof BaseTurret) && !build.block.underBullets
+        //(everything there, what shots pass over too: counted without ducts, conduits and nodes, the reckoning came out more
+        //hopeful than what happened, and the fourth sector went from 22 of 24 to 26 of 32)
+        indexer.eachBlock(target.team, target.x, target.y, edge, build -> build != target && !(build.block instanceof BaseTurret)
             && (build.x - target.x) * (fx - target.x) + (build.y - target.y) * (fy - target.y) > 0f, build -> shield[0] += build.health);
         float kill = (target.health + shield[0]) / Math.max(fire, 1f), lost = lasts / Math.max(against[0], 1f);
         sizedUp = Strings.format("its @ units deal @/s and last @ s; the @ has @ health and @ in front of it, what guards it deals @/s, so it falls in @ s", group.size, (int)fire, (int)lost, target.block.name, (int)target.health, (int)shield[0], (int)against[0], (int)kill);

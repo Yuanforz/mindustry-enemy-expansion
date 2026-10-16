@@ -415,6 +415,16 @@ public class Campaign{
                     }
                 }
             }
+            if(System.getProperty("xp.give") != null){
+                //(a question, not a way to play: what its army would do with units it can't make yet) minute:unit:count, beside its core
+                String[] g = System.getProperty("xp.give").split(":");
+                CoreBuild home = me.core();
+                if(second == Integer.parseInt(g[0]) * 60 && home != null){
+                    mindustry.type.UnitType type = Vars.content.unit(g[1]);
+                    for(int i = 0; i < Integer.parseInt(g[2]); i++) type.spawn(me, home.x + arc.math.Mathf.range(40f), home.y + arc.math.Mathf.range(40f));
+                    System.out.println("    given " + g[2] + " " + g[1]);
+                }
+            }
             if(System.getProperty("xp.kill") != null){
                 //what a map does once given buildings of the other side's are down: minute:x,y:x,y...
                 String[] k = System.getProperty("xp.kill").split(":");
