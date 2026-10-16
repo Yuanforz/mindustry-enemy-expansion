@@ -379,6 +379,7 @@ public class Brain{
         lookout = null;
         field.clear();
         setOut = repulsed = 0;
+        caution = 1f;
         marchTarget = null;
         staplesNow = null;
         sparedNow.clear();
@@ -813,6 +814,13 @@ public class Brain{
     /** How near the group out on an attack has got to what it went for, and when it last got nearer; when it was last found stuck. */
     private float closest, closestAt = -1f, stuckAt = -1e9f;
     private int setOut, repulsed;
+    /**
+     * How far its reckoning of a fight has turned out too hopeful, measured: each attack thrown back makes it reckon half as
+     * cautiously again, each thing an attack brings down a quarter less. (on the fifth sector it reckoned fourteen tanks would
+     * bring a breach down in three seconds, and lost all but three of them; the next fourteen it sent the same way)
+     */
+    private float caution = 1f;
+    private @Nullable Building lastTaken;
 
     /**
      * Leads its army when it plays the player's side, the way a careful player does. Its units wait at
@@ -976,6 +984,10 @@ public class Brain{
                 else if(unit.controller() instanceof CommandAI ai && (ai.targetPos == null || !ai.targetPos.within(gx, gy, tilesize * 8f)) && !unit.within(gx, gy, tilesize * 8f)) ai.commandPosition(Tmp.v1.set(gx, gy));
             }
         }
+        if(out.any() && aimAt != null && !aimAt.isValid() && aimAt != lastTaken){
+            lastTaken = aimAt;
+            caution = Math.max(caution * 0.75f, 1f);
+        }
         //a group that is mostly gone comes back, and the next has to be stronger
         //(but not with what it went for about to fall: that is finished first)
         float left = 0f;
@@ -1008,6 +1020,7 @@ public class Brain{
         }
         if(setOut > 0 && !holding && (out.size < Math.max(setOut / 3, 2) || spent) && !finishing){
             Log.info("[EnemyExpansion] The attack of @ is thrown back with @ left; @.", setOut, out.size, sizedUp);
+            caution = Math.min(caution * 1.5f, 6f);
             if(aimAt instanceof CoreBuild) thrownFrom = aimAt.pos();
             if(aimAt != null){
                 int zone = atlas.zoneAt(aimAt.tileX(), aimAt.tileY());
@@ -1061,7 +1074,19 @@ public class Brain{
         boolean waveDue = state.rules.waves && state.rules.winWave > 0 && state.wave < state.rules.winWave && !turretsHold && out.isEmpty();
         //while it is getting what its better units are made of, its units hold the ground that is to come from instead
         if(secureAt != -1 && out.isEmpty() && !able) waveDue = true;
-        if(!waveDue && (home.size >= enough || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
+        //what is slow sets out at its number only where it has not been thrown back, or reckons, as cautiously as being thrown back
+        //has taught it, that it can bring down what it would go for; else it holds home, where it is some use
+        boolean worth = true;
+        if(out.isEmpty() && caution > 1f && home.any() && !home.allMatch(FighterAI::agileUnit)){
+            float hx = 0f, hy = 0f;
+            for(Unit unit : home){
+                hx += unit.x / home.size;
+                hy += unit.y / home.size;
+            }
+            Building first = quarry(hx, hy);
+            worth = first != null && overwhelms(home, first);
+        }
+        if(!waveDue && ((home.size >= enough && worth) || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
             //those waiting at home go out, as a group of their own or to join the one that is out
             for(Unit unit : home) field.add(unit.id);
             Log.info("[EnemyExpansion] @ units set out (@ out already; it may have @).", home.size, out.size, most);
@@ -1550,7 +1575,7 @@ public class Brain{
             && (build.x - target.x) * (fx - target.x) + (build.y - target.y) * (fy - target.y) > 0f, build -> shield[0] += build.health);
         float kill = (target.health + shield[0]) / Math.max(fire, 1f), lost = lasts / Math.max(against[0], 1f);
         sizedUp = Strings.format("its @ units deal @/s and last @ s; the @ has @ health and @ in front of it, what guards it deals @/s, so it falls in @ s", group.size, (int)fire, (int)lost, target.block.name, (int)target.health, (int)shield[0], (int)against[0], (int)kill);
-        return kill < lost * 0.5f;
+        return kill * caution < lost * 0.5f;
     }
 
     /** About how much damage a second a kind of unit deals to something with so much armour. */
