@@ -3587,6 +3587,31 @@ public class Brain{
 
     /** A line the player has cut is led on to a core again before anything new is begun. */
     private @Nullable Project mend(){
+        //a drill of something it has no other source of, standing on a grid with nothing on it that makes power, is wired up to a
+        //grid there is, if need be one that is short already: a share of too little is more than none. (the seventh sector's
+        //only graphite drills stood on a grid of their own with no generator all game, and with no graphite there was no
+        //silicon and no units)
+        if(power.generator != null && ready("rewire")){
+            for(Building build : team().data().buildings){
+                if(!(build instanceof BeamDrill.BeamDrillBuild || build instanceof Drill.DrillBuild) || build.power == null || build.block.consPower == null
+                    || build instanceof ConstructBuild || !build.power.graph.producers.isEmpty() || !world.isInMapArea(build.tileX(), build.tileY())
+                    || rested.get(build.pos(), 0f) > clock || planner.late()) continue;
+                Item mined = build instanceof BeamDrill.BeamDrillBuild beam ? beam.lastItem : ((Drill.DrillBuild)build).dominantItem;
+                if(mined == null || hasSource(mined)) continue;
+                boolean before = planner.needy;
+                planner.needy = true;
+                Project project;
+                try{
+                    project = planner.wireUp(build);
+                }finally{
+                    planner.needy = before;
+                }
+                if(project != null) return done("rewire", project);
+                notes.put("rewire", planner.note);
+                if(!planner.timedOut) rested.put(build.pos(), clock + shunTime / 5f);
+                break;
+            }
+        }
         //the line of an item it has no other source of first: one line is looked into a round, and with raids cutting a
         //dozen, the one line of tungsten on the fifth sector waited behind the beryllium lines for good
         Seq<Net.Thing> order = net.things.copy();
