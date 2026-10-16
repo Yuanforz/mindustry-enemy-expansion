@@ -1571,7 +1571,9 @@ public class Brain{
         }
         float[] shield = {0f};
         float fx = gx, fy = gy, edge = target.block.size * tilesize / 2f + tilesize * 2.5f;
-        indexer.eachBlock(target.team, target.x, target.y, edge, build -> build != target && !(build.block instanceof BaseTurret)
+        //(not what shots pass over: ducts, conduits and nodes, counted in, had a breach with nothing round it reckoned to stand
+        //behind four thousand of health)
+        indexer.eachBlock(target.team, target.x, target.y, edge, build -> build != target && !(build.block instanceof BaseTurret) && !build.block.underBullets
             && (build.x - target.x) * (fx - target.x) + (build.y - target.y) * (fy - target.y) > 0f, build -> shield[0] += build.health);
         float kill = (target.health + shield[0]) / Math.max(fire, 1f), lost = lasts / Math.max(against[0], 1f);
         sizedUp = Strings.format("its @ units deal @/s and last @ s; the @ has @ health and @ in front of it, what guards it deals @/s, so it falls in @ s", group.size, (int)fire, (int)lost, target.block.name, (int)target.health, (int)shield[0], (int)against[0], (int)kill);
@@ -1857,13 +1859,19 @@ public class Brain{
             if(yard != null) return yard;
         }
         //then the other side's cores: with the last of those down the map is won, whatever else still stands. people
-        //who play these maps go for the core with one strong group and do not fight their way through the whole base
+        //who play these maps go for the core with one strong group and do not fight their way through the whole base.
+        //of several, the one least guarded for how far off it is, by what has been seen of its turrets: the nearest was a
+        //citadel with four breaches round it, while the one that turned out every unit the other side had stood with one, all
+        //game (the fifth sector). a base whose yards have been seen counts for more: with them down, nothing more comes
         Building best = null;
-        float bestFar = Float.MAX_VALUE;
+        float bestScore = Float.MAX_VALUE, bestFar = Float.MAX_VALUE;
         for(CoreBuild core : foe().cores()){
-            if(core.dst2(x, y) < bestFar && world.isInMapArea(core.tileX(), core.tileY())){
+            if(!world.isInMapArea(core.tileX(), core.tileY())) continue;
+            float score = Mathf.dst(x, y, core.x, core.y) / tilesize + (System.getProperty("xp.guarded") == null ? 0f : guardedBy(core));
+            if(System.getProperty("xp.guarded") != null && yardsBy(core)) score *= 0.7f;
+            if(score < bestScore){
                 best = core;
-                bestFar = core.dst2(x, y);
+                bestScore = score;
             }
         }
         if(best != null) return best;
@@ -1878,6 +1886,27 @@ public class Brain{
             }
         }
         return best;
+    }
+
+    /** How much fire a second the turrets seen round one of the other side's buildings put out over it. */
+    private float guardedBy(Building target){
+        float[] fire = {0f};
+        indexer.eachBlock(target.team, target.x, target.y, tilesize * 60f, build -> build instanceof Turret.TurretBuild && seenBuilding(build), build -> {
+            if(build.within(target, ((Turret)build.block).range + tilesize * 20f)) fire[0] += turretDps((Turret.TurretBuild)build);
+        });
+        return fire[0];
+    }
+
+    /** Whether yards of the other side's have been seen by one of its buildings. */
+    private boolean yardsBy(Building target){
+        boolean[] any = {false};
+        indexer.eachBlock(target.team, target.x, target.y, tilesize * 35f, build -> (build.block instanceof UnitFactory || build.block instanceof Reconstructor) && seenBuilding(build), build -> any[0] = true);
+        return any[0];
+    }
+
+    /** Whether a building of the other side's is where it has seen: under the fog, what has never been seen is not known. */
+    private boolean seenBuilding(Building build){
+        return !state.rules.fog || !state.rules.staticFog || fogControl.isDiscovered(team(), build.tileX(), build.tileY());
     }
 
     /** What the game had the enemy's build speed at before it was set to the player's, or a negative number if it was not touched. */
