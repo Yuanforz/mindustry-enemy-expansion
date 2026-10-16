@@ -4236,6 +4236,14 @@ public class Brain{
         return walls || (!survey.floor(item).isEmpty() && drillFor(item) != null) || maker(item) != null;
     }
 
+    /** Whether the grid by its first core is short of power: what is on it is satisfied by less than nine tenths. */
+    private boolean powerShort(){
+        CoreBuild core = team().core();
+        if(core == null) return false;
+        Building node = indexer.findTile(team(), core.x, core.y, tilesize * 30f, build -> build.block instanceof BeamNode && build.power != null && !build.power.graph.producers.isEmpty());
+        return node != null && node.power.graph.getSatisfaction() < 0.9f;
+    }
+
     /** When looking for a wall with an item in it last found none left within reach, by item id. */
     private final IntFloatMap minedOut = new IntFloatMap();
 
@@ -4331,6 +4339,15 @@ public class Brain{
             //(looking only by home is its own search: what it finds or does not find there says nothing of the rest)
             String home = reachCap < Integer.MAX_VALUE ? "home" : "";
             String key = home + "mine:" + item.name;
+            //more drills of something it has a source of only with power for them: on a grid that can't keep up, another drill
+            //takes its share from every drill and factory on it and brings in nothing more. power first. (on the seventh sector a
+            //thirty-fourth beryllium drill went up on a grid whose furnace, the only source of its silicon, ran at half pace)
+            if(wall != null && ready(key) && hasSource(item) && powerShort()){
+                notes.put(key, "the grid can't keep up: power before more drills");
+                Project more = power(data);
+                if(more != null) return more;
+                wall = null;
+            }
             if(wall != null && ready(key)){
                 //as long a row as can be paid for now, with something left for its line and its power. a mine of something its
                 //own drills are built of goes up a drill at a time while that is short: one now brings in what pays for the next
