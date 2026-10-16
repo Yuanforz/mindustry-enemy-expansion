@@ -404,6 +404,19 @@ public class Campaign{
                 int from = Integer.parseInt(f[4]), to = Integer.parseInt(f[5]), step = Integer.parseInt(f[6]);
                 if(second >= from && second <= to && (second - from) % step == 0) Frames.write(new Fi(f.length > 7 ? f[7] : "build/frames").child(String.format("f%05d.png", second)), fx0, fy0, fw, fh, me);
             }
+            if(System.getProperty("xp.kill") != null){
+                //what a map does once given buildings of the other side's are down: minute:x,y:x,y...
+                String[] k = System.getProperty("xp.kill").split(":");
+                if(second == Integer.parseInt(k[0]) * 60){
+                    for(int i = 1; i < k.length; i++){
+                        String[] p = k[i].split(",");
+                        Building b = Vars.world.build(Integer.parseInt(p[0]), Integer.parseInt(p[1]));
+                        System.out.println("    killed " + (b == null ? "nothing" : b.block.name + " of " + b.team) + " at " + k[i]);
+                        if(b != null) b.kill();
+                    }
+                }
+                if(second % 30 == 0 && second > Integer.parseInt(k[0]) * 60) System.out.println("    t=" + second + " enemy cores " + enemy.cores().size + " flags " + rules.objectiveFlags + " " + task(rules));
+            }
             if(System.getProperty("xp.births") != null){
                 //where the other side's units come from: each new one counted against the nearest of its yards when first seen
                 for(Unit unit : enemy.data().units){
