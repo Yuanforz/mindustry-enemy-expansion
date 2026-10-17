@@ -388,6 +388,9 @@ public class Brain{
         field.clear();
         setOut = repulsed = 0;
         caution = 1f;
+        calib = 1f;
+        fightIds.clear();
+        fightHurtAt = -1f;
         marchTarget = null;
         staplesNow = null;
         sparedNow.clear();
@@ -976,7 +979,9 @@ public class Brain{
                 hx += unit.x / home.size;
                 hy += unit.y / home.size;
             }
+            weighing = home;
             Building first = quarry(hx, hy);
+            weighing = null;
             Seq<Unit> quick = home.select(FighterAI::agileUnit);
             asOne = first != null && overwhelms(home, first, true) && !overwhelms(quick, first, true);
         }
@@ -1037,12 +1042,14 @@ public class Brain{
                 float angle = (unit.id * 137.5f) % 360f, far = tilesize * (6f + unit.id % 5 * 2f);
                 float gx = at.x + Angles.trnsx(angle, far), gy = at.y + Angles.trnsy(angle, far);
                 if(unit.controller() instanceof FighterAI ai) ai.standAt(gx, gy);
-                else if(unit.controller() instanceof CommandAI ai && (ai.targetPos == null || !ai.targetPos.within(gx, gy, tilesize * 8f)) && !unit.within(gx, gy, tilesize * 8f)) ai.commandPosition(Tmp.v1.set(gx, gy));
+                else if(unit.controller() instanceof CommandAI ai && (ai.targetPos == null || !ai.targetPos.within(gx, gy, tilesize * 8f)) && !unit.within(gx, gy, tilesize * 8f)) post(unit, gx, gy);
             }
         }
+        if(fightIds.size > 0 && fightHurtAt < 0f && fightLeft() < fightHealth * 0.98f) fightHurtAt = clock;
         if(out.any() && aimAt != null && !aimAt.isValid() && aimAt != lastTaken){
             lastTaken = aimAt;
             caution = Math.max(caution * 0.75f, 1f);
+            if(aimAt instanceof CoreBuild || aimAt instanceof Turret.TurretBuild) fightOver("took the " + aimAt.block.name);
         }
         //a group that is mostly gone comes back, and the next has to be stronger
         //(but not with what it went for about to fall: that is finished first)
@@ -1062,7 +1069,9 @@ public class Brain{
                 sx += unit.x / out.size;
                 sy += unit.y / out.size;
             }
+            weighing = out;
             Building next = quarry(sx, sy);
+            weighing = null;
             spent = siege || (next != null && !overwhelms(out, next));
         }
         //a group that lays siege holds what it has taken: the other side builds again what was pushed down, and only units
@@ -1077,6 +1086,7 @@ public class Brain{
         if(setOut > 0 && !holding && (out.size < Math.max(setOut / 3, 2) || spent) && !finishing){
             Log.info("[EnemyExpansion] The attack of @ is thrown back with @ left; @.", setOut, out.size, sizedUp);
             caution = Math.min(caution * 1.5f, 6f);
+            fightOver("thrown back");
             if(aimAt instanceof CoreBuild) thrownFrom = aimAt.pos();
             if(aimAt != null){
                 int zone = atlas.zoneAt(aimAt.tileX(), aimAt.tileY());
@@ -1116,7 +1126,9 @@ public class Brain{
                 hx += unit.x / home.size;
                 hy += unit.y / home.size;
             }
+            weighing = home;
             Building first = quarry(hx, hy);
+            weighing = null;
             if(first != null){
                 Seq<Unit> half = home.copy();
                 half.truncate(Math.max((int)(home.size / 1.5f), 1));
@@ -1139,13 +1151,45 @@ public class Brain{
                 hx += unit.x / home.size;
                 hy += unit.y / home.size;
             }
+            weighing = home;
             Building first = quarry(hx, hy);
+            weighing = null;
             worth = first != null && overwhelms(home, first, true);
+            //or it can take the first step there: a turret on the way, or by it, that it brings down well before what reaches it
+            //brings the group down. it goes for that, and weighs again from there. (once thrown back, a group that had to be able
+            //to take the core straight away, what fires on the way there counted, never set out again in an hour)
+            if(!worth && first != null && System.getProperty("xp.nostep") == null){
+                Building was = marchTarget;
+                marchTarget = first;
+                worth = peel(home, hx, hy) != null;
+                marchTarget = was;
+            }
         }
         if(!waveDue && ((home.size >= enough && worth) || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
             //those waiting at home go out, as a group of their own or to join the one that is out
             for(Unit unit : home) field.add(unit.id);
             Log.info("[EnemyExpansion] @ units set out (@ out already; it may have @).", home.size, out.size, most);
+            if(out.isEmpty()){
+                fightOver("ended unmeasured");
+                float hx2 = 0f, hy2 = 0f;
+                for(Unit unit : home){
+                    hx2 += unit.x / home.size;
+                    hy2 += unit.y / home.size;
+                }
+                weighing = home;
+                Building toward = quarry(hx2, hy2);
+                weighing = null;
+                if(toward != null){
+                    overwhelms(home, toward, true);
+                    fightForecast = lastLostRaw;
+                    fightHealth = 0f;
+                    for(Unit unit : home){
+                        fightIds.add(unit.id);
+                        fightHealth += unit.health + unit.shield;
+                    }
+                    fightHurtAt = -1f;
+                }
+            }
             setOut = out.size + home.size;
             out.addAll(home);
         }
@@ -1156,7 +1200,11 @@ public class Brain{
             x += unit.x / out.size;
             y += unit.y / out.size;
         }
-        if(marchTarget == null || !marchTarget.isValid() || marchTarget.team == team() || !world.isInMapArea(marchTarget.tileX(), marchTarget.tileY())) marchTarget = quarry(x, y);
+        if(marchTarget == null || !marchTarget.isValid() || marchTarget.team == team() || !world.isInMapArea(marchTarget.tileX(), marchTarget.tileY())) {
+            weighing = out;
+            marchTarget = quarry(x, y);
+            weighing = null;
+        }
         if(marchTarget == null) return;
         Building was = strike ? aimAt : null;
         Building aim = marchTarget;
@@ -1656,10 +1704,64 @@ public class Brain{
         //hopeful than what happened, and the fourth sector went from 22 of 24 to 26 of 32)
         indexer.eachBlock(target.team, target.x, target.y, edge, build -> build != target && !(build.block instanceof BaseTurret)
             && (build.x - target.x) * (fx - target.x) + (build.y - target.y) * (fy - target.y) > 0f, build -> shield[0] += build.health);
+        lastLostRaw = lasts / Math.max(against[0], 1f);
+        //what fights there has turned out to hit harder or softer than reckoned, measured over the attacks made
+        if(calibrating) against[0] *= calib;
         float kill = (target.health + shield[0]) / Math.max(fire, 1f), lost = lasts / Math.max(against[0], 1f);
+        lastEdge = lost * margin / Math.max(kill * (calibrating ? 1f : caution), 0.001f);
         sizedUp = Strings.format("its @ units deal @/s and last @ s@; the @ has @ health and @ in front of it, what guards it deals @/s, so it falls in @ s", group.size, (int)fire, (int)lost, onTheWay > 0f ? " after losing " + (int)onTheWay + " on the way" : "", target.block.name, (int)target.health, (int)shield[0], (int)against[0], (int)kill);
-        return kill * caution < lost * margin;
+        return kill * (calibrating ? 1f : caution) < lost * margin;
     }
+
+    /** Whether forecasts are corrected by what attacks measured, instead of the caution that being thrown back raises. */
+    static final boolean calibrating = System.getProperty("xp.calibrate") != null;
+    /** How much harder what guards things hits than reckoned, measured: the fire a group took over the fire forecast. */
+    private float calib = 1f;
+    /** The last sizing up's seconds the group would last, before any correction. */
+    private float lastLostRaw;
+    /** The attack being measured: its units, their health when it set out, what was forecast, when it was first hurt. */
+    private final IntSet fightIds = new IntSet();
+    private float fightHealth, fightForecast, fightHurtAt = -1f;
+
+    /** The health of the units of the attack being measured that are still standing. */
+    private float fightLeft(){
+        float left = 0f;
+        IntSet.IntSetIterator each = fightIds.iterator();
+        while(each.hasNext){
+            Unit unit = Groups.unit.getByID(each.next());
+            if(unit != null && !unit.dead() && unit.team == team()) left += unit.health + unit.shield;
+        }
+        return left;
+    }
+
+    /** Ends the measuring of an attack: how long it took to lose what it lost, against how long the forecast said. */
+    private void fightOver(String how){
+        if(fightIds.isEmpty() || fightHealth <= 0f){
+            fightIds.clear();
+            return;
+        }
+        float lost = 1f - fightLeft() / fightHealth, took = fightHurtAt < 0f ? 0f : (clock - fightHurtAt) / 60f;
+        if(lost > 0.05f && took > 1f && fightForecast > 0f){
+            //the fire it took, over the fire forecast: (lost share of its health / the time) over (the same / the forecast time)
+            float ratio = Mathf.clamp(lost * fightForecast / took, 0.25f, 8f);
+            calib = Mathf.clamp((float)Math.exp(0.5 * Math.log(calib) + 0.5 * Math.log(ratio)), 0.5f, 8f);
+            Log.info("[EnemyExpansion] Measured: the attack (@) lost @% of its health in @ s, where the forecast had it last @ s for all of it; what guards hits @ times as hard as reckoned, now taken as @.", how, (int)(lost * 100f), (int)took, (int)fightForecast, Strings.fixed(ratio, 2), Strings.fixed(calib, 2));
+        }
+        fightIds.clear();
+        fightHurtAt = -1f;
+    }
+
+    /** The last sizing up as a number: above one, the group brings the thing down with the margin wanted. */
+    private float lastEdge;
+
+    /** How a group would fare against something, as a number: above one, it brings it down with the margin wanted. */
+    private float edge(Seq<Unit> group, Building target, boolean way){
+        overwhelms(group, target, way);
+        return lastEdge;
+    }
+
+    /** The group that what the army goes for next is weighed for, while it is chosen; null for none. */
+    private @Nullable Seq<Unit> weighing;
 
     /** How much longer than it takes to bring the thing down a group has to be reckoned to last: what being thrown back and taking things then moves (caution). */
     static final float margin = Float.parseFloat(System.getProperty("xp.margin", "0.5"));
@@ -1717,10 +1819,27 @@ public class Brain{
             gx += unit.x / group.size;
             gy += unit.y / group.size;
         }
-        int width = world.width();
+        int width = world.width(), height = world.height();
         int[] far = wayField(target, group.contains(unit -> !unit.type.flying));
         int at = mindustry.core.World.toTile(gx) + mindustry.core.World.toTile(gy) * width;
-        if(at < 0 || at >= far.length || far[at] == Integer.MAX_VALUE) return null;
+        if(at < 0 || at >= far.length) return null;
+        //where the group stands may be off the field itself, as by a shore: the nearest tile that is on it
+        if(far[at] == Integer.MAX_VALUE){
+            int found = -1, cx = mindustry.core.World.toTile(gx), cy = mindustry.core.World.toTile(gy);
+            for(int r = 1; r <= 6 && found == -1; r++){
+                for(int dx = -r; dx <= r && found == -1; dx++){
+                    for(int dy = -r; dy <= r; dy++){
+                        int x = cx + dx, y = cy + dy;
+                        if(x >= 0 && y >= 0 && x < width && y < height && far[x + y * width] != Integer.MAX_VALUE){
+                            found = x + y * width;
+                            break;
+                        }
+                    }
+                }
+            }
+            if(found == -1) return null;
+            at = found;
+        }
         return trace(far, at, target, reach);
     }
 
@@ -1770,8 +1889,9 @@ public class Brain{
                 int x = ax + Geometry.d4x(d), y = ay + Geometry.d4y(d);
                 if(x < 0 || y < 0 || x >= width || y >= height || far[x + y * width] != Integer.MAX_VALUE) continue;
                 Tile tile = world.tile(x, y);
-                //what walks goes round deep water and over nothing solid but what of the other side's stands in the way
-                if(grounded && (tile.floor().isDeep() || (tile.solid() && (tile.build == null || tile.build.team == team())))) continue;
+                //what walks goes round deep water, and well clear of it and of what burns, and over nothing solid but what of the
+                //other side's stands in the way
+                if(grounded && (perilous(x, y, 1) || (tile.solid() && (tile.build == null || tile.build.team == team())))) continue;
                 far[x + y * width] = far[at] + 1;
                 open.addLast(x + y * width);
             }
@@ -1836,14 +1956,88 @@ public class Brain{
 
     /** Sends one of its units against something: one steered by itself chooses what to fire at near there. */
     private void send(Unit unit, Teamc target){
-        if(unit.controller() instanceof FighterAI fighter) fighter.attack(target);
-        else if(unit.controller() instanceof CommandAI ai && ai.attackTarget != target) ai.commandTarget(target);
+        if(unit.controller() instanceof FighterAI fighter){
+            fighter.attack(target);
+            return;
+        }
+        if(!(unit.controller() instanceof CommandAI ai)) return;
+        //what walks or rolls and is still far off is sent to where the way there over the ground ends in reach of it, and is
+        //given the thing itself only from there: told to go for a building beyond a lake of slag, the game's own command
+        //drove the tanks of the fifth sector straight in, and they burned
+        if(wades(unit) && target instanceof Building aim && !unit.within(aim, unit.range() + tilesize * 10f) && System.getProperty("xp.wade") == null){
+            Seq<Unit> one = Seq.with(unit);
+            IntSeq way = wayTiles(one, aim, unit.range() * 0.8f);
+            if(way != null && way.size > 0){
+                int end = way.peek(), width = world.width();
+                float ex = (end % width) * tilesize, ey = (end / width) * tilesize;
+                if(ai.targetPos == null || !ai.targetPos.within(ex, ey, tilesize * 4f)) ai.commandPosition(Tmp.v1.set(ex, ey));
+                return;
+            }
+            //no way there over firm ground from where it stands: it stays where it is rather than go straight
+            return;
+        }
+        if(ai.attackTarget != target) ai.commandTarget(target);
+    }
+
+    /**
+     * Whether a tile is no place for what walks: deep liquid, or floor that hurts what stands on it, or within two tiles of
+     * either, where units crowding past push one another in. (the tanks of the fifth sector burned on the shore of a lake of
+     * slag, hundreds of them on the same few tiles)
+     */
+    private boolean perilous(int x, int y){
+        return perilous(x, y, 2);
+    }
+
+    private boolean perilous(int x, int y, int clear){
+        if(System.getProperty("xp.wade") != null){
+            Tile tile = world.tile(x, y);
+            return tile == null || tile.floor().isDeep();
+        }
+        for(int dx = -clear; dx <= clear; dx++){
+            for(int dy = -clear; dy <= clear; dy++){
+                Tile tile = world.tile(x + dx, y + dy);
+                if(tile != null && (tile.floor().isDeep() || tile.floor().damages() || (tile.floor().status != null && tile.floor().status.damage > 0f))) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a unit is one that sinks in deep liquid: what walks or rolls, not what flies, hovers or swims. */
+    private static boolean wades(Unit unit){
+        return !unit.type.flying && !unit.type.hovering && !unit.type.naval;
     }
 
     /** Sends one of its units to stand at a place. */
     private void post(Unit unit, float x, float y){
-        if(unit.controller() instanceof FighterAI fighter) fighter.standAt(x, y);
-        else if(unit.controller() instanceof CommandAI ai) ai.commandPosition(Tmp.v1.set(x, y));
+        if(unit.controller() instanceof FighterAI fighter){
+            fighter.standAt(x, y);
+            return;
+        }
+        if(!(unit.controller() instanceof CommandAI ai)) return;
+        //never onto deep liquid for what walks: the nearest firm ground to the place instead
+        if(wades(unit) && System.getProperty("xp.wade") == null){
+            Tile at = world.tileWorld(x, y);
+            if(at == null || at.solid() || perilous(at.x, at.y)){
+                Tile best = null;
+                for(int r = 1; r <= 12 && best == null; r++){
+                    for(int dx = -r; dx <= r && best == null; dx++){
+                        for(int dy = -r; dy <= r; dy++){
+                            if(Math.max(Math.abs(dx), Math.abs(dy)) != r) continue;
+                            Tile tile = world.tile(mindustry.core.World.toTile(x) + dx, mindustry.core.World.toTile(y) + dy);
+                            if(tile != null && !tile.solid() && !perilous(tile.x, tile.y)){
+                                best = tile;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if(best != null){
+                    x = best.worldx();
+                    y = best.worldy();
+                }
+            }
+        }
+        ai.commandPosition(Tmp.v1.set(x, y));
     }
 
     /** The other side's ducts and the like that hand its turrets their ammunition, all the way back up each line, and how many turrets each feeds. Looked at once a second. */
@@ -2107,6 +2301,20 @@ public class Brain{
         //game (the fifth sector). a base whose yards have been seen counts for more: with them down, nothing more comes
         Building best = null;
         float bestScore = Float.MAX_VALUE, bestFar = Float.MAX_VALUE;
+        //for a group, the one it fares best against by the same reckoning it sets out by, what it meets on the way there counted:
+        //the nearest core of the fifth sector lay beyond a lake, the way round it under the guns of another base
+        if(weighing != null && weighing.any() && System.getProperty("xp.nearestcore") == null){
+            float bestEdge = -1f;
+            for(CoreBuild core : foe().cores()){
+                if(!world.isInMapArea(core.tileX(), core.tileY()) || !seenBuilding(core)) continue;
+                float edge = edge(weighing, core, true) / (1f + Mathf.dst(x, y, core.x, core.y) / tilesize / 400f);
+                if(edge > bestEdge){
+                    bestEdge = edge;
+                    best = core;
+                }
+            }
+            if(best != null) return best;
+        }
         for(CoreBuild core : foe().cores()){
             if(!world.isInMapArea(core.tileX(), core.tileY())) continue;
             float score = Mathf.dst(x, y, core.x, core.y) / tilesize + (System.getProperty("xp.guarded") == null ? 0f : guardedBy(core));

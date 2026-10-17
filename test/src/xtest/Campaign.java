@@ -211,7 +211,10 @@ public class Campaign{
                     kinds.increment(other.type.name);
                 }
             }
-            System.out.println(String.format("    death %5.1f min %s at %d,%d: turrets reaching %s| their units within 15: %s", Vars.state.tick / 3600f, dead.type.name, dead.tileX(), dead.tileY(), turrets.length() == 0 ? "none " : turrets, kinds));
+            mindustry.world.Tile under = dead.tileOn();
+            String ai = dead.controller() == null ? "-" : dead.controller().getClass().getSimpleName() + (dead.controller() instanceof expansion.FighterAI f ? "(" + f.how + ")" : "")
+                + (dead.controller() instanceof mindustry.ai.types.CommandAI c ? "(to " + (c.targetPos == null ? "-" : (int)(c.targetPos.x / 8) + "," + (int)(c.targetPos.y / 8)) + ", at " + (c.attackTarget == null ? "-" : c.attackTarget.getClass().getSimpleName().replace("Build", "") + "@" + (int)(c.attackTarget.getX() / 8) + "," + (int)(c.attackTarget.getY() / 8)) + ")" : "");
+            System.out.println(String.format("    death %5.1f min %s at %d,%d on %s%s, %s: turrets reaching %s| their units within 15: %s", Vars.state.tick / 3600f, dead.type.name, dead.tileX(), dead.tileY(), under == null ? "-" : under.floor().name, under != null && under.floor().isDeep() ? " (deep)" : "", ai, turrets.length() == 0 ? "none " : turrets, kinds));
         });
 
         System.out.println("difficulty " + Planets.erekir.campaignRules.difficulty + ", up to " + minutes + " game minutes a sector");
