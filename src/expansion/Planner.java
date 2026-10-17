@@ -1139,6 +1139,77 @@ public class Planner{
     }
 
     /**
+     * A yard and its refabricator that need no conduit: built on a free vent, the condenser on it hands its water by touch to
+     * an electrolyzer, which hands its hydrogen by touch to the refabricator. Only the items are led in; what can't be led off
+     * a line now, where the cores are full of it, is led to it once it stands. Turned each way, never mirrored: mirrored, the
+     * electrolyzer would hand the refabricator its ozone.
+     */
+    public @Nullable Project worksAtVent(Blueprint blueprint, int homeX, int homeY){
+        if(late()) return null;
+        note = blueprint.name + ": no free vent on its ground";
+        int ventIndex = blueprint.parts.indexOf(part -> onVent(part.block));
+        if(ventIndex == -1) return null;
+        Block onVent = blueprint.parts.get(ventIndex).block;
+        IntSeq vents = brain.terrain.vents(onVent, ground.team);
+        Seq<int[]> free = new Seq<>();
+        for(int i = 0; i < vents.size; i++){
+            int x = Point2.x(vents.get(i)), y = Point2.y(vents.get(i));
+            if(ground.clear(onVent, x, y) && brain.territory.ours(x, y) && Math.abs(x - homeX) + Math.abs(y - homeY) <= 60) free.add(new int[]{x, y});
+        }
+        free.sort(at -> Math.abs(at[0] - homeX) + Math.abs(at[1] - homeY));
+        int tries = 0;
+        for(int[] vent : free){
+            if(++tries > 5 || late()) break;
+            if(!brain.reachable(onVent, vent[0], vent[1])) continue;
+            for(int turn = 0; turn < 4 && !late(); turn++){
+                Layout probe = blueprint.at(0, 0, turn, false, 1);
+                Part anchor = probe.parts.get(ventIndex);
+                Layout layout = trim(blueprint.at(vent[0] - anchor.x, vent[1] - anchor.y, turn, false, 1));
+                if(!clear(layout, false, true) || !fitter.valid(layout) || !exitsClear(layout, false, false)){
+                    note = blueprint.name + ": no room by the vent at " + vent[0] + "," + vent[1];
+                    continue;
+                }
+                Project project = new Project(blueprint.name);
+                lastTried = layout;
+                add(project, layout);
+                boolean supplied = true;
+                for(Port port : layout.ports){
+                    if(port.role != Role.in) continue;
+                    holdPorts(layout, port, true);
+                    boolean fed = feed(project, port, wanted(taker(layout, port, layout.main().block), port.item));
+                    holdPorts(layout, port, false);
+                    if(!fed && brain.leadLater(port.item)) continue;
+                    if(!fed){
+                        supplied = false;
+                        note = blueprint.name + ": no line to branch " + port.item.name + " off within reach of the vent at " + vent[0] + "," + vent[1] + " [" + feedNote + "]";
+                        break;
+                    }
+                }
+                if(supplied && !plumb(project, layout.parts)){
+                    supplied = false;
+                    note = blueprint.name + ": would want a conduit at " + vent[0] + "," + vent[1];
+                }
+                if(supplied && !energize(project, groups(layout.parts), powerUse(layout.parts))){
+                    supplied = false;
+                    note = blueprint.name + ": no power to be had at " + vent[0] + "," + vent[1];
+                }
+                if(supplied && buildable(project)){
+                    springs(project, layout.parts);
+                    for(Part part : layout.parts){
+                        if(part.block instanceof mindustry.world.blocks.units.UnitFactory || part.block instanceof mindustry.world.blocks.units.Reconstructor){
+                            project.things.add(new Thing(Net.Kind.yard, part.x, part.y, (Item)null, 0f));
+                        }
+                    }
+                    project.assets.add(new Asset(Net.Kind.yard, layout, layout.main().x, layout.main().y));
+                    return project;
+                }
+                brain.syncGround();
+            }
+        }
+        return null;
+    }
+
+    /**
      * A furnace or other factory with the crushers that feed it sand: the crushers against a wall, the
      * factory close by, its other inputs branched off the enemy's lines, and what it makes led to a core.
      */
@@ -2196,7 +2267,8 @@ public class Planner{
                 Part taker = layout.parts.find(part -> part.block instanceof mindustry.world.blocks.units.Reconstructor);
                 if(taker != null) project.things.add(new Thing(Net.Kind.yard, taker.x, taker.y, (Item)null, 0f));
             }
-            if(supplied && !plumb(project, layout.parts)){
+            //(with what it is added to among what hands liquid over by touch: a turbine gives off water)
+            if(supplied && !plumb(project, whole.parts)){
                 //with none to be had the place is good all the same: what it lacks can be built, and then this is taken up again
                 if(lacking != null) return drop(project, "no " + lacking.name + " to be had" + where);
                 supplied = false;

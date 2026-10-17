@@ -147,3 +147,45 @@ ship-refabricator 3 0 0
 ?beam-node 2 -2
 in silicon 3 2 3
 in tungsten 3 -2 1
+
+# 二级坦克的成套兵营，建在喷口上：冷凝器贴着电解器（水靠接触传过去），电解器压在改造厂上面（氢从下侧直接进改造厂），
+# 兵厂在改造厂后面。整套没有一根液体管道；只需引进铍、硅和钨。实验台 lab/t2cell.txt 验证过接触供给能出 locus。
+# A tier-2 tank works on a vent: the condenser touches the electrolyzer (its water passes by touch), the electrolyzer sits on the
+# refabricator (its hydrogen goes straight in from below), the fabricator behind the refabricator. Not one conduit; only the
+# beryllium, silicon and tungsten are led in. lab/t2cell.txt showed the touching blocks turn out locus.
+[tank-works-vent]
+tank-fabricator -3 0 0 stell
+tank-refabricator 0 0 0
+electrolyzer 0 3 0
+vent-condenser -3 3
+beam-node -2 -2
+beam-node -1 -2
+beam-node 2 -2
+beam-node 2 3
+beam-node -5 3
+beam-node -5 -2
+in beryllium -5 0 0
+in silicon -3 -2 1
+in silicon 0 -2 1
+in tungsten 1 -2 1
+
+# 同样的成套兵营，挂在一台已有的涡轮冷凝器旁边：涡轮顺带出的水（满喷口约每秒 5）让电解器半速运转，正好是一台改造厂要的
+# 每秒 3 氢。不占新的喷口。实验台 lab/t2cell.txt 的 t2turbine 验证过。
+# The same works against a turbine condenser that stands already: the water it gives off besides its power (about 5 a second on
+# a full vent) runs the electrolyzer at half pace, the 3 hydrogen a second one refabricator takes. No vent of its own.
+[tank-works-turbine]
+@turbine-condenser 0 0
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+tank-fabricator 0 -3 0 stell
+beam-node 0 2
+beam-node 5 2
+beam-node 5 0
+beam-node 5 -5
+beam-node 4 -5
+beam-node -2 -5
+beam-node -2 -2
+in beryllium -2 -3 0
+in silicon 0 -5 1
+in silicon 2 -5 1
+in tungsten 3 -5 1

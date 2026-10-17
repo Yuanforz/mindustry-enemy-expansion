@@ -528,8 +528,10 @@ public class Brain{
         for(Net.Thing thing : net.things){
             if(thing.kind != Net.Kind.maker && thing.kind != Net.Kind.yard) continue;
             Building build = works(thing);
-            //one that is stopped because the enemy has all of that unit it may have is not short of anything
-            if(build == null || !build.enabled) continue;
+            //one that is stopped because the enemy has all of that unit it may have is not short of anything. (the game
+            //leaves such a yard enabled and only stops it drawing, so that it read as starved; and a starved yard kept every
+            //other kind from going up, so the fifth sector stood all game at its cap of one kind with nothing else)
+            if(build == null || !build.enabled || atCap(build)) continue;
             health.put(thing, Mathf.lerp(health.get(thing, 1f), Mathf.clamp(build.efficiency), 0.012f));
         }
     }
@@ -563,9 +565,20 @@ public class Brain{
         for(Net.Thing thing : net.things){
             if(thing.kind != kind || (made != null && thing.item != made) || health.get(thing, 1f) >= 0.5f) continue;
             Building build = works(thing);
-            if(build != null && shortOf(build) != null) return build;
+            if(build != null && !atCap(build) && shortOf(build) != null) return build;
         }
         return null;
+    }
+
+    /** A yard that stands still because its side has all it may have of the unit it turns out, whatever it is fed. */
+    private static boolean atCap(Building build){
+        if(build instanceof UnitFactory.UnitFactoryBuild yard){
+            return yard.currentPlan != -1 && !Units.canCreate(build.team, ((UnitFactory)build.block).plans.get(yard.currentPlan).unit);
+        }
+        if(build instanceof Reconstructor.ReconstructorBuild refit){
+            return refit.payload != null && refit.upgrade(refit.payload.unit.type) != null && !Units.canCreate(build.team, refit.upgrade(refit.payload.unit.type));
+        }
+        return false;
     }
 
     /**
@@ -941,7 +954,20 @@ public class Brain{
         //what is quick enough to dodge goes out on its own, and lays siege the way only it can; what is slow holds home. (on the
         //fifth sector, with every yard fed, sixty ships went out mixed in with tanks, so none of them dodged or laid siege, and not
         //one of the other side's cores fell)
-        if(System.getProperty("xp.mixed") == null && home.contains(FighterAI::agileUnit) && home.contains(unit -> !FighterAI.agileUnit(unit))) home = home.select(FighterAI::agileUnit);
+        //unless all of it together brings down what it would go for, by the same reckoning as any attack, where the quick ones
+        //alone would not: then it goes as one, and the slow ones are what the other side's fire is spent on
+        boolean asOne = false;
+        if(System.getProperty("xp.together") != null && out.isEmpty() && home.size >= 6 && home.contains(FighterAI::agileUnit) && home.contains(unit -> !FighterAI.agileUnit(unit))){
+            float hx = 0f, hy = 0f;
+            for(Unit unit : home){
+                hx += unit.x / home.size;
+                hy += unit.y / home.size;
+            }
+            Building first = quarry(hx, hy);
+            Seq<Unit> quick = home.select(FighterAI::agileUnit);
+            asOne = first != null && overwhelms(home, first) && !overwhelms(quick, first);
+        }
+        if(System.getProperty("xp.mixed") == null && !asOne && home.contains(FighterAI::agileUnit) && home.contains(unit -> !FighterAI.agileUnit(unit))) home = home.select(FighterAI::agileUnit);
         //and only what is of the same kind as the group out joins it: tanks that came out to a group of ships laying siege made it
         //a group that could not, and twenty-nine went straight at a breach
         if(System.getProperty("xp.mixed") == null && System.getProperty("xp.joinany") == null && out.any()){
@@ -1087,7 +1113,7 @@ public class Brain{
         //what is slow sets out at its number only where it has not been thrown back, or reckons, as cautiously as being thrown back
         //has taught it, that it can bring down what it would go for; else it holds home, where it is some use
         boolean worth = true;
-        if(out.isEmpty() && caution > 1f && home.any() && !home.allMatch(FighterAI::agileUnit)){
+        if(out.isEmpty() && (caution > 1f || System.getProperty("xp.foreseeall") != null) && home.any() && !home.allMatch(FighterAI::agileUnit)){
             float hx = 0f, hy = 0f;
             for(Unit unit : home){
                 hx += unit.x / home.size;
@@ -4778,6 +4804,14 @@ public class Brain{
         //count what a unit can do. (the yards only ever got a refabricator once there were eight of them, and no sector saw
         //a unit of the second tier)
         Building old = null;
+        //better units by a works of its own on a vent before an addition to a yard in among the lines: it needs no conduit, and
+        //what it needs led in can be led there once it stands where the cores are full of it
+        //(whatever the number of its units: worn down by raiders all game, the fifth sector never had six tenths of what it
+        //may have of a kind, and better units were never looked into)
+        if(Options.refit.on() && net.count(Net.Kind.yard, null) >= 1){
+            Project works = worksAtVent(data);
+            if(works != null || saving) return works;
+        }
         if(!full && Options.refit.on() && net.count(Net.Kind.yard, null) >= 2 && mostOfAKind(data) >= unitCap(data) * 0.6f){
             Project added = additions(data);
             if(added != null || saving) return added;
@@ -5540,7 +5574,9 @@ public class Brain{
 
     /** The unit a yard blueprint turns out in the end: what its factory makes, as its refabricators leave it. */
     private @Nullable UnitType finalUnit(Blueprint blueprint){
-        if(!(blueprint.main() instanceof UnitFactory factory) || factory.plans.isEmpty()) return null;
+        //the factory is what it is built around, or for a works put up beside what powers it, one of its parts
+        Part made = blueprint.main() instanceof UnitFactory ? null : blueprint.parts.find(part -> part.block instanceof UnitFactory);
+        if(!((made == null ? blueprint.main() : made.block) instanceof UnitFactory factory) || factory.plans.isEmpty()) return null;
         UnitType unit = factory.plans.first().unit;
         for(Part part : blueprint.parts){
             if(!(part.block instanceof Reconstructor refabricator)) continue;
@@ -7212,6 +7248,91 @@ public class Brain{
      */
     public boolean leadLater(Item item){
         return System.getProperty("xp.noleadlater") == null && Options.refit.on() && stock.have(item) >= stock.cap() * 0.4f && comesIn(item);
+    }
+
+    /**
+     * A works for better units on a vent, where it may build one and has none yet that turns them out, and can have what they
+     * are made of: each item from a source of its own, or plenty of it in its cores coming in by line.
+     */
+    private @Nullable Project worksAtVent(TeamData data){
+        if(System.getProperty("xp.noventworks") != null || !ready("ventworks")) return null;
+        if(data.buildings.contains(build -> build instanceof Reconstructor.ReconstructorBuild)) return null;
+        //against a turbine that stands near home first: what it gives off besides its power is the water, and the lines of its
+        //base are near. (on a vent of its own far out, the one that went up stood unfed, with no line within reach)
+        for(Blueprint blueprint : blueprints){
+            if(!blueprint.addon() || !blueprint.parts.contains(part -> part.block instanceof Reconstructor)
+                || !(blueprint.main() instanceof mindustry.world.blocks.power.ThermalGenerator)) continue;
+            if(!blueprint.allowed(this::may)){
+                notes.put("turbineworks", blueprint.name + ": not all of it researched");
+                continue;
+            }
+            UnitType unit = finalUnit(blueprint);
+            if(unit == null || !may(unit)){
+                notes.put("turbineworks", blueprint.name + ": no unit it may have (" + unit + ")");
+                continue;
+            }
+            boolean fed = true;
+            for(Port port : blueprint.ports){
+                if(port.role == Role.in && port.item != null && !hasSource(port.item) && !leadLater(port.item)){
+                    fed = false;
+                    notes.put("turbineworks", blueprint.name + ": no " + port.item.name + " to be had");
+                }
+            }
+            if(!fed) continue;
+            //saved up for once its cores are full of what it would turn into better units, and not before
+            if(!pays(blueprint.cost())){
+                if(leadLater(Items.silicon) && leadLater(Items.tungsten)){
+                    saveFor(blueprint.parts.find(part -> part.block instanceof Reconstructor).block, blueprint.cost());
+                    notes.put("turbineworks", "saving for " + blueprint.name);
+                    return null;
+                }
+                notes.put("turbineworks", "not enough to spare for " + blueprint.name);
+                continue;
+            }
+            CoreBuild home = data.core();
+            if(home == null) return null;
+            Seq<Building> turbines = data.buildings.select(build -> build.block == blueprint.main() && world.isInMapArea(build.tileX(), build.tileY()));
+            turbines.sort(build -> build.dst2(home));
+            int tried = 0;
+            for(Building turbine : turbines){
+                if(++tried > 4 || planner.late()) break;
+                Project project = planner.addon(blueprint, turbine);
+                notes.put("turbineworks", planner.note);
+                if(project != null){
+                    for(Part part : project.parts){
+                        if(part.block instanceof UnitFactory || part.block instanceof Reconstructor) project.things.add(new Net.Thing(Net.Kind.yard, part.x, part.y, (Item)null, 0f));
+                    }
+                    return done("ventworks", project);
+                }
+            }
+        }
+        //then on a free vent of its own, not far from home
+        for(Blueprint blueprint : blueprints){
+            if(blueprint.kind() != Kind.yard || !blueprint.allowed(this::may) || !blueprint.parts.contains(part -> part.block instanceof Reconstructor)
+                || !blueprint.parts.contains(part -> Ground.usesVent(part.block))) continue;
+            UnitType unit = finalUnit(blueprint);
+            if(unit == null || !may(unit)) continue;
+            boolean fed = true;
+            for(Port port : blueprint.ports){
+                if(port.role == Role.in && port.item != null && !hasSource(port.item) && !leadLater(port.item)) fed = false;
+            }
+            if(!fed){
+                notes.put("ventworks", blueprint.name + ": not everything it is fed with can be had");
+                continue;
+            }
+            //not saved up for: what its yards and turrets are waiting for comes first, and this goes up out of what is to spare
+            if(!pays(blueprint.cost())){
+                notes.put("ventworks", "not enough to spare for " + blueprint.name);
+                continue;
+            }
+            CoreBuild home = data.core();
+            if(home == null) return null;
+            Project project = planner.worksAtVent(blueprint, home.tileX(), home.tileY());
+            if(project != null) return done("ventworks", project);
+            notes.put("ventworks", planner.note);
+            retry.put("ventworks", clock + retryPeriod * 3f);
+        }
+        return null;
     }
 
     /** What is kept back and why, for looking into it. */
