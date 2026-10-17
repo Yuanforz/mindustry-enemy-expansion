@@ -7161,6 +7161,14 @@ public class Brain{
     }
 
     /** How much of an item is not to be spent on anything else while it is attacked: what the turret it waits for costs, and what the one being built still needs. */
+    /** What is kept back and why, for looking into it. */
+    public String reserveNote(){
+        return "attacked " + attacked() + " (losses " + Strings.fixed(director.losses, 1) + " of " + Strings.fixed(lossScale(), 1) + ", sighted " + (clock < sightedUntil) + "), firsts " + firsts.size + ", urgent " + urgent.size
+            + ", guardUntil " + (guardUntil > clock) + ", keeps beryllium " + guardNeed(Items.beryllium) + ", silicon " + guardNeed(Items.silicon) + ", posture " + director.posture
+            + "; core " + (team().core() == null ? "none" : team().core().getClass().getSimpleName()) + ", income si " + stock.income(Items.silicon) + " (piped " + stock.piped(Items.silicon) + "), be " + stock.income(Items.beryllium)
+            + ", comesIn si " + comesIn(Items.silicon) + ", hasSource si " + hasSource(Items.silicon) + ", inherited " + inherited;
+    }
+
     private int guardNeed(Item item){
         if(needClock != clock){
             needClock = clock;

@@ -75,6 +75,12 @@ public class LiveCampaign{
             //the player's part in research, once a second of game time
             if(!Vars.state.isPaused() && (int)Vars.state.tick / 60 != lastSecond){
                 lastSecond = (int)Vars.state.tick / 60;
+                if(System.getProperty("xp.notes") != null && lastSecond % 10 == 0){
+                    for(String key : System.getProperty("xp.notes").split(",")) Log.info("[XP] t=@ note @: @", lastSecond, key, ExpansionMod.brain.note(key));
+                    Team me0 = Vars.state.rules.defaultTeam;
+                    if(me0.core() != null) Log.info("[XP] t=@ core @", lastSecond, me0.core().items);
+                    Log.info("[XP] t=@ reserve @", lastSecond, ExpansionMod.brain.reserveNote());
+                }
                 try{
                     Campaign.research();
                 }catch(Throwable t){
@@ -147,6 +153,13 @@ public class LiveCampaign{
             stage = 2;
             frames = 0;
             Log.info("[XP] campaign @: researched @, bank @", sector, Campaign.researched.size, Campaign.bank);
+            StringBuilder open = new StringBuilder();
+            for(mindustry.world.Block block : Vars.content.blocks()) if(block.unlockedNow() && block.isOnPlanet(Planets.erekir)) open.append(block.name).append(' ');
+            StringBuilder opts = new StringBuilder();
+            for(expansion.Options.Option option : expansion.Options.all){
+                opts.append(option.name).append('=').append(option instanceof expansion.Options.Flag flag ? String.valueOf(flag.on()) : String.valueOf(((expansion.Options.Num)option).get())).append(' ');
+            }
+            Log.info("[XP] options: @", opts);
         });
     }
 }

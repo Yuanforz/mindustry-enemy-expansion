@@ -57,7 +57,7 @@ fi
 jar cf "$DATA/mods/XpWatch.jar" -C tools/playtest mod.hjson -C build/playtest-classes .
 
 [ "$mode" = menu ] || echo "seed $seed, start stock $stock"
-set -- java -XstartOnFirstThread -Dxp.mode="$mode" -Dxp.sector="${SECTOR:-lake}" -Dxp.root="$MOD" -Dxp.seed="$seed" -Dxp.stock="$stock" -Dxp.cores="$cores" ${XP_PEEK:+-Dxp.peek="$XP_PEEK" -Dxp.shotframe=900} ${XP_STRONGEST:+-Dxp.strongest=1} ${XP_SETTINGS:+-Dxp.settings=1} ${XP_SHOT:+-Dxp.shot="$XP_SHOT" -Dxp.shotframe="${XP_SHOTFRAME:-900}" -Dxp.speed="${XP_SPEED:-1}"} -jar "$GAME_JAR"
+set -- java -XstartOnFirstThread -Dxp.mode="$mode" -Dxp.sector="${SECTOR:-lake}" -Dxp.root="$MOD" -Dxp.seed="$seed" -Dxp.stock="$stock" -Dxp.cores="$cores" ${XP_PEEK:+-Dxp.peek="$XP_PEEK" -Dxp.shotframe=900} ${XP_STRONGEST:+-Dxp.strongest=1} ${XP_NOTES:+-Dxp.notes="$XP_NOTES"} ${XP_SETTINGS:+-Dxp.settings=1} ${XP_SHOT:+-Dxp.shot="$XP_SHOT" -Dxp.shotframe="${XP_SHOTFRAME:-900}" -Dxp.speed="${XP_SPEED:-1}"} -jar "$GAME_JAR"
 if [ -n "$XP_DRY" ]; then echo "MINDUSTRY_DATA_DIR=$DATA $*"; exit 0; fi
 # The game looks for its own files in the folder it is started from before it looks inside its jar. Started
 # from this folder it would take the mod's bundles/ for its own and show every text of its own as ???name???.

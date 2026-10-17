@@ -289,6 +289,15 @@ public class Campaign{
         Boot.frames(2);
         long wallStart = System.nanoTime(), framesStart = Boot.framesRun, modStart = Boot.nanosMod;
 
+        if(System.getProperty("xp.unlocks") != null){
+            StringBuilder open = new StringBuilder();
+            for(mindustry.world.Block block : Vars.content.blocks()) if(block.unlockedNow() && block.isOnPlanet(Planets.erekir)) open.append(block.name).append(' ');
+            StringBuilder opts = new StringBuilder();
+            for(expansion.Options.Option option : expansion.Options.all){
+                opts.append(option.name).append('=').append(option instanceof expansion.Options.Flag flag ? String.valueOf(flag.on()) : String.valueOf(((expansion.Options.Num)option).get())).append(' ');
+            }
+            System.out.println("options: " + opts);
+        }
         int enemyCores = enemy.cores().size;
         System.out.println("\n######## " + preset.name + ": " + Vars.world.width() + "x" + Vars.world.height() + ", " + (rules.attackMode ? "take " + enemyCores + " enemy cores" : "hold out for " + rules.winWave + " waves")
             + ", " + rules.objectives.all.size + " tasks; starts with " + holds(me) + "; researched so far " + researched.size);
