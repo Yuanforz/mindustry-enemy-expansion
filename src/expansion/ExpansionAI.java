@@ -45,6 +45,8 @@ public class ExpansionAI extends BuilderAI{
      * mass drivers carry across water: the builder can lift a block of its size, and nothing else would put it there.
      */
     public @Nullable Building carry, carryTo;
+    /** Where to set down what it carries, when that is a place and not a building to lift it into. */
+    public @Nullable arc.math.geom.Vec2 carrySpot;
     private float carryAge;
 
     /**
@@ -122,6 +124,7 @@ public class ExpansionAI extends BuilderAI{
         repair = null;
         if(carry != null && unit instanceof Payloadc pay && pay.hasPayload()) pay.dropLastPayload();
         carry = carryTo = null;
+        carrySpot = null;
         stopDigging();
     }
 
@@ -178,10 +181,39 @@ public class ExpansionAI extends BuilderAI{
     private void updateCarry(){
         Payloadc pay = unit instanceof Payloadc p ? p : null;
         boolean holding = pay != null && pay.hasPayload();
-        if(pay == null || carryTo == null || !carryTo.isValid() || (carryAge += Time.delta) > haulPatience * 2f || (!holding && (carry == null || !carry.isValid()))){
+        boolean nowhere = carrySpot == null && (carryTo == null || !carryTo.isValid());
+        if(pay == null || nowhere || (carryAge += Time.delta) > haulPatience * 2f || (!holding && (carry == null || !carry.isValid()))){
             if(holding) pay.dropLastPayload();
             carry = carryTo = null;
+            carrySpot = null;
             carryAge = 0f;
+            return;
+        }
+        if(carrySpot != null){
+            if(!holding){
+                if(!unit.within(carry, tilesize * 1.5f)){
+                    travel(carry, tilesize);
+                    return;
+                }
+                if(!pay.canPickup(carry)){
+                    carry = null;
+                    carrySpot = null;
+                    return;
+                }
+                Call.pickedBuildPayload(unit, carry, true);
+                return;
+            }
+            if(!unit.within(carrySpot, tilesize * 0.4f)){
+                //right over the place: what it carries is set down on the tiles under it
+                if(unit.within(carrySpot, tilesize * 2f)) unit.movePref(arc.util.Tmp.v1.set(carrySpot).sub(unit).limit(unit.speed()));
+                else travel(carrySpot, tilesize * 0.3f);
+                return;
+            }
+            if(pay.dropLastPayload()){
+                carry = null;
+                carrySpot = null;
+                carryAge = 0f;
+            }
             return;
         }
         if(!holding){

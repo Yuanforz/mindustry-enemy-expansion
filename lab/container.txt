@@ -1,0 +1,10 @@
+# Whether a duct unloader takes items out of a reinforced container: a source fills the container, the unloader set to
+# tungsten stands against it, a duct leads from the unloader to a second container that shows what came.
+[unload]
+item-source -2 0 0 tungsten
+reinforced-container -1 0
+duct-unloader 1 0 0 tungsten
+duct 2 0 0
+duct 3 0 0
+duct 4 0 0
+reinforced-container 5 0

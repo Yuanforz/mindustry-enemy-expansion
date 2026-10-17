@@ -2159,6 +2159,81 @@ public class Planner{
      * place it has not, with its power. Nothing can be built on ground no one of its side has seen; where
      * none of its units can get to look, this is how that ground is uncovered.
      */
+    /** Where the two ends of the last ferry laid out are: the box's place at the source, and its place by what it feeds. */
+    public int ferryFillX, ferryFillY, ferryDropX, ferryDropY;
+
+    /**
+     * The two ends of a ferry: a duct unloader set to the item against what is short of it, with room behind it for a box, and
+     * a box against something that makes the item, which fills it. A builder carries the box from the one to the other when
+     * it is full, and back when it is empty: where no line can be led, that is how a player gets something there.
+     */
+    public @Nullable Project ferryEnds(Building consumer, Item item, Seq<Building> sources){
+        note = "ferry of " + item.name + " to the " + consumer.block.name + ": ";
+        if(late()) return null;
+        Block box = Blocks.reinforcedContainer, unloader = Blocks.ductUnloader;
+        int size = consumer.block.size, off = -(size - 1) / 2, cx = consumer.tileX(), cy = consumer.tileY();
+        int[] drop = null;
+        search:
+        for(int d = 0; d < 4; d++){
+            for(int along = 0; along < size; along++){
+                int ux, uy;
+                if(d == 0){ ux = cx + off + size; uy = cy + off + along; }
+                else if(d == 2){ ux = cx + off - 1; uy = cy + off + along; }
+                else if(d == 1){ ux = cx + off + along; uy = cy + off + size; }
+                else{ ux = cx + off + along; uy = cy + off - 1; }
+                int rotation = (d + 2) % 4;
+                int bx = ux + Geometry.d4x(d), by = uy + Geometry.d4y(d);
+                int[][] origins = d == 0 ? new int[][]{{bx, by}, {bx, by - 1}} : d == 2 ? new int[][]{{bx - 1, by}, {bx - 1, by - 1}}
+                    : d == 1 ? new int[][]{{bx, by}, {bx - 1, by}} : new int[][]{{bx, by - 1}, {bx - 1, by - 1}};
+                if(!ground.fits(unloader, ux, uy, rotation) || !Build.validPlace(unloader, ground.team, ux, uy, rotation)) continue;
+                for(int[] o : origins){
+                    if(ground.clear(box, o[0], o[1]) && Build.validPlace(box, ground.team, o[0], o[1], 0)){
+                        drop = new int[]{ux, uy, rotation, o[0], o[1]};
+                        break search;
+                    }
+                }
+            }
+        }
+        if(drop == null){
+            note += "no room by it for an unloader and a box";
+            return null;
+        }
+        int[] fill = null;
+        sources.sort(build -> build.dst2(consumer));
+        found:
+        for(Building source : sources){
+            int s = source.block.size, so = -(s - 1) / 2, sx = source.tileX() + so, sy = source.tileY() + so;
+            //every place a box can stand touching it
+            for(int bx = sx - 2; bx <= sx + s; bx++){
+                for(int by = sy - 2; by <= sy + s; by++){
+                    boolean touching = (bx + 1 >= sx - 1 && bx <= sx + s && by + 1 >= sy - 1 && by <= sy + s);
+                    boolean overlapping = bx + 1 >= sx && bx <= sx + s - 1 && by + 1 >= sy && by <= sy + s - 1;
+                    boolean corner = (bx + 1 < sx || bx > sx + s - 1) && (by + 1 < sy || by > sy + s - 1);
+                    if(!touching || overlapping || corner) continue;
+                    if(ground.clear(box, bx, by) && Build.validPlace(box, ground.team, bx, by, 0)){
+                        fill = new int[]{bx, by};
+                        break found;
+                    }
+                }
+            }
+        }
+        if(fill == null){
+            note += "no room for a box against anything that makes it";
+            return null;
+        }
+        Project project = new Project("ferry of " + item.name + " to the " + consumer.block.name);
+        add(project, Seq.with(new Part(unloader, drop[0], drop[1], drop[2], item), new Part(box, fill[0], fill[1], 0)));
+        if(!buildable(project)){
+            drop(project, "the game does not allow " + refused);
+            return null;
+        }
+        ferryFillX = fill[0];
+        ferryFillY = fill[1];
+        ferryDropX = drop[3];
+        ferryDropY = drop[4];
+        return project;
+    }
+
     public @Nullable Project lookout(Block block, int tx, int ty){
         note = block.name + ": no seen ground near " + tx + "," + ty;
         if(late()) return null;

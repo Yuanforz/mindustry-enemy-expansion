@@ -352,6 +352,9 @@ public class Brain{
         buildingAt.clear();
         buildingMine.clear();
         keptOut.clear();
+        loopRounds.clear();
+        groupsUp = 0;
+        ferries.clear();
         coverFirst.clear();
         armyPeakDps = armyPeakHealth = 0f;
         homeShort = false;
@@ -2069,6 +2072,10 @@ public class Brain{
                     notes.put("activate", "the " + hungry.block.name + " at " + hungry.tileX() + "," + hungry.tileY() + " is short of " + shortOf(hungry).name);
                     return relief;
                 }
+                if(kind == Net.Kind.yard){
+                    Project ferry = ferryFor(hungry);
+                    if(ferry != null) return ferry;
+                }
             }
             Building weak = underpowered(kind, null);
             if(weak != null){
@@ -2478,6 +2485,16 @@ public class Brain{
             ai.carry = lift[0];
             ai.carryTo = lift[1];
             notes.put("lift", "the " + lift[0].block.name + " at " + lift[0].tileX() + "," + lift[0].tileY() + " is lifted into the " + lift[1].block.name + " at " + lift[1].tileX() + "," + lift[1].tileY());
+            return;
+        }
+        //a box to ferry to a yard no line reaches, or back to be filled
+        Object[] ferried = ferryJob(unit, data);
+        if(ferried != null){
+            ai.stopDigging();
+            ai.carry = (Building)ferried[0];
+            ai.carryTo = null;
+            ai.carrySpot = (Vec2)ferried[1];
+            notes.put("ferry", "a builder carries the box at " + ai.carry.tileX() + "," + ai.carry.tileY() + " to " + (int)(ai.carrySpot.x / tilesize) + "," + (int)(ai.carrySpot.y / tilesize));
             return;
         }
         //with nothing to build and nothing to carry: what of its own is hurt is mended first, where that can be done in peace
@@ -3379,11 +3396,18 @@ public class Brain{
      */
     private @Nullable Project choose(TeamData data, Seq<CoreBuild> targets){
         saving = false;
+        mineSaving = null;
         if(owed == null) owedSince = -1f;
         assess();
         retire();
         retireLines();
         posture();
+
+        if(turretDoctrine){
+            Project held = holdWithTurrets(data, targets);
+            notes.put("doctrine", doctrineStage + (held != null ? ": " + held.name : saving ? ": saving" : ""));
+            if(held != null || saving) return held;
+        }
 
         boolean waiting = false;
         kept.clear();
@@ -3458,7 +3482,11 @@ public class Brain{
             //base whose beryllium went out as fast as it came in never had the forty for its next drill)
             //(only while drills have had less than half of what it spent lately: saved up for without end, there was always
             //one more drill, and on the second, third and fourth sectors no army or turret was ever paid for)
-            if(economyFirst ? (goal == Director.Goal.ore || goal == Director.Goal.vents) && (System.getProperty("xp.noe2") != null || !minesUnderShare()) : goal == Director.Goal.ore){
+            //(but never for the staple its cores are emptiest of, while that is under half: that is what everything else waits
+            //for, and turrets fired it as ammunition. on the fifth sector, with drills past their share, the beryllium for the next
+            //row went into yards as it came in, the core held twenty or thirty all the opening, and the turrets stood empty)
+            boolean binding = goal == Director.Goal.ore && mineSaving != null && System.getProperty("xp.minecap") == null && mineSaving == emptiest();
+            if(economyFirst ? (goal == Director.Goal.ore || goal == Director.Goal.vents) && !binding && (System.getProperty("xp.noe2") != null || !minesUnderShare()) : goal == Director.Goal.ore){
                 saving = false;
                 continue;
             }
@@ -5021,6 +5049,7 @@ public class Brain{
                 if(copies < 1){
                     saveFor(wall.main(), wall.cost());
                     notes.put(key, "saving for " + wall.name);
+                    mineSaving = item;
                     return null;
                 }
                 Project project = planner.mine(wall, item, copies, reachFor(item));
@@ -5071,6 +5100,36 @@ public class Brain{
                     return null;
                 }
                 Project project = planner.pad(pad, item, reachFor(item));
+                //no room on the ore for a first source of it, with lines of its own laid over it: those make way, and are led round
+                //again afterwards. (on the fifth sector its base had grown over the one patch of tungsten, and the drill found no
+                //room all game while its refabricators waited for tungsten)
+                if(project == null && planner.lacking == null && !hasSource(item) && !planner.late() && System.getProperty("xp.keepover") == null){
+                    IntSeq ore = survey.floor(item);
+                    for(int i = 0; i < ore.size; i++){
+                        int ox = Point2.x(ore.get(i)), oy = Point2.y(ore.get(i));
+                        for(int dx = -2; dx <= 2; dx++){
+                            for(int dy = -2; dy <= 2; dy++){
+                                Building over = world.build(ox + dx, oy + dy);
+                                if(over == null || over.team != team() || planner.clearing.contains(over.pos())) continue;
+                                boolean way = over.block instanceof Duct || over.block instanceof DuctBridge || over.block instanceof mindustry.world.blocks.liquid.Conduit
+                                    || over.block instanceof mindustry.world.blocks.liquid.LiquidBridge || over.block instanceof mindustry.world.blocks.power.BeamNode
+                                    || over.block instanceof mindustry.world.blocks.defense.Wall || over.block instanceof DuctRouter || over.block instanceof OverflowDuct;
+                                if(!way) continue;
+                                planner.clearing.add(over.pos());
+                                over.tile.getLinkedTiles(tile -> ground.relaid.add(tile.pos()));
+                            }
+                        }
+                    }
+                    if(planner.clearing.size > 0){
+                        try{
+                            project = planner.pad(pad, item, reachFor(item));
+                            if(project != null) notes.put(key, "a first drill for " + item.name + " goes up where " + project.removals.size + " pieces of its own lines stood; they are led round again");
+                        }finally{
+                            ground.relaid.clear();
+                            planner.clearing.clear();
+                        }
+                    }
+                }
                 if(project == null && planner.lacking != null){
                     //the ore is there; what the drill runs on is not. that first, and the drill the next time round
                     notes.put(key, planner.note);
@@ -5297,6 +5356,8 @@ public class Brain{
             Project relief = relieve(hungry, data, 0);
             notes.put("yardflow", "relief " + (relief != null) + ", saving " + saving);
             if(relief != null || saving) return relief;
+            Project carried = ferryFor(hungry);
+            if(carried != null) return carried;
             //nothing to be done for that one: another goes up where there is enough going by to supply it. but where that
             //did not help either, a third would only stand idle beside them: what yards there are have to be fed first
             int starved = net.things.count(thing -> thing.kind == Net.Kind.yard && health.get(thing, 1f) < 0.5f && works(thing) != null && shortOf(works(thing)) != null);
@@ -5371,8 +5432,12 @@ public class Brain{
             //water piped to it goes where there is none near (by the first layout alone, one that wanted water, a sector
             //with no water by its core found no place for any turret at all, and lost its core to the second wave)
             Blueprint same = kinds.find(other -> other.main() == blueprint.main());
+            //(holding with turrets: the layout with the most turrets to it, three to a group, whatever it asks of the place)
+            boolean better = same != null && (turretDoctrine && groupsUp < doctrineGroups
+                ? blueprint.parts.count(part -> part.block instanceof BaseTurret) > same.parts.count(part -> part.block instanceof BaseTurret)
+                : Plumbing.needs(blueprint.parts).size < Plumbing.needs(same.parts).size);
             if(same == null) kinds.add(blueprint);
-            else if(Plumbing.needs(blueprint.parts).size < Plumbing.needs(same.parts).size){
+            else if(better){
                 kinds.remove(same, true);
                 kinds.add(blueprint);
             }
@@ -5392,6 +5457,7 @@ public class Brain{
 
         Blueprint wanted = null;
         String said = "its lines reach none of the ways to the player";
+        postRefused = null;
         for(Blueprint blueprint : kinds){
             if(planner.late()) break;
             Seq<int[]> places = postSpots(blueprint, data);
@@ -5399,6 +5465,17 @@ public class Brain{
             //every layout there is of this turret that can be supplied, the fullest first: where a pair with its walls
             //will not go, a single one may
             Seq<Blueprint> ways = blueprints.select(other -> other.kind() == Kind.post && other.main() == blueprint.main() && usable(other) && suppliable(other));
+            //holding with turrets: only the layout with the most turrets to it, saved up for if need be, three to a group
+            if(turretDoctrine && groupsUp < doctrineGroups && ways.any()){
+                int most = ways.max(other -> other.parts.count(part -> part.block instanceof BaseTurret)).parts.count(part -> part.block instanceof BaseTurret);
+                ways.removeAll(other -> other.parts.count(part -> part.block instanceof BaseTurret) < most);
+                Blueprint group = ways.first();
+                if(!pays(group.needs())){
+                    saveFor(group.main(), group.needs());
+                    notes.put("post", "saving for " + group.name);
+                    return null;
+                }
+            }
             //the walls that go with it can wait for what they cost: it is the turrets that have to be paid for to begin.
             //what can't be paid for as a pair goes up as one: a turret now is worth more than two later, and never more
             //than when it is being attacked. only when not even the least of them can be paid for is that saved for
@@ -5437,7 +5514,7 @@ public class Brain{
             }
             return null;
         }
-        planner.note = said;
+        planner.note = said + (postRefused == null ? "" : " [places refused: given up on " + postRefused[0] + ", no line to arm it " + postRefused[1] + ", no water " + postRefused[2] + "]");
         return done("post", null);
     }
 
@@ -5556,6 +5633,174 @@ public class Brain{
      * Whether drills have had less than their share of what it spent over the last few minutes: what it laid out, and
      * what its yards take for their units. Drills that come before everything else may have half of it.
      */
+    /**
+     * The player's way of holding a sector with turrets (xp.doctrine=turrets): what is short of power gets a generator first;
+     * then every beryllium wall within reach gets its drills; then turrets, three to a group, two or three groups, where the
+     * other side comes; and only then units, by the rest of what it decides. Turrets do more for what they cost than units do.
+     */
+    static final boolean turretDoctrine = "turrets".equals(System.getProperty("xp.doctrine"));
+    /** How many groups of turrets it puts up before anything else, by that way. */
+    static final int doctrineGroups = Integer.getInteger("xp.doctrinegroups", 3);
+    /** How many it has put up so far. */
+    private int groupsUp;
+    private String doctrineStage = "";
+
+    private @Nullable Project holdWithTurrets(TeamData data, Seq<CoreBuild> targets){
+        //what it can't do without at all, as always: what is broken mended, turrets armed, the first plant of what everything is built of
+        for(Director.Goal must : new Director.Goal[]{Director.Goal.mend, Director.Goal.arm, Director.Goal.staples}){
+            saving = false;
+            Project project = attempt(must, data, targets);
+            if(project != null || saving){
+                doctrineStage = "first " + must;
+                return project;
+            }
+        }
+        //power short, or none made at all: a generator
+        boolean generating = data.buildings.contains(build -> build.block instanceof mindustry.world.blocks.power.PowerGenerator);
+        if(!generating || powerShort()){
+            saving = false;
+            doctrineStage = "power";
+            Project project = attempt(Director.Goal.vents, data, targets);
+            if(project != null || saving) return project;
+            project = power(data);
+            if(project != null || saving) return project;
+        }
+        //every beryllium wall within reach drilled
+        if(!minedOut.containsKey(Items.beryllium.id)){
+            saving = false;
+            doctrineStage = "beryllium";
+            boolean before = minesOnly;
+            minesOnly = true;
+            try{
+                Project project = provide(Items.beryllium, data, 0);
+                if(project != null || saving) return project;
+            }finally{
+                minesOnly = before;
+            }
+        }
+        //then turrets, three to a group
+        if(groupsUp < doctrineGroups){
+            saving = false;
+            doctrineStage = "turret groups " + groupsUp + " of " + doctrineGroups;
+            Project project = attempt(Director.Goal.defence, data, targets);
+            if(project != null) groupsUp++;
+            if(project != null || saving) return project;
+        }
+        doctrineStage = "units and the rest";
+        saving = false;
+        return null;
+    }
+
+    /** A box carried between something that makes an item and something that is short of it, where no line could be led. */
+    static class Ferry{
+        int consumer, fillX, fillY, dropX, dropY;
+        Item item;
+    }
+
+    private final Seq<Ferry> ferries = new Seq<>();
+
+    /**
+     * A ferry for a yard short of something that no line can be led to it: a box filled where the item is made, and carried by
+     * a builder to an unloader against the yard. (on the fifth sector refabricators stood beside a base full of tungsten and
+     * silicon, and every way a line could be led to them was built over; a player carries a box there with the core's unit)
+     */
+    private @Nullable Project ferryFor(Building hungry){
+        Item item = shortOf(hungry);
+        if(item == null || System.getProperty("xp.noferry") != null || ferries.size >= 4 || !may(Blocks.reinforcedContainer) || !may(Blocks.ductUnloader)) return null;
+        if(ferries.contains(ferry -> ferry.consumer == hungry.pos() && ferry.item == item)) return null;
+        //only for what turns out better units, and only out of plenty: the core's unit is the builder too, and boxes carried to
+        //first yards in the opening took it off building and mending, and five of eight games of the fifth sector were lost
+        if(!(hungry instanceof Reconstructor.ReconstructorBuild) || stock.have(item) < stock.cap() * 0.4f) return null;
+        String key = "ferry:" + hungry.pos() + ":" + item.name;
+        if(!ready(key)) return null;
+        Seq<Building> sources = new Seq<>();
+        for(Building build : team().data().buildings){
+            if(build instanceof Drill.DrillBuild drill && drill.dominantItem == item) sources.add(build);
+            else if(build instanceof BeamDrill.BeamDrillBuild beam && beam.lastItem == item) sources.add(build);
+            else if(build.block instanceof GenericCrafter crafter && crafter.outputItems != null && crafter.outputItems.length > 0 && crafter.outputItems[0].item == item) sources.add(build);
+        }
+        if(sources.isEmpty()){
+            notes.put(key, "nothing of its own makes " + item.name);
+            retry.put(key, clock + retryPeriod * 2f);
+            return null;
+        }
+        //walls, ducts and nodes of its own right by the yard make way for the unloader and the box: a yard stands in among lines
+        int reachOut = hungry.block.size / 2 + 4;
+        for(int dx = -reachOut; dx <= reachOut; dx++){
+            for(int dy = -reachOut; dy <= reachOut; dy++){
+                Building near = world.build(hungry.tileX() + dx, hungry.tileY() + dy);
+                if(near == null || near.team != team() || near == hungry || planner.clearing.contains(near.pos())) continue;
+                if(near.block instanceof mindustry.world.blocks.defense.Wall || near.block instanceof Duct || near.block instanceof mindustry.world.blocks.power.BeamNode){
+                    planner.clearing.add(near.pos());
+                    near.tile.getLinkedTiles(tile -> ground.relaid.add(tile.pos()));
+                }
+            }
+        }
+        Project project;
+        try{
+            project = planner.ferryEnds(hungry, item, sources);
+        }finally{
+            ground.relaid.clear();
+            planner.clearing.clear();
+        }
+        if(project == null){
+            notes.put(key, planner.note);
+            retry.put(key, clock + retryPeriod * 2f);
+            return null;
+        }
+        Ferry ferry = new Ferry();
+        ferry.consumer = hungry.pos();
+        ferry.item = item;
+        ferry.fillX = planner.ferryFillX;
+        ferry.fillY = planner.ferryFillY;
+        ferry.dropX = planner.ferryDropX;
+        ferry.dropY = planner.ferryDropY;
+        ferries.add(ferry);
+        notes.put(key, "a box of " + item.name + " goes from " + ferry.fillX + "," + ferry.fillY + " to " + ferry.dropX + "," + ferry.dropY);
+        return project;
+    }
+
+    /** A box for a builder to carry, and where to: a full one to what it feeds, an empty one back to be filled. */
+    private @Nullable Object[] ferryJob(Unit unit, TeamData data){
+        if(!(unit instanceof Payloadc pay)) return null;
+        ferries.removeAll(ferry -> {
+            Building consumer = world.build(ferry.consumer);
+            return consumer == null || consumer.team != team() || consumer.pos() != ferry.consumer;
+        });
+        for(Ferry ferry : ferries){
+            if(data.units.contains(other -> other.controller() instanceof ExpansionAI ai && ai.carrySpot != null && (ai.carry != null && (ai.carry.tileX() == ferry.fillX || ai.carry.tileX() == ferry.dropX)))) continue;
+            Building filled = world.build(ferry.fillX, ferry.fillY), emptied = world.build(ferry.dropX, ferry.dropY);
+            boolean filledBox = filled != null && filled.team == team() && filled.block instanceof mindustry.world.blocks.storage.StorageBlock && !(filled instanceof CoreBuild);
+            boolean droppedBox = emptied != null && emptied.team == team() && emptied.block instanceof mindustry.world.blocks.storage.StorageBlock && !(emptied instanceof CoreBuild);
+            //an empty one by the yard goes back to be filled
+            if(droppedBox && emptied.items.get(ferry.item) == 0 && filled == null && pay.canPickup(emptied)){
+                return new Object[]{emptied, new Vec2(ferry.fillX * tilesize + Blocks.reinforcedContainer.offset, ferry.fillY * tilesize + Blocks.reinforcedContainer.offset)};
+            }
+            //a full one goes to the yard, where nothing stands
+            if(filledBox && filled.items.get(ferry.item) >= Math.min(100, filled.block.itemCapacity * 0.6f) && emptied == null && pay.canPickup(filled)){
+                return new Object[]{filled, new Vec2(ferry.dropX * tilesize + Blocks.reinforcedContainer.offset, ferry.dropY * tilesize + Blocks.reinforcedContainer.offset)};
+            }
+        }
+        return null;
+    }
+
+    /** What the mine last saved up for is to bring in. */
+    private @Nullable Item mineSaving;
+
+    /** Of what it can't do without, the one its cores are emptiest of for what they can hold, if that is under half; or null. */
+    private @Nullable Item emptiest(){
+        Item least = null;
+        float fill = 0.5f;
+        for(Item item : staples()){
+            float share = stock.have(item) / (float)Math.max(stock.cap(), 1);
+            if(share < fill){
+                fill = share;
+                least = item;
+            }
+        }
+        return least;
+    }
+
     private boolean minesUnderShare(){
         float mines = 0f, all = 0f;
         for(int i = 0; i < building.size; i++){
@@ -5685,9 +5930,23 @@ public class Brain{
         flows(data);
         //(what the base it started with mines counts as mined: counting only its own drills, the fifth sector's first minute went
         //into a turret while its beryllium walls stood free)
-        Seq<Item> ores = useful().select(item -> builtWith(item) && (hasSource(item) || (System.getProperty("xp.inherited") != null && comesIn(item))) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null))
+        //and the better ores it has no source of yet, wherever a drill it may build can get them out: what they make is what the
+        //better turrets, units and buildings wait for. (the fifth sector's base stood beside its one patch of tungsten for an hour
+        //and never put a drill on it, with refabricators waiting for tungsten)
+        //(once its cores hold a quarter of what they can of each thing it can't do without: laid out in the opening, a first
+        //tungsten drill with the water and power it runs on, two hundred and fifty blocks, took what the opening was living on,
+        //and seven of eight such games were lost)
+        //(and with power to spare for the drill: an impact drill draws as much as a furnace, and two put up on the fourth sector's
+        //grid in the middle of its waves left its turrets and furnaces short, and half its games were lost)
+        //(but not on a map won by holding out its waves: what pays only later is no use there. on the fourth sector, won at its
+        //ninth wave by the thirty-fifth minute, tungsten drills put up for their own sake cost half its games; on the fifth, won
+        //only by taking its cores, the need for tungsten found the ore in five games of eight, this in all of them)
+        boolean waves = state.rules.waves && state.rules.winWave > 0 && state.rules.waveTeam != team();
+        boolean higher = System.getProperty("xp.nohigher") == null && (!waves || System.getProperty("xp.higher") != null) && fill >= 0.25f && !powerShort();
+        Seq<Item> ores = useful().select(item -> builtWith(item) && (hasSource(item) || higher || (System.getProperty("xp.inherited") != null && comesIn(item))) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null))
             && (!aheadOfRest || stock.have(item) < stock.cap() * 0.5f));
-        ores.sort(item -> stock.have(item) + stock.income(item) * 2f);
+        //what it mines already and is short of first: a first source of something new comes after the staples are under way
+        ores.sort(item -> stock.have(item) + stock.income(item) * 2f + (hasSource(item) ? 0f : stock.cap() * 0.3f));
         minesOnly = true;
         try{
             for(Item item : ores){
@@ -5823,6 +6082,8 @@ public class Brain{
     }
 
     private int shift, firstShift;
+    /** How many times each kind of work in each zone has been found going round in a loop. */
+    private final ObjectIntMap<Long> loopRounds = new ObjectIntMap<>();
     private final ObjectSet<Item> kept = new ObjectSet<>();
     private int relieveSaves, roundsChosen, roundsGuarded, roundsSkipped;
     /** A base that came with the map is watched for this long before anything is decided: what its lines bring in shows what it lacks. */
@@ -6106,7 +6367,17 @@ public class Brain{
         //of yards as good as each other, the one whose units are made of what its cores hold plenty of first: a unit made of
         //what everything else is short of takes it from the drills and turrets that wait for it, unit after unit
         //(where beryllium ran short and silicon stood full, three tank yards took more beryllium than its drills brought in)
-        out.sort(blueprint -> -1000f * blueprint.parts.count(part -> part.block instanceof UnitBlock) + Math.min(scarceCost(blueprint) / 20f, 900f) + data.countType(finalUnit(blueprint)));
+        //and of all of them, first a kind whose yards it has none of yet, once the yards it has keep their kind at half what it
+        //may have of it: what it may have is counted kind by kind, and a further yard of a kind only makes as many sooner. (all
+        //tank yards on the fifth sector, with the tanks at their number and nothing else turned out; but put up while the first
+        //yards still stood short, a ship yard took the seventh sector's silicon and it made two units in half an hour)
+        ObjectIntMap<Block> families = new ObjectIntMap<>();
+        for(Building build : data.buildings){
+            if(build instanceof UnitFactory.UnitFactoryBuild) families.increment(build.block);
+        }
+        boolean diverse = System.getProperty("xp.samekind") == null;
+        out.sort(blueprint -> -1000f * blueprint.parts.count(part -> part.block instanceof UnitBlock) + Math.min(scarceCost(blueprint) / 20f, 900f) + data.countType(finalUnit(blueprint))
+            + (diverse && data.countType(finalUnit(blueprint)) >= cap * 0.5f ? 1500f * families.get(blueprint.parts.find(part -> part.block instanceof UnitFactory) == null ? blueprint.main() : blueprint.parts.find(part -> part.block instanceof UnitFactory).block, 0) : 0f));
         return out;
     }
 
@@ -6747,12 +7018,46 @@ public class Brain{
         return out;
     }
 
+    /** Why the places looked at for the last turret would not do: given up on lately, no line to arm it from, no water. */
+    private @Nullable int[] postRefused;
+
     private Seq<int[]> postSpots(Blueprint blueprint, TeamData data){
         Block main = blueprint.main();
         float cover = main instanceof BaseTurret turret ? turret.range * 0.85f : tilesize * 20f;
         Seq<Plumbing.Tap> needs = Plumbing.needs(blueprint.parts);
-        Boolf<int[]> usable = at -> deadZones.get(Point2.pack(at[0], at[1]), 0f) <= clock && supplied(blueprint, at[0], at[1]) && (needs.size == 0 || piped(needs, at[0], at[1]));
+        int[] refused = new int[3];
+        Boolf<int[]> usable = at -> {
+            if(deadZones.get(Point2.pack(at[0], at[1]), 0f) > clock){
+                refused[0]++;
+                return false;
+            }
+            if(!supplied(blueprint, at[0], at[1])){
+                refused[1]++;
+                return false;
+            }
+            if(needs.size > 0 && !piped(needs, at[0], at[1])){
+                refused[2]++;
+                return false;
+            }
+            return true;
+        };
+        postRefused = refused;
         Seq<int[]> out = new Seq<>();
+        //holding with turrets: where the other side's ground units come at its cores, then along the way from home towards
+        //its bases as far as its lines reach, each group a stretch further out than the last
+        if(turretDoctrine && groupsUp < doctrineGroups){
+            for(int[] at : approachSpots(data, main instanceof BaseTurret turret ? turret.range : tilesize * 20f)){
+                if(usable.get(at) && !covered(at[0] * tilesize, at[1] * tilesize, cover * 0.5f)) out.add(at);
+            }
+            Seq<Zone> lanes = new Seq<>();
+            for(CoreBuild from : data.cores){
+                if(world.isInMapArea(from.tileX(), from.tileY())) lanes.addAll(territory.zones(territory.lane(from), 6));
+            }
+            for(Zone zone : lanes){
+                if(usable.get(new int[]{zone.x, zone.y}) && !covered(zone.x * tilesize, zone.y * tilesize, cover * 0.5f)) out.add(new int[]{zone.x, zone.y});
+            }
+            if(out.any()) return out;
+        }
         //home does not hold against what the other side has: the turrets go where its ground units come in, all together
         if(homeShort){
             for(int[] at : approachSpots(data, main instanceof BaseTurret turret ? turret.range : tilesize * 20f)){
@@ -6760,6 +7065,22 @@ public class Brain{
             }
         }
         boolean pressing = attacked() || director.posture == Director.Posture.pressed;
+        //or wherever more has been lost lately than a turret there costs, with none over it, attacked or not: raided a unit or two
+        //at a time, the fifth sector was never counted as attacked, and its outlying drills were put back and lost, again and again,
+        //with no turret ever going up over them
+        //(tried as the default: twice as much was lost by the thirtieth minute, the turrets themselves going up where the raids were)
+        if(!pressing && System.getProperty("xp.coverlosses") != null){
+            float price = total(main.requirements) * state.rules.buildCostMultiplier;
+            int around = Math.max(1, Math.round(cover / tilesize / 8f));
+            for(var entry : fallen){
+                if(clock - entry.value >= fallenTime) continue;
+                int cx = Point2.x(entry.key) / 8, cy = Point2.y(entry.key) / 8;
+                if(lostNear(cx, cy, around) >= price && !guarded((cx * 8 + 4) * tilesize, (cy * 8 + 4) * tilesize)){
+                    pressing = true;
+                    break;
+                }
+            }
+        }
         String spotsNote;
         //how far from the place it was meant for a turret may go to find room
         int within = 6;
@@ -7058,6 +7379,15 @@ public class Brain{
         long prof = Prof.start();
         ground.clear();
         TeamData data = team().data();
+        //where a ferried box stands now and then is kept clear for it
+        for(Ferry ferry : ferries){
+            for(int dx = 0; dx < 2; dx++){
+                for(int dy = 0; dy < 2; dy++){
+                    ground.kept.add(Point2.pack(ferry.fillX + dx, ferry.fillY + dy));
+                    ground.kept.add(Point2.pack(ferry.dropX + dx, ferry.dropY + dy));
+                }
+            }
+        }
         for(BlockPlan plan : data.plans){
             Tile tile = world.tile(plan.x, plan.y);
             if(tile == null || standing(tile, plan)) continue;
@@ -7336,7 +7666,13 @@ public class Brain{
             if(secureAt != -1 && atlas.zoneAt(Point2.x(secureAt), Point2.y(secureAt)) == zone) continue;
             Float until = keptOut.get(key);
             if(until == null || until <= clock){
-                keptOut.put(key, clock + 60f * 60f * (kind == Task.Kind.turret ? 3f : 5f));
+                //longer each time it comes round again, until a turret stands over the place: putting back what is lost there,
+                //again and again, is work and stock for nothing (one doubling each time, up to forty minutes)
+                int rounds = loopRounds.get(key, 0) + 1;
+                loopRounds.put(key, rounds);
+                float minutes = (kind == Task.Kind.turret ? 3f : 5f) * (System.getProperty("xp.flatloop") == null ? Math.min(1 << Math.min(rounds - 1, 3), 8) : 1);
+                if(guarded(atlas.zones.get(zone).x() * tilesize, atlas.zones.get(zone).y() * tilesize)) minutes = kind == Task.Kind.turret ? 3f : 5f;
+                keptOut.put(key, clock + 60f * 60f * minutes);
                 Atlas.Zone at = atlas.zones.get(zone);
                 Log.info("[EnemyExpansion] Going round in a loop: @ in zone @ at @,@ (@). @", kind, zone, at.x(), at.y(), ledger.describe(key, clock),
                     kind == Task.Kind.turret ? "Turrets go somewhere else for a while." : "No more of that there for a while; a turret over it first.");
