@@ -147,7 +147,15 @@ public class Brain{
     //by what was tried, such as "mine:beryllium" or "yard": when it may be tried again, how often it has come to nothing, and what was last said about it
     private final ObjectFloatMap<String> retry = new ObjectFloatMap<>();
     private final ObjectIntMap<String> failures = new ObjectIntMap<>(), timeouts = new ObjectIntMap<>();
-    private final OrderedMap<String, String> notes = new OrderedMap<>();
+    private final OrderedMap<String, String> notes = new OrderedMap<>(){
+        @Override
+        public String put(String key, String value){
+            noteAt.put(key, clock);
+            return super.put(key, value);
+        }
+    };
+    /** When each note was last written: one not written for a while says how things stood then, not now. */
+    private final ObjectFloatMap<String> noteAt = new ObjectFloatMap<>();
     private final ObjectMap<Item, Seq<int[]>> spots = new ObjectMap<>();
     private final ObjectMap<Item, IntSet> seenLines = new ObjectMap<>();
 
@@ -643,7 +651,12 @@ public class Brain{
         //more here (only with no line to it at all, a furnace that got a trickle off a shared line stood at a tenth of its
         //pace with the cores full of graphite)
         String turn = "turn:" + hungry.pos() + ":" + lack.name;
-        if(Options.refit.on() && ready(turn) && stock.have(lack) >= stock.cap() * 0.4f){
+        //or where what the thing makes is scarcer in its cores than what it is short of: the one is worth more turned into the
+        //other. (the fourth sector's first silicon furnace stood waiting for graphite for ten minutes with three times as much
+        //graphite in the core as silicon, where no branch could be led to it; the games where it waited were lost)
+        Item made = hungry.block instanceof GenericCrafter crafter && crafter.outputItems != null && crafter.outputItems.length > 0 ? crafter.outputItems[0].item : null;
+        boolean scarcer = made != null && System.getProperty("xp.turnfull") == null && stock.have(made) * 2 < stock.have(lack);
+        if(Options.refit.on() && ready(turn) && (stock.have(lack) >= stock.cap() * 0.4f || scarcer)){
             Seq<Net.Thing> others = net.things.select(thing -> (thing.kind == Net.Kind.mine || thing.kind == Net.Kind.maker) && thing.item == lack && net.whole(thing) && !detached(thing) && (feed == null || !feed.contains(thing.pos())));
             others.sort(thing -> Math.abs(thing.x - hungry.tileX()) + Math.abs(thing.y - hungry.tileY()));
             notes.put(turn, others.isEmpty() ? "no line of " + lack.name + " to turn into it" : "none of the " + others.size + " lines of " + lack.name + " could be led into it:");
@@ -965,7 +978,7 @@ public class Brain{
             }
             Building first = quarry(hx, hy);
             Seq<Unit> quick = home.select(FighterAI::agileUnit);
-            asOne = first != null && overwhelms(home, first) && !overwhelms(quick, first);
+            asOne = first != null && overwhelms(home, first, true) && !overwhelms(quick, first, true);
         }
         if(System.getProperty("xp.mixed") == null && !asOne && home.contains(FighterAI::agileUnit) && home.contains(unit -> !FighterAI.agileUnit(unit))) home = home.select(FighterAI::agileUnit);
         //and only what is of the same kind as the group out joins it: tanks that came out to a group of ships laying siege made it
@@ -987,9 +1000,16 @@ public class Brain{
             //stood a hundred tiles back while its head fought, and the group was called home as stuck
             float gap = Float.MAX_VALUE;
             for(Unit unit : out) gap = Math.min(gap, unit.dst(aimAt));
-            if(gap < closest - tilesize * 3f || closestAt < 0f){
-                closest = gap;
+            //and a group that keeps moving is on its way, whether or not that brings it nearer as the crow flies: the way round a
+            //lake first leads away from what is beyond it. (on the fifth sector a group of 28 going round the lake to a core was
+            //called home as stuck, 61 tiles off, again and again)
+            boolean moving = System.getProperty("xp.crowflies") == null && closestAt >= 0f && Mathf.dst(cx, cy, closestFromX, closestFromY) > tilesize * 8f;
+            if(gap < closest - tilesize * 3f || closestAt < 0f || moving){
+                closest = Math.min(gap, closestAt < 0f ? Float.MAX_VALUE : closest);
+                if(closestAt < 0f) closest = gap;
                 closestAt = clock;
+                closestFromX = cx;
+                closestFromY = cy;
             }else if(clock - closestAt > 60f * 60f && gap > tilesize * 30f){
                 Log.info("[EnemyExpansion] The group of @ out against the @ at @,@ has got no nearer in a minute (it stands round @,@, @ tiles off): its way is shut. It comes home.", out.size, aimAt.block.name, aimAt.tileX(), aimAt.tileY(), (int)(cx / tilesize), (int)(cy / tilesize), (int)(gap / tilesize));
                 keptOut.put(Task.key(Task.Kind.attack, atlas.zoneAt(aimAt.tileX(), aimAt.tileY()), null), clock + 60f * 60f * 8f);
@@ -1100,7 +1120,7 @@ public class Brain{
             if(first != null){
                 Seq<Unit> half = home.copy();
                 half.truncate(Math.max((int)(home.size / 1.5f), 1));
-                able = overwhelms(half, first);
+                able = overwhelms(half, first, true);
             }
         }
         //not while the map has waves still to come that the turrets do not hold by themselves: the army is the rest of what holds
@@ -1120,7 +1140,7 @@ public class Brain{
                 hy += unit.y / home.size;
             }
             Building first = quarry(hx, hy);
-            worth = first != null && overwhelms(home, first);
+            worth = first != null && overwhelms(home, first, true);
         }
         if(!waveDue && ((home.size >= enough && worth) || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
             //those waiting at home go out, as a group of their own or to join the one that is out
@@ -1217,7 +1237,7 @@ public class Brain{
             for(Unit unit : out) send(unit, lone);
             return;
         }
-        strike = overwhelms(out, aim);
+        strike = overwhelms(out, aim, true);
         //what it set out to bring down it keeps at while it stands: a group that turns from one thing to the next as it moves
         //gets strung out between them. (weighed afresh as it marched, what stood in front of the turret changed with the side
         //it came from, and on the fifth sector a group went for three turrets a hundred tiles and more apart in one minute and
@@ -1363,8 +1383,24 @@ public class Brain{
             //what walks takes away only what guards what it was sent against or reaches the way there: on the fifth sector the
             //nearest turret it could bring down was across the map from both, and the group marched off to it
             float far = aim.dst(x, y);
-            turrets = turrets.select(build -> build.within(aim, ((Turret)build.block).range + r + tilesize * 4f)
-                || (build.dst(aim) < far && Intersector.distanceSegmentPoint(x, y, aim.x, aim.y, build.x, build.y) < ((Turret)build.block).range + tilesize * 4f));
+            //the way it will walk, round what is in the way, and not the line as the crow flies: the way round a lake ran under
+            //the guns of another base, which the straight line never came near
+            IntSeq way = System.getProperty("xp.straightway") == null ? wayTiles(group, aim, r) : null;
+            if(way != null && way.size > 0){
+                int width = world.width();
+                turrets = turrets.select(build -> {
+                    if(build.within(aim, ((Turret)build.block).range + r + tilesize * 4f)) return true;
+                    float range = ((Turret)build.block).range + tilesize * 2f;
+                    for(int i = 0; i < way.size; i += 2){
+                        int at = way.get(i);
+                        if(build.within((at % width) * tilesize, (at / width) * tilesize, range)) return true;
+                    }
+                    return false;
+                });
+            }else{
+                turrets = turrets.select(build -> build.within(aim, ((Turret)build.block).range + r + tilesize * 4f)
+                    || (build.dst(aim) < far && Intersector.distanceSegmentPoint(x, y, aim.x, aim.y, build.x, build.y) < ((Turret)build.block).range + tilesize * 4f));
+            }
         }
         turrets.sort(build -> build.dst2(x, y));
         for(int i = 0; i < Math.min(turrets.size, 16); i++){
@@ -1559,6 +1595,8 @@ public class Brain{
 
     /** Whether the group out on the attack is strong enough to go straight for what it was sent against. */
     private boolean strike;
+    /** Where the middle of the group out stood when it was last seen to get on. */
+    private float closestFromX, closestFromY;
     /** How the last attack was sized up, for looking into it. */
     private String sizedUp = "";
 
@@ -1570,6 +1608,11 @@ public class Brain{
      * firing first. (A battle of fire against fire is won by the side that brings more of it to bear at once.)
      */
     private boolean overwhelms(Seq<Unit> group, Building target){
+        return overwhelms(group, target, false);
+    }
+
+    /** @param way whether what fires on the group on its way there counts too: it arrives with that much less health */
+    private boolean overwhelms(Seq<Unit> group, Building target, boolean way){
         float fire = 0f, lasts = 0f, reach = 0f;
         float armor = target.block.armor;
         for(Unit unit : group){
@@ -1577,6 +1620,8 @@ public class Brain{
             lasts += unit.health + unit.shield;
             reach = Math.max(reach, unit.range());
         }
+        float onTheWay = way && System.getProperty("xp.noway") == null ? wayDamage(group, target, reach) : 0f;
+        lasts = Math.max(lasts - onTheWay, 0f);
         float[] against = {0f};
         float from = reach;
         for(TeamData other : state.teams.active){
@@ -1612,8 +1657,158 @@ public class Brain{
         indexer.eachBlock(target.team, target.x, target.y, edge, build -> build != target && !(build.block instanceof BaseTurret)
             && (build.x - target.x) * (fx - target.x) + (build.y - target.y) * (fy - target.y) > 0f, build -> shield[0] += build.health);
         float kill = (target.health + shield[0]) / Math.max(fire, 1f), lost = lasts / Math.max(against[0], 1f);
-        sizedUp = Strings.format("its @ units deal @/s and last @ s; the @ has @ health and @ in front of it, what guards it deals @/s, so it falls in @ s", group.size, (int)fire, (int)lost, target.block.name, (int)target.health, (int)shield[0], (int)against[0], (int)kill);
-        return kill * caution < lost * 0.5f;
+        sizedUp = Strings.format("its @ units deal @/s and last @ s@; the @ has @ health and @ in front of it, what guards it deals @/s, so it falls in @ s", group.size, (int)fire, (int)lost, onTheWay > 0f ? " after losing " + (int)onTheWay + " on the way" : "", target.block.name, (int)target.health, (int)shield[0], (int)against[0], (int)kill);
+        return kill * caution < lost * margin;
+    }
+
+    /** How much longer than it takes to bring the thing down a group has to be reckoned to last: what being thrown back and taking things then moves (caution). */
+    static final float margin = Float.parseFloat(System.getProperty("xp.margin", "0.5"));
+
+    /**
+     * What the other side's turrets would fire into a group on the way from where it stands to where it can fire on a
+     * target, over the ground its slowest walks: each tile of the way that turrets it has seen reach, for as long as it takes
+     * to cross it. (the way round a lake to one core of the fifth sector ran past the guns of another, and every group sent
+     * there straight was shot to pieces before it got there)
+     */
+    private float wayDamage(Seq<Unit> group, Building target, float reach){
+        if(group.isEmpty()) return 0f;
+        boolean grounded = group.contains(unit -> !unit.type.flying);
+        float speed = Float.MAX_VALUE, gx = 0f, gy = 0f;
+        for(Unit unit : group){
+            speed = Math.min(speed, unit.speed());
+            gx += unit.x / group.size;
+            gy += unit.y / group.size;
+        }
+        //tiles a second
+        float pace = Math.max(speed * 60f / tilesize, 0.1f);
+        int width = world.width(), height = world.height();
+        int[] far = wayField(target, grounded);
+        int at = mindustry.core.World.toTile(gx) + mindustry.core.World.toTile(gy) * width;
+        if(at < 0 || at >= far.length) return 0f;
+        //where the group stands may not be on the field itself: the nearest tile that is
+        if(far[at] == Integer.MAX_VALUE){
+            int found = -1;
+            for(int r = 1; r <= 6 && found == -1; r++){
+                for(int dx = -r; dx <= r && found == -1; dx++){
+                    for(int dy = -r; dy <= r; dy++){
+                        int x = mindustry.core.World.toTile(gx) + dx, y = mindustry.core.World.toTile(gy) + dy;
+                        if(x >= 0 && y >= 0 && x < width && y < height && far[x + y * width] != Integer.MAX_VALUE){
+                            found = x + y * width;
+                            break;
+                        }
+                    }
+                }
+            }
+            if(found == -1) return 0f;
+            at = found;
+        }
+        float[] fire = turretCover();
+        float damage = 0f;
+        IntSeq way = trace(far, at, target, reach);
+        for(int i = 0; i < way.size; i++) damage += fire[way.get(i)] / pace;
+        return damage;
+    }
+
+    /** The tiles of the way a group would walk to where it can fire on a target, or null where there is none. */
+    private @Nullable IntSeq wayTiles(Seq<Unit> group, Building target, float reach){
+        if(group.isEmpty()) return null;
+        float gx = 0f, gy = 0f;
+        for(Unit unit : group){
+            gx += unit.x / group.size;
+            gy += unit.y / group.size;
+        }
+        int width = world.width();
+        int[] far = wayField(target, group.contains(unit -> !unit.type.flying));
+        int at = mindustry.core.World.toTile(gx) + mindustry.core.World.toTile(gy) * width;
+        if(at < 0 || at >= far.length || far[at] == Integer.MAX_VALUE) return null;
+        return trace(far, at, target, reach);
+    }
+
+    /** Down a field of steps from a tile, as far as where a target is in reach. */
+    private IntSeq trace(int[] far, int at, Building target, float reach){
+        int width = world.width(), height = world.height();
+        IntSeq way = new IntSeq();
+        float stop = reach + target.block.size * tilesize / 2f;
+        for(int steps = 0; far[at] > 0 && steps < 4000; steps++){
+            int ax = at % width, ay = at / width;
+            if(Mathf.dst(ax * tilesize, ay * tilesize, target.x, target.y) <= stop) break;
+            way.add(at);
+            int best = at;
+            for(int d = 0; d < 4; d++){
+                int x = ax + Geometry.d4x(d), y = ay + Geometry.d4y(d);
+                if(x >= 0 && y >= 0 && x < width && y < height && far[x + y * width] < far[best]) best = x + y * width;
+            }
+            if(best == at) break;
+            at = best;
+        }
+        return way;
+    }
+
+    private final IntMap<int[]> wayFields = new IntMap<>();
+    private float wayFieldsAt = -1f;
+
+    /** How many steps over ground every tile is from a building, for what walks (or for anything, if nothing in the group walks). */
+    private int[] wayField(Building target, boolean grounded){
+        if(clock - wayFieldsAt > 60f * 20f){
+            wayFields.clear();
+            wayFieldsAt = clock;
+        }
+        int key = target.pos() * 2 + (grounded ? 1 : 0);
+        int[] cached = wayFields.get(key);
+        if(cached != null) return cached;
+        int width = world.width(), height = world.height();
+        int[] far = new int[width * height];
+        java.util.Arrays.fill(far, Integer.MAX_VALUE);
+        IntQueue open = new IntQueue();
+        target.tile.getLinkedTiles(tile -> {
+            far[tile.x + tile.y * width] = 0;
+            open.addLast(tile.x + tile.y * width);
+        });
+        while(!open.isEmpty()){
+            int at = open.removeFirst(), ax = at % width, ay = at / width;
+            for(int d = 0; d < 4; d++){
+                int x = ax + Geometry.d4x(d), y = ay + Geometry.d4y(d);
+                if(x < 0 || y < 0 || x >= width || y >= height || far[x + y * width] != Integer.MAX_VALUE) continue;
+                Tile tile = world.tile(x, y);
+                //what walks goes round deep water and over nothing solid but what of the other side's stands in the way
+                if(grounded && (tile.floor().isDeep() || (tile.solid() && (tile.build == null || tile.build.team == team())))) continue;
+                far[x + y * width] = far[at] + 1;
+                open.addLast(x + y * width);
+            }
+        }
+        wayFields.put(key, far);
+        return far;
+    }
+
+    private float[] turretFire;
+    private float turretFireAt = -1f;
+
+    /** How much fire a second the other side's turrets it has seen, with something to fire, put on each tile. */
+    private float[] turretCover(){
+        int width = world.width(), height = world.height();
+        if(turretFire != null && turretFire.length == width * height && clock - turretFireAt < 60f * 5f) return turretFire;
+        float[] fire = turretFire != null && turretFire.length == width * height ? turretFire : new float[width * height];
+        java.util.Arrays.fill(fire, 0f);
+        for(TeamData other : state.teams.active){
+            if(other.team == team() || other.team == Team.derelict) continue;
+            for(Building build : other.buildings){
+                if(!(build instanceof Turret.TurretBuild turret) || !turret.hasAmmo() || !seenBuilding(build)) continue;
+                Turret type = (Turret)build.block;
+                if(!type.targetGround) continue;
+                float dps = turretDps(turret);
+                int r = (int)(type.range / tilesize) + 1, bx = build.tileX(), by = build.tileY();
+                for(int dx = -r; dx <= r; dx++){
+                    for(int dy = -r; dy <= r; dy++){
+                        int x = bx + dx, y = by + dy;
+                        if(x < 0 || y < 0 || x >= width || y >= height || dx * dx + dy * dy > r * r) continue;
+                        fire[x + y * width] += dps;
+                    }
+                }
+            }
+        }
+        turretFire = fire;
+        turretFireAt = clock;
+        return fire;
     }
 
     /** About how much damage a second a kind of unit deals to something with so much armour. */
@@ -1660,6 +1855,17 @@ public class Brain{
      * paid for already brings nothing until it runs, and gets running for the price of a line.
      */
     private @Nullable Project activate(TeamData data){
+        if(System.getProperty("xp.notes") != null){
+            StringBuilder makers = new StringBuilder();
+            for(Net.Thing thing : net.things){
+                if(thing.kind != Net.Kind.maker && thing.kind != Net.Kind.yard) continue;
+                Building build = works(thing);
+                makers.append(thing.kind).append('@').append(thing.x).append(',').append(thing.y).append(' ').append(build == null ? "none" : build.block.name)
+                    .append(" health ").append(Strings.fixed(health.get(thing, 1f), 2)).append(" eff ").append(build == null ? "-" : Strings.fixed(build.efficiency, 2))
+                    .append(" short ").append(build == null || shortOf(build) == null ? "-" : shortOf(build).name).append("; ");
+            }
+            notes.put("makers", makers.toString());
+        }
         if(!Options.ratios.on() || !ready("activate")) return null;
         for(Net.Kind kind : new Net.Kind[]{Net.Kind.yard, Net.Kind.maker}){
             Building hungry = starving(kind, null);
@@ -2102,7 +2308,9 @@ public class Brain{
             return out.length() == 0 ? "-" : out.toString();
         }
         String found = notes.get(key);
-        return found == null ? "-" : found;
+        if(found == null) return "-";
+        int age = (int)((clock - noteAt.get(key, clock)) / 60f);
+        return age > 5 ? found + " [" + age + " s ago]" : found;
     }
 
     /** Whether a unit has a beam that mends buildings. */
@@ -2734,7 +2942,14 @@ public class Brain{
         //with something still to be built nothing new is decided on. being attacked is the exception: what would hold
         //the attack off does not wait for what was laid out before, only for a turret that is already on its way up
         boolean busy = busy(data);
-        if(busy && (!attacked() || defending(data))) return;
+        if(busy && (!attacked() || defending(data))){
+            roundsSkipped++;
+            notes.put("rounds", "chosen " + roundsChosen + ", guarded " + roundsGuarded + ", skipped while busy " + roundsSkipped);
+            return;
+        }
+        if(busy) roundsGuarded++;
+        else roundsChosen++;
+        notes.put("rounds", "chosen " + roundsChosen + ", guarded " + roundsGuarded + ", skipped while busy " + roundsSkipped);
         prune();
         syncGround();
         spots.clear();
@@ -2956,6 +3171,7 @@ public class Brain{
      */
     private @Nullable Project choose(TeamData data, Seq<CoreBuild> targets){
         saving = false;
+        if(owed == null) owedSince = -1f;
         assess();
         retire();
         retireLines();
@@ -3025,6 +3241,7 @@ public class Brain{
             aheadOfRest = false;
             if(project != null){
                 firstShift = 0;
+                notes.put("round", "first " + goal + " built");
                 return project;
             }
             if(!saving) continue;
@@ -3039,7 +3256,23 @@ public class Brain{
             }
             //what it can't do without is waited for, and nothing else is begun meanwhile: and so is its first turret, which
             //comes before everything else
-            if(goal == Director.Goal.owed || goal == Director.Goal.staples || goal == Director.Goal.firstPost) return null;
+            if(goal == Director.Goal.owed || goal == Director.Goal.staples || goal == Director.Goal.firstPost){
+                //but a liquid owed is waited for as anything else is, not for ever: while it was, the rounds that hold off an
+                //attack spent what it waited for as it came in, and on the fifth sector, raided all game, water for its turrets'
+                //cooling held up every other thing for the whole of it (no second kind of yard ever went up)
+                if(goal == Director.Goal.owed && System.getProperty("xp.owedever") == null){
+                    if(owedSince < 0f) owedSince = clock;
+                    if(clock - owedSince >= Options.patience.get() * 60f * 60f){
+                        notes.put("round", "gave up waiting on " + owed);
+                        owed = null;
+                        owedSince = -1f;
+                        saving = false;
+                        continue;
+                    }
+                }
+                notes.put("round", "waits on " + goal);
+                return null;
+            }
             if(!waiting){
                 //the rest have their go meanwhile, with what this one is not short of
                 waiting = true;
@@ -3057,6 +3290,7 @@ public class Brain{
             if(project != null){
                 kept.clear();
                 shift = 0;
+                notes.put("round", "turn " + turns[(started + shift + i) % turns.length] + " built, of " + java.util.Arrays.toString(turns));
                 return project;
             }
             if(saving && !waiting){
@@ -3328,6 +3562,13 @@ public class Brain{
         }
         //water makes a turret that stands worth two, for the price of some pipe
         if(project == null && !saving) project = attempt(Director.Goal.cool, data, targets);
+        //what holds home already, its turrets and the units standing there against the most of the other side's army seen
+        //lately, is not added to before units are: more firepower only where it does not hold, units otherwise. (attacked by a
+        //unit or two at a time all game, the fifth sector came here almost every round, and never put up a second kind of yard)
+        if(project == null && !saving && !homeShort && System.getProperty("xp.guardnoyards") == null){
+            project = attempt(Director.Goal.army, data, targets);
+            if(project == null) saving = false;
+        }
         if(project == null && !saving) project = attempt(Director.Goal.defence, data, targets);
         return project;
     }
@@ -4781,6 +5022,8 @@ public class Brain{
 
     /** A liquid something was found to need, and where, that there was no time left to see to. */
     private @Nullable Liquid owed;
+    /** Since when the liquid owed has been waited for, or a negative number. */
+    private float owedSince = -1f;
     private int owedX, owedY;
     private boolean owedNeedy;
 
@@ -4792,10 +5035,15 @@ public class Brain{
      */
     private @Nullable Project army(TeamData data, Seq<CoreBuild> targets){
         if(!Options.yards.on()) return null;
+        String trail = "in " + saving;
         retireStranded();
+        trail += ", stranded " + saving;
         Project ferry = ferry(data);
+        trail += ", ferry " + saving;
         if(ferry != null) return ferry;
         Project outpost = outpost(data);
+        trail += ", outpost " + saving;
+        notes.put("yardtrail", trail);
         if(outpost != null || saving) return outpost;
         //with as many yards as it may have, the ones it has are made to turn out better units; and where one has no room
         //for that, a better yard is built somewhere else and the old one taken down once the new one is up
@@ -4835,9 +5083,11 @@ public class Brain{
             return power(data);
         }
         Building hungry = full || old != null ? null : starving(Net.Kind.yard, null);
+        notes.put("yardtrail", trail + ", before hungry " + saving);
         if(hungry != null){
             notes.put("yard", "its " + hungry.block.name + " at " + hungry.tileX() + "," + hungry.tileY() + " is short of " + shortOf(hungry).name + ": more of that first");
             Project relief = relieve(hungry, data, 0);
+            notes.put("yardflow", "relief " + (relief != null) + ", saving " + saving);
             if(relief != null || saving) return relief;
             //nothing to be done for that one: another goes up where there is enough going by to supply it. but where that
             //did not help either, a third would only stand idle beside them: what yards there are have to be fed first
@@ -4845,6 +5095,7 @@ public class Brain{
             if(starved >= 2) return null;
         }
         Seq<Blueprint> kinds = yardKinds(data);
+        notes.put("yardkinds", kinds.toString(", ", blueprint -> blueprint.name + (ready("yard:" + blueprint.name) ? "" : " (not ready)")));
         //in the place of an old one, only what is better than it
         int least = old == null ? 0 : grade(old);
         if(old != null) kinds.removeAll(blueprint -> blueprint.parts.count(part -> part.block instanceof UnitBlock) <= least);
@@ -4871,6 +5122,13 @@ public class Brain{
                 return null;
             }
             Project project = planner.fed(alike(blueprint), yardSpots(blueprint), targets, Net.Kind.yard);
+            //with no room for the better one anywhere, it goes up where the old one stands: that comes down first, with what is
+            //round it only for its sake. (the base grows over all the ground by its lines, and the better yards of the fifth
+            //sector found room nowhere, with tungsten and silicon to spare; the old yard stood on the lines that fed it)
+            if(project == null && old != null && !planner.late() && System.getProperty("xp.noinplace") == null){
+                project = inPlace(blueprint, old, targets);
+                if(project != null) notes.put(key, "goes up in the place of the " + old.block.name + " at " + old.tileX() + "," + old.tileY());
+            }
             if(project != null && old != null){
                 retiring.put(Point2.pack(project.assets.first().x, project.assets.first().y), old.pos());
                 notes.put("yard", "the " + old.block.name + " at " + old.tileX() + "," + old.tileY() + " has no room for more: a " + blueprint.name + " goes up in its place, and it comes down when that stands");
@@ -5331,6 +5589,19 @@ public class Brain{
         //back for it was what the graphite mine was waiting for: both waited for an hour and a half)
         if(futile(cost)) return;
         saving = true;
+        if(System.getProperty("xp.notes") != null){
+            StackTraceElement[] trace = Thread.currentThread().getStackTrace();
+            StringBuilder from = new StringBuilder();
+            for(int i = 2; i < Math.min(trace.length, 6); i++) from.append(trace[i].getMethodName()).append(':').append(trace[i].getLineNumber()).append(' ');
+            notes.put("savefor", block.name + " " + java.util.Arrays.toString(cost) + " from " + from);
+            for(StackTraceElement element : trace) if(element.getMethodName().equals("relieve")){
+                StringBuilder all = new StringBuilder();
+                for(int i = 2; i < Math.min(trace.length, 9); i++) all.append(trace[i].getMethodName()).append(':').append(trace[i].getLineNumber()).append(' ');
+                relieveSaves++;
+                notes.put("saverelieve", relieveSaves + " times, last at " + (int)(clock / 60f) + " s: " + block.name + " " + java.util.Arrays.toString(cost) + " free be " + stock.free(Items.beryllium) + "/" + stock.have(Items.beryllium) + " from " + all);
+                break;
+            }
+        }
         savingCost = cost;
         waitFor(block);
     }
@@ -5345,6 +5616,7 @@ public class Brain{
 
     private int shift, firstShift;
     private final ObjectSet<Item> kept = new ObjectSet<>();
+    private int relieveSaves, roundsChosen, roundsGuarded, roundsSkipped;
     /** A base that came with the map is watched for this long before anything is decided: what its lines bring in shows what it lacks. */
     static final float lookTime = 60f * 3f;
     /** Whether the base it plays came with buildings besides its cores. */
@@ -6717,6 +6989,41 @@ public class Brain{
         }
     }
 
+    /**
+     * A better yard laid out where an old one stands: the old one, the walls and power nodes by it and the ends of the lines
+     * that run into it count as free ground, and what of those the new one is put over comes down before it goes up.
+     */
+    private @Nullable Project inPlace(Blueprint blueprint, Building old, Seq<CoreBuild> targets){
+        IntSet given = new IntSet();
+        given.add(old.pos());
+        int reach = old.block.size / 2 + 3;
+        for(int dx = -reach; dx <= reach; dx++){
+            for(int dy = -reach; dy <= reach; dy++){
+                Building near = world.build(old.tileX() + dx, old.tileY() + dy);
+                if(near == null || near.team != team() || near == old) continue;
+                boolean fitting = near.block instanceof mindustry.world.blocks.defense.Wall || near.block instanceof mindustry.world.blocks.power.BeamNode
+                    || (near.block instanceof Duct && near.front() == old);
+                if(fitting) given.add(near.pos());
+            }
+        }
+        ground.relaid.clear();
+        planner.clearing.clear();
+        IntSet.IntSetIterator each = given.iterator();
+        while(each.hasNext){
+            Building build = world.build(each.next());
+            if(build == null) continue;
+            planner.clearing.add(build.pos());
+            build.tile.getLinkedTiles(tile -> ground.relaid.add(tile.pos()));
+        }
+        try{
+            Seq<int[]> spots = Seq.with(new int[]{old.tileX(), old.tileY()});
+            return planner.fed(alike(blueprint), spots, targets, Net.Kind.yard);
+        }finally{
+            ground.relaid.clear();
+            planner.clearing.clear();
+        }
+    }
+
     /** How many blocks a unit goes through before it leaves a yard: one for a fabricator alone, more for each block in front of it that takes its units. */
     private int grade(Building yard){
         int grade = 1;
@@ -7292,7 +7599,21 @@ public class Brain{
             CoreBuild home = data.core();
             if(home == null) return null;
             Seq<Building> turbines = data.buildings.select(build -> build.block == blueprint.main() && world.isInMapArea(build.tileX(), build.tileY()));
-            turbines.sort(build -> build.dst2(home));
+            //the ones with most open ground beside them first: the works takes a square twice a turbine's width at one of its sides,
+            //and the turbines nearest home stand in among the lines (on the fifth sector, with tungsten coming in, the four nearest
+            //home were tried round after round and none had room)
+            IntIntMap room = new IntIntMap();
+            int reachOut = blueprint.main().size * 2 + 1;
+            for(Building turbine : turbines){
+                int free = 0;
+                for(int dx = -reachOut; dx <= reachOut; dx++){
+                    for(int dy = -reachOut; dy <= reachOut; dy++){
+                        if(ground.open(turbine.tileX() + dx, turbine.tileY() + dy)) free++;
+                    }
+                }
+                room.put(turbine.pos(), free);
+            }
+            turbines.sort(build -> -room.get(build.pos(), 0) + build.dst(home) / tilesize * 0.1f);
             int tried = 0;
             for(Building turbine : turbines){
                 if(++tried > 4 || planner.late()) break;
@@ -7340,7 +7661,9 @@ public class Brain{
         return "attacked " + attacked() + " (losses " + Strings.fixed(director.losses, 1) + " of " + Strings.fixed(lossScale(), 1) + ", sighted " + (clock < sightedUntil) + "), firsts " + firsts.size + ", urgent " + urgent.size
             + ", guardUntil " + (guardUntil > clock) + ", keeps beryllium " + guardNeed(Items.beryllium) + ", silicon " + guardNeed(Items.silicon) + ", posture " + director.posture
             + "; core " + (team().core() == null ? "none" : team().core().getClass().getSimpleName()) + ", income si " + stock.income(Items.silicon) + " (piped " + stock.piped(Items.silicon) + "), be " + stock.income(Items.beryllium)
-            + ", comesIn si " + comesIn(Items.silicon) + ", hasSource si " + hasSource(Items.silicon) + ", inherited " + inherited;
+            + ", comesIn si " + comesIn(Items.silicon) + ", hasSource si " + hasSource(Items.silicon) + ", inherited " + inherited
+            + "; waits for " + (aim == null ? "nothing" : aim.name) + " since " + (int)((clock - aimClock) / 60f) + " s, cost " + (savingCost == null ? "-" : java.util.Arrays.toString(savingCost)) + ", kept " + kept + ", saving " + saving
+            + "; free be " + stock.free(Items.beryllium) + "/" + stock.have(Items.beryllium) + " si " + stock.free(Items.silicon) + "/" + stock.have(Items.silicon) + " gr " + stock.free(Items.graphite) + "/" + stock.have(Items.graphite);
     }
 
     private int guardNeed(Item item){

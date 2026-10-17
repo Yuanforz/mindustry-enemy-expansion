@@ -128,6 +128,11 @@ public class Campaign{
     static final ObjectIntMap<String> bornAt = new ObjectIntMap<>();
 
     public static void main(String[] args){
+        //the hash codes the JVM gives objects that do not have their own come from a sequence that is the same every run of the
+        //same build, and maps keyed by such objects (blocks, items, units) are gone through in the order of those: a run then
+        //plays one arrangement of them, and every run of a build the same one. so many objects hashed first moves the whole
+        //sequence along: a different arrangement for each run, as the seed is (xp.hashshuffle=n; the batch sets it from the run)
+        for(int i = Integer.getInteger("xp.hashshuffle", 0); i > 0; i--) System.identityHashCode(new Object());
         Sim.boot(args[0], args[1]);
         brain = Sim.brain;
         bank = new Holdings();
@@ -191,6 +196,23 @@ public class Campaign{
             }
         });
         Events.on(UnitDestroyEvent.class, e -> (e.unit.team == me ? lost : killed).increment(e.unit.type.name));
+        //where each of its fighting units falls, and to what: the other side's turrets that reach the place, and its units near
+        if(System.getProperty("xp.deaths") != null) Events.on(UnitDestroyEvent.class, e -> {
+            if(e.unit.team != me || e.unit.spawnedByCore) return;
+            Unit dead = e.unit;
+            StringBuilder turrets = new StringBuilder();
+            Vars.indexer.eachBlock(Vars.state.rules.waveTeam, dead.x, dead.y, 40f * Vars.tilesize, b -> b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t && b.within(dead, ((mindustry.world.blocks.defense.turrets.Turret)b.block).range + 8f),
+                b -> turrets.append(b.block.name).append(((mindustry.world.blocks.defense.turrets.Turret.TurretBuild)b).hasAmmo() ? "" : "(dry)").append('@').append(b.tileX()).append(',').append(b.tileY()).append(' '));
+            int[] near = {0};
+            ObjectIntMap<String> kinds = new ObjectIntMap<>();
+            for(Unit other : Vars.state.rules.waveTeam.data().units){
+                if(other.within(dead, 15f * Vars.tilesize)){
+                    near[0]++;
+                    kinds.increment(other.type.name);
+                }
+            }
+            System.out.println(String.format("    death %5.1f min %s at %d,%d: turrets reaching %s| their units within 15: %s", Vars.state.tick / 3600f, dead.type.name, dead.tileX(), dead.tileY(), turrets.length() == 0 ? "none " : turrets, kinds));
+        });
 
         System.out.println("difficulty " + Planets.erekir.campaignRules.difficulty + ", up to " + minutes + " game minutes a sector");
         Seq<String> summary = new Seq<>();
@@ -539,7 +561,7 @@ public class Campaign{
                 }
                 if(System.getProperty("xp.notes") != null){
                     //what it last said about the goals named
-                    for(String key : System.getProperty("xp.notes").split(",")) System.out.println("           note " + key + ": " + brain.note(key));
+                    for(String key : System.getProperty("xp.notes").split(",")) System.out.println("           note " + key + ": " + (key.equals("reserve") ? brain.reserveNote() : brain.note(key)));
                 }
                 if(System.getProperty("xp.raid") != null && (minute % every == 0 || result != null)){
                     //who is at its base, and what that cost it since the last report

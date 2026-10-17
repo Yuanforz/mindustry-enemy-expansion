@@ -568,6 +568,11 @@ public class Planner{
             //where a wall comes down first the game will only allow it once that is done
             Building standing = world.build(part.x, part.y);
             if(standing != null && project.removals.contains(standing.pos())) continue;
+            //where something of its own that was given up for this stands, it comes down first
+            if(standing != null && standing.team == ground.team && clearing.contains(standing.pos())){
+                project.removals.add(standing.pos());
+                continue;
+            }
             if(!Build.validPlace(part.block, ground.team, part.x, part.y, part.rotation)){
                 refused = part.block.name + " at " + part.x + "," + part.y + (standing == null ? "" : ", where " + standing.block.name + " of " + standing.team.name + " stands");
                 //on a map with fog that may only be that the ground has not been seen: something is sent to look at it
@@ -582,6 +587,8 @@ public class Planner{
     }
 
     private String refused = "", feedNote = "", supplyNote = "", shutPort = "";
+    /** Buildings of its own, by position, that what is being laid out may be put in the place of: they are taken down first. Their tiles are to be in {@link Ground#relaid}. */
+    public final IntSet clearing = new IntSet();
 
     /**
      * Leads a line that stops short of a core on to one again. A line stops short where the player has
