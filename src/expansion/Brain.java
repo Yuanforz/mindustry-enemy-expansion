@@ -2051,6 +2051,34 @@ public class Brain{
      * want of something it takes is given it, one short of power gets power, before anything new is begun. What it has
      * paid for already brings nothing until it runs, and gets running for the price of a line.
      */
+    private @Nullable Project refitsNote(TeamData data){
+        if(System.getProperty("xp.notes") != null){
+            StringBuilder refits = new StringBuilder();
+            for(Building build : data.buildings){
+                if(!(build instanceof Reconstructor.ReconstructorBuild refit)) continue;
+                Building behind = build.back();
+                refits.append(build.block.name).append('@').append(build.tileX()).append(',').append(build.tileY()).append(" liquids ").append(build.liquids == null ? "-" : build.liquids.toString())
+                    .append(" items ").append(build.items).append(" unit inside ").append(refit.payload != null).append(" eff ").append(Strings.fixed(build.efficiency, 2))
+                    .append(" behind ").append(behind == null ? "nothing" : behind.block.name).append("; ");
+            }
+            for(Building build : data.buildings){
+                if(build.block != Blocks.electrolyzer) continue;
+                refits.append("electrolyzer@").append(build.tileX()).append(',').append(build.tileY()).append(" power ").append(build.power == null ? "-" : Strings.fixed(build.power.status, 2))
+                    .append(" water ").append(build.liquids == null ? "-" : Strings.fixed(build.liquids.get(Liquids.water), 1)).append(" eff ").append(Strings.fixed(build.efficiency, 2)).append("; ");
+            }
+            notes.put("refits", refits.length() == 0 ? "none" : refits.toString());
+        }
+        Project wet = liquidFerry(data);
+        if(wet != null) return wet;
+        //and what it is short of in items, where no line brings it, out of the plenty its cores hold
+        for(Building build : data.buildings){
+            if(!(build instanceof Reconstructor.ReconstructorBuild) || shortOf(build) == null) continue;
+            Project dry = ferryFor(build);
+            if(dry != null) return dry;
+        }
+        return null;
+    }
+
     private @Nullable Project activate(TeamData data){
         if(System.getProperty("xp.notes") != null){
             StringBuilder makers = new StringBuilder();
@@ -3403,6 +3431,10 @@ public class Brain{
         retireLines();
         posture();
 
+        //a refabricator standing with nothing to run on gets its liquid ferried, whatever else is going on: it is the one way
+        //better units come of it
+        Project wet = refitsNote(data);
+        if(wet != null) return wet;
         if(turretDoctrine){
             Project held = holdWithTurrets(data, targets);
             notes.put("doctrine", doctrineStage + (held != null ? ": " + held.name : saving ? ": saving" : ""));
@@ -3790,6 +3822,7 @@ public class Brain{
         posture();
         kept.clear();
         Project project = attempt(Director.Goal.arm, data, targets);
+        if(project == null) project = refitsNote(data);
         if(project == null) project = rewire();
         //a drill that can be paid for still comes first where its home is not what is being hit
         if(project == null && !saving && Options.ratios.on() && !homeHit(data) && minesUnderShare()){
@@ -5694,7 +5727,80 @@ public class Brain{
     /** A box carried between something that makes an item and something that is short of it, where no line could be led. */
     static class Ferry{
         int consumer, fillX, fillY, dropX, dropY;
-        Item item;
+        @Nullable Item item;
+        @Nullable Liquid liquid;
+
+        /** How much of what it ferries a box holds. */
+        float in(Building box){
+            return item != null ? (box.items == null ? 0 : box.items.get(item)) : (box.liquids == null ? 0f : box.liquids.get(liquid));
+        }
+
+        /** Whether a box holds enough to be worth the carrying. */
+        boolean full(Building box){
+            return item != null ? in(box) >= Math.min(100, box.block.itemCapacity * 0.6f) : in(box) >= box.block.liquidCapacity * 0.6f;
+        }
+
+        boolean box(@Nullable Building build){
+            return build != null && (item != null ? build.block instanceof mindustry.world.blocks.storage.StorageBlock && !(build instanceof CoreBuild) : build.block == Blocks.reinforcedLiquidContainer);
+        }
+    }
+
+    /**
+     * A ferry of the liquid a refabricator runs on, where it stands without it: a liquid box filled against an electrolyzer and
+     * set down against the refabricator, which it hands the liquid to by itself. (no refabricator of the fifth sector ever made a
+     * unit: each stood with no hydrogen led to it, and what is short of a liquid was never seen as short of anything)
+     */
+    private @Nullable Project liquidFerry(TeamData data){
+        if(System.getProperty("xp.noferry") != null || ferries.size >= 4 || !may(Blocks.reinforcedLiquidContainer)) return null;
+        for(Building build : data.buildings){
+            if(!(build instanceof Reconstructor.ReconstructorBuild refit)) continue;
+            Liquid liquid = null;
+            float wanted = 0f;
+            for(var consume : build.block.consumers){
+                if(consume instanceof mindustry.world.consumers.ConsumeLiquid one){
+                    liquid = one.liquid;
+                    wanted = one.amount;
+                }
+            }
+            if(liquid == null || build.liquids == null || build.liquids.get(liquid) > wanted * 60f) continue;
+            Liquid needed = liquid;
+            if(ferries.contains(ferry -> ferry.consumer == build.pos() && ferry.liquid == needed)) continue;
+            String key = "ferry:" + build.pos() + ":" + liquid.name;
+            if(!ready(key)) continue;
+            //what gives it off and could run, whether or not it does: one that stands with power and what it is made from, and
+            //nowhere for what it makes to go, runs again once a box stands at its side
+            Seq<Building> sources = data.buildings.select(other -> other.block instanceof GenericCrafter crafter && crafter.outputLiquids != null
+                && java.util.Arrays.stream(crafter.outputLiquids).anyMatch(stack -> stack.liquid == needed) && (other.power == null || other.power.status > 0.5f));
+            if(sources.isEmpty()){
+                notes.put(key, "nothing of its own gives off " + liquid.name);
+                retry.put(key, clock + retryPeriod * 2f);
+                continue;
+            }
+            makeWayBy(build);
+            Project project;
+            try{
+                project = planner.ferryEndsLiquid(build, liquid, sources);
+            }finally{
+                ground.relaid.clear();
+                planner.clearing.clear();
+            }
+            if(project == null){
+                notes.put(key, planner.note);
+                retry.put(key, clock + retryPeriod * 2f);
+                continue;
+            }
+            Ferry ferry = new Ferry();
+            ferry.consumer = build.pos();
+            ferry.liquid = liquid;
+            ferry.fillX = planner.ferryFillX;
+            ferry.fillY = planner.ferryFillY;
+            ferry.dropX = planner.ferryDropX;
+            ferry.dropY = planner.ferryDropY;
+            ferries.add(ferry);
+            notes.put(key, "a box of " + liquid.name + " goes from " + ferry.fillX + "," + ferry.fillY + " to " + ferry.dropX + "," + ferry.dropY);
+            return project;
+        }
+        return null;
     }
 
     private final Seq<Ferry> ferries = new Seq<>();
@@ -5724,18 +5830,7 @@ public class Brain{
             retry.put(key, clock + retryPeriod * 2f);
             return null;
         }
-        //walls, ducts and nodes of its own right by the yard make way for the unloader and the box: a yard stands in among lines
-        int reachOut = hungry.block.size / 2 + 4;
-        for(int dx = -reachOut; dx <= reachOut; dx++){
-            for(int dy = -reachOut; dy <= reachOut; dy++){
-                Building near = world.build(hungry.tileX() + dx, hungry.tileY() + dy);
-                if(near == null || near.team != team() || near == hungry || planner.clearing.contains(near.pos())) continue;
-                if(near.block instanceof mindustry.world.blocks.defense.Wall || near.block instanceof Duct || near.block instanceof mindustry.world.blocks.power.BeamNode){
-                    planner.clearing.add(near.pos());
-                    near.tile.getLinkedTiles(tile -> ground.relaid.add(tile.pos()));
-                }
-            }
-        }
+        makeWayBy(hungry);
         Project project;
         try{
             project = planner.ferryEnds(hungry, item, sources);
@@ -5760,6 +5855,21 @@ public class Brain{
         return project;
     }
 
+    /** Walls, ducts and nodes of its own right by something count as free ground for what is laid out next to it, and come down first: it stands in among lines. */
+    private void makeWayBy(Building build){
+        int reachOut = build.block.size / 2 + 4;
+        for(int dx = -reachOut; dx <= reachOut; dx++){
+            for(int dy = -reachOut; dy <= reachOut; dy++){
+                Building near = world.build(build.tileX() + dx, build.tileY() + dy);
+                if(near == null || near.team != team() || near == build || planner.clearing.contains(near.pos())) continue;
+                if(near.block instanceof mindustry.world.blocks.defense.Wall || near.block instanceof Duct || near.block instanceof mindustry.world.blocks.power.BeamNode){
+                    planner.clearing.add(near.pos());
+                    near.tile.getLinkedTiles(tile -> ground.relaid.add(tile.pos()));
+                }
+            }
+        }
+    }
+
     /** A box for a builder to carry, and where to: a full one to what it feeds, an empty one back to be filled. */
     private @Nullable Object[] ferryJob(Unit unit, TeamData data){
         if(!(unit instanceof Payloadc pay)) return null;
@@ -5770,15 +5880,16 @@ public class Brain{
         for(Ferry ferry : ferries){
             if(data.units.contains(other -> other.controller() instanceof ExpansionAI ai && ai.carrySpot != null && (ai.carry != null && (ai.carry.tileX() == ferry.fillX || ai.carry.tileX() == ferry.dropX)))) continue;
             Building filled = world.build(ferry.fillX, ferry.fillY), emptied = world.build(ferry.dropX, ferry.dropY);
-            boolean filledBox = filled != null && filled.team == team() && filled.block instanceof mindustry.world.blocks.storage.StorageBlock && !(filled instanceof CoreBuild);
-            boolean droppedBox = emptied != null && emptied.team == team() && emptied.block instanceof mindustry.world.blocks.storage.StorageBlock && !(emptied instanceof CoreBuild);
+            boolean filledBox = ferry.box(filled) && filled.team == team();
+            boolean droppedBox = ferry.box(emptied) && emptied.team == team();
+            float offset = Blocks.reinforcedContainer.offset;
             //an empty one by the yard goes back to be filled
-            if(droppedBox && emptied.items.get(ferry.item) == 0 && filled == null && pay.canPickup(emptied)){
-                return new Object[]{emptied, new Vec2(ferry.fillX * tilesize + Blocks.reinforcedContainer.offset, ferry.fillY * tilesize + Blocks.reinforcedContainer.offset)};
+            if(droppedBox && ferry.in(emptied) < 1f && filled == null && pay.canPickup(emptied)){
+                return new Object[]{emptied, new Vec2(ferry.fillX * tilesize + offset, ferry.fillY * tilesize + offset)};
             }
             //a full one goes to the yard, where nothing stands
-            if(filledBox && filled.items.get(ferry.item) >= Math.min(100, filled.block.itemCapacity * 0.6f) && emptied == null && pay.canPickup(filled)){
-                return new Object[]{filled, new Vec2(ferry.dropX * tilesize + Blocks.reinforcedContainer.offset, ferry.dropY * tilesize + Blocks.reinforcedContainer.offset)};
+            if(filledBox && ferry.full(filled) && emptied == null && pay.canPickup(filled)){
+                return new Object[]{filled, new Vec2(ferry.dropX * tilesize + offset, ferry.dropY * tilesize + offset)};
             }
         }
         return null;

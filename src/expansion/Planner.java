@@ -2195,7 +2195,7 @@ public class Planner{
             }
         }
         if(drop == null){
-            note += "no room by it for an unloader and a box";
+            note += "no room by it for an unloader and a box [" + blockedBeside(consumer) + "]";
             return null;
         }
         int[] fill = null;
@@ -2232,6 +2232,83 @@ public class Planner{
         ferryDropX = drop[3];
         ferryDropY = drop[4];
         return project;
+    }
+
+    /**
+     * The two ends of a ferry of a liquid: a liquid box set down against what is short of it hands it in by itself, so that end
+     * is only a place kept clear; the box itself stands against the side of something that gives the liquid off, which fills it.
+     */
+    public @Nullable Project ferryEndsLiquid(Building consumer, Liquid liquid, Seq<Building> sources){
+        note = "ferry of " + liquid.name + " to the " + consumer.block.name + ": ";
+        if(late()) return null;
+        Block box = Blocks.reinforcedLiquidContainer;
+        int[] drop = boxBeside(consumer, -1, box);
+        if(drop == null){
+            note += "no room by it for a box [" + blockedBeside(consumer) + "]";
+            return null;
+        }
+        int[] fill = null;
+        sources.sort(build -> build.dst2(consumer));
+        for(Building source : sources){
+            //on the side it gives that liquid off from, where it gives it off only to some
+            int side = -1;
+            if(source.block instanceof GenericCrafter crafter && crafter.outputLiquids != null && crafter.liquidOutputDirections != null && crafter.liquidOutputDirections.length == crafter.outputLiquids.length){
+                for(int i = 0; i < crafter.outputLiquids.length; i++){
+                    if(crafter.outputLiquids[i].liquid == liquid && crafter.liquidOutputDirections[i] != -1) side = (source.rotation + crafter.liquidOutputDirections[i]) % 4;
+                }
+            }
+            fill = boxBeside(source, side, box);
+            if(fill != null) break;
+        }
+        if(fill == null){
+            note += "no room for a box against anything that gives it off";
+            return null;
+        }
+        Project project = new Project("ferry of " + liquid.name + " to the " + consumer.block.name);
+        add(project, Seq.with(new Part(box, fill[0], fill[1], 0)));
+        if(!buildable(project)){
+            drop(project, "the game does not allow " + refused);
+            return null;
+        }
+        ferryFillX = fill[0];
+        ferryFillY = fill[1];
+        ferryDropX = drop[0];
+        ferryDropY = drop[1];
+        return project;
+    }
+
+    /** What keeps the ground in the two rings round a building from being built on, letter by letter (see Brain.whyNot), for looking into it. */
+    private String blockedBeside(Building build){
+        arc.struct.ObjectIntMap<String> why = new arc.struct.ObjectIntMap<>();
+        int s = build.block.size, so = -(s - 1) / 2, sx = build.tileX() + so, sy = build.tileY() + so;
+        for(int x = sx - 2; x <= sx + s + 1; x++){
+            for(int y = sy - 2; y <= sy + s + 1; y++){
+                if(x >= sx && x < sx + s && y >= sy && y < sy + s) continue;
+                if(ground.open(x, y)) continue;
+                char c = brain.whyNot(x, y);
+                Building on = world.build(x, y);
+                why.increment(c == 'b' && on != null ? "b:" + on.block.name : String.valueOf(c));
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        for(var entry : why) out.append(entry.key).append(' ').append(entry.value).append(", ");
+        return out.toString();
+    }
+
+    /** A place for a box of two by two touching a building, on one side of it (0 to 3) or any (-1), where the ground is clear. */
+    private @Nullable int[] boxBeside(Building build, int side, Block box){
+        int s = build.block.size, so = -(s - 1) / 2, sx = build.tileX() + so, sy = build.tileY() + so;
+        for(int bx = sx - 2; bx <= sx + s; bx++){
+            for(int by = sy - 2; by <= sy + s; by++){
+                boolean overlapping = bx + 1 >= sx && bx <= sx + s - 1 && by + 1 >= sy && by <= sy + s - 1;
+                boolean corner = (bx + 1 < sx || bx > sx + s - 1) && (by + 1 < sy || by > sy + s - 1);
+                if(overlapping || corner) continue;
+                int on = bx > sx + s - 1 ? 0 : by > sy + s - 1 ? 1 : bx + 1 < sx ? 2 : 3;
+                if(side != -1 && on != side) continue;
+                if(ground.clear(box, bx, by) && Build.validPlace(box, ground.team, bx, by, 0)) return new int[]{bx, by};
+            }
+        }
+        return null;
     }
 
     public @Nullable Project lookout(Block block, int tx, int ty){
