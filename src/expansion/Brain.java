@@ -1083,7 +1083,7 @@ public class Brain{
         //out; sized by the walk, eleven of sixteen were lost that way)
         boolean waveDue = state.rules.waves && state.rules.winWave > 0 && state.wave < state.rules.winWave && !turretsHold && out.isEmpty();
         //while it is getting what its better units are made of, its units hold the ground that is to come from instead
-        if(secureAt != -1 && out.isEmpty() && !able) waveDue = true;
+        if(System.getProperty("xp.nosecurehold") == null && secureAt != -1 && out.isEmpty() && !able) waveDue = true;
         //what is slow sets out at its number only where it has not been thrown back, or reckons, as cautiously as being thrown back
         //has taught it, that it can bring down what it would go for; else it holds home, where it is some use
         boolean worth = true;
