@@ -34,6 +34,10 @@ public class LiveCampaign{
         Core.settings.put("expansion-strongest", true);
         Events.on(ClientLoadEvent.class, e -> Core.app.post(() -> { stage = 0; frames = 0; }));
         Events.run(Trigger.update, LiveCampaign::step);
+        //drawn as its side sees it: the watcher belongs to no side, so that the core's unit is the mod's, and is that side only
+        //while the frame is drawn
+        Events.run(Trigger.preDraw, () -> { if(stage == 2) Vars.player.team(Team.sharded); });
+        Events.run(Trigger.postDraw, () -> { if(stage == 2) Vars.player.team(Team.derelict); });
         int speed = Integer.getInteger("xp.speed", 1);
         if(speed > 1) Core.app.addListener(new ApplicationListener(){
             @Override public void update(){
@@ -57,10 +61,14 @@ public class LiveCampaign{
                 Vars.player.clearUnit();
                 Vars.player.team(Team.derelict);
             }
-            Vars.state.rules.fog = false;
-            Vars.state.rules.staticFog = false;
+            //the fog stays as the game has it: with it off both sides played another game (the fifth sector, held 8 of 8 with
+            //it, was lost 7 of 8 without). what is drawn is what its side sees (xp.fogoff for the old way)
+            if(System.getProperty("xp.fogoff") != null){
+                Vars.state.rules.fog = false;
+                Vars.state.rules.staticFog = false;
+            }
             if(frames < 90 && Vars.state.rules.defaultTeam.core() != null) Core.camera.position.set(Vars.state.rules.defaultTeam.core());
-            if(frames == 200) Vars.ui.showInfoToast("第" + "一二三四五六七八九十".charAt(Math.max(Math.min(java.util.Arrays.asList(Campaign.line).indexOf(sector), 9), 0)) + "关 " + sector + " · 模组扮演玩家 · 困难 · 公平最强模式 · 科技全解锁 · 战争迷雾已关", 10f);
+            if(frames == 200) Vars.ui.showInfoToast("第" + "一二三四五六七八九十".charAt(Math.max(Math.min(java.util.Arrays.asList(Campaign.line).indexOf(sector), 9), 0)) + "关 " + sector + " · 模组扮演玩家 · 困难 · 公平最强模式 · 科技全解锁 · 战争迷雾照常（显示我方视野）", 10f);
             //a trial of the trial: a picture and a line of how it stands, then it closes
             String shot = System.getProperty("xp.shot");
             if(shot != null && frames == Integer.getInteger("xp.shotframe", 900)){
@@ -141,8 +149,10 @@ public class LiveCampaign{
             enemy.rules().buildSpeedMultiplier *= planet.enemyBuildSpeedMultiplier;
             enemy.rules().unitFactoryActivationDelay = Math.max(enemy.rules().unitFactoryActivationDelay, planet.enemyFactoryActivationDelay);
             if(preset.captureWave > 0) rules.winWave = preset.captureWave;
-            rules.fog = false;
-            rules.staticFog = false;
+            if(System.getProperty("xp.fogoff") != null){
+                rules.fog = false;
+                rules.staticFog = false;
+            }
             Vars.state.set(State.playing);
             Vars.logic.play();
             Vars.state.wavetime *= planet.campaignRules.difficulty.waveTimeMultiplier;

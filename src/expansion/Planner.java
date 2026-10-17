@@ -2174,17 +2174,27 @@ public class Planner{
             Project project = new Project(blueprint.name);
             lastTried = layout;
             add(project, layout);
-            boolean supplied = true;
+            boolean supplied = true, later = false;
             for(Port port : layout.ports){
                 if(port.role != Role.in) continue;
                 holdPorts(layout, port, true);
                 boolean fed = feed(project, port, wanted(taker(layout, port, layout.main().block), port.item));
                 holdPorts(layout, port, false);
+                //what its cores are full of can be led to it once it stands, a whole line of it turned in
+                if(!fed && brain.leadLater(port.item)){
+                    later = true;
+                    continue;
+                }
                 if(!fed){
                     supplied = false;
                     if(failed == null) failed = "no line to branch " + port.item.name + " off within reach" + where + " [" + feedNote + "]";
                     break;
                 }
+            }
+            //looked after as a yard is: what it is short of once it stands is seen to
+            if(supplied && later){
+                Part taker = layout.parts.find(part -> part.block instanceof mindustry.world.blocks.units.Reconstructor);
+                if(taker != null) project.things.add(new Thing(Net.Kind.yard, taker.x, taker.y, (Item)null, 0f));
             }
             if(supplied && !plumb(project, layout.parts)){
                 //with none to be had the place is good all the same: what it lacks can be built, and then this is taken up again

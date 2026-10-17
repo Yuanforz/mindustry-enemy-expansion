@@ -537,7 +537,8 @@ public class Brain{
     /** The factory or yard a note of the net stands for, once it is standing. */
     private @Nullable Building works(Net.Thing thing){
         if(thing.kind == Net.Kind.yard){
-            return world.build(thing.x, thing.y) instanceof UnitFactory.UnitFactoryBuild yard && yard.team == team() ? yard : null;
+            Building at = world.build(thing.x, thing.y);
+            return (at instanceof UnitFactory.UnitFactoryBuild || at instanceof Reconstructor.ReconstructorBuild) && at.team == team() ? at : null;
         }
         for(int d = 0; d < 4; d++){
             Building build = world.build(thing.x + Geometry.d4x(d), thing.y + Geometry.d4y(d));
@@ -7176,6 +7177,16 @@ public class Brain{
     }
 
     /** How much of an item is not to be spent on anything else while it is attacked: what the turret it waits for costs, and what the one being built still needs. */
+    /**
+     * Whether what an addition takes of an item may be led to it after it stands rather than before: its cores hold plenty of
+     * it and its lines bring it in, so that a whole line of it can be turned into the addition once it is short. (where every
+     * line of silicon and tungsten ran beside others with no room to lead anything off, the fifth sector's refabricator never
+     * went up, with both items standing full in its cores)
+     */
+    public boolean leadLater(Item item){
+        return System.getProperty("xp.noleadlater") == null && Options.refit.on() && stock.have(item) >= stock.cap() * 0.4f && comesIn(item);
+    }
+
     /** What is kept back and why, for looking into it. */
     public String reserveNote(){
         return "attacked " + attacked() + " (losses " + Strings.fixed(director.losses, 1) + " of " + Strings.fixed(lossScale(), 1) + ", sighted " + (clock < sightedUntil) + "), firsts " + firsts.size + ", urgent " + urgent.size
