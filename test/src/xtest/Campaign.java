@@ -267,6 +267,8 @@ public class Campaign{
         enemy.rules().buildSpeedMultiplier *= planet.enemyBuildSpeedMultiplier;
         enemy.rules().unitFactoryActivationDelay = Math.max(enemy.rules().unitFactoryActivationDelay, planet.enemyFactoryActivationDelay);
         if(preset.captureWave > 0) rules.winWave = preset.captureWave;
+        //as the window that shows a sector played live has it: the fog off
+        if(System.getProperty("xp.nofog") != null) rules.fog = rules.staticFog = false;
         Time.setDeltaProvider(() -> 1f);
         Vars.logic.play();
         //for runs that can be repeated exactly: the game's dice start from a given number

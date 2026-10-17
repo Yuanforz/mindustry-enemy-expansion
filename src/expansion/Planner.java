@@ -539,6 +539,10 @@ public class Planner{
                     if(bare ? !ground.open(x, y) : !ground.passable(x, y)) return false;
                 }
             }
+            //and where the lines of what will make its units better are to come in, one way round or the other: kept from the
+            //moment the yard is laid out, they have to be free then. (on the fifth sector lines ran up both sides of the ground
+            //in front of a yard, over the very tiles, and the refabricator could never be led its silicon or its tungsten)
+            if(roomy && System.getProperty("xp.noports") == null && !brain.refitPortsOpen(part.block, part.x, part.y, part.rotation)) return false;
         }
         return true;
     }
@@ -577,7 +581,7 @@ public class Planner{
         return true;
     }
 
-    private String refused = "", feedNote = "", supplyNote = "";
+    private String refused = "", feedNote = "", supplyNote = "", shutPort = "";
 
     /**
      * Leads a line that stops short of a core on to one again. A line stops short where the player has
@@ -1633,15 +1637,27 @@ public class Planner{
 
     /** @param against whether it is to stand against lines and be fed out of them: then where its inputs would be led in to does not matter */
     private boolean clear(Layout layout, boolean against){
+        return clear(layout, against, false);
+    }
+
+    /** @param bridged whether ground a bridge can be led to counts as got to, for an input */
+    private boolean clear(Layout layout, boolean against, boolean bridged){
         for(Part part : layout.parts){
             if(!ground.clear(part.block, part.x, part.y)) return false;
         }
         if(layout.ports.isEmpty() || against) return true;
         IntSet own = footprint(layout.parts);
         for(Port port : layout.ports){
-            if(!ground.open(port.x, port.y)) return false;
+            if(!ground.open(port.x, port.y)){
+                shutPort = (port.item == null ? "out" : port.item.name) + " at " + port.x + "," + port.y + " not open";
+                return false;
+            }
             //a line has to be able to get to it, from one side or from behind for an input, and away from it for an output
-            if(lines.pocket(port.x, port.y, own, port.role == Role.in ? port.rotation : -1)) return false;
+            int except = port.role == Role.in ? port.rotation : -1;
+            if(bridged && port.role == Role.in ? lines.pocketOverBridges(port.x, port.y, own, except) : lines.pocket(port.x, port.y, own, except)){
+                shutPort = (port.item == null ? "out" : port.item.name) + " at " + port.x + "," + port.y + " shut in";
+                return false;
+            }
         }
         return true;
     }
@@ -2145,11 +2161,12 @@ public class Planner{
             //all of it: the addition stands on the nearer part, and lets the units out over the rest
             for(int i = 0; i < front.size; i++) ground.kept.remove(front.get(i));
             trim(layout);
-            boolean room = clear(layout), valid = room && fitter.valid(layout), exits = valid && exitsClear(layout, false, false);
+            //(an addition's inputs sit in among the lines round a yard: what a bridge can get to counts as got to)
+            boolean room = clear(layout, false, System.getProperty("xp.nobridgedports") == null), valid = room && fitter.valid(layout), exits = valid && exitsClear(layout, false, false);
             if(!exits){
                 Part blocked = layout.parts.find(part -> !ground.clear(part.block, part.x, part.y));
                 note = blueprint.name + ": " + (blocked != null ? "no room for its " + blocked.block.name + " at " + blocked.x + "," + blocked.y
-                    : !room ? "no way in to where its lines would end" : !valid ? "would stand against a line it is not to take from" : "its units could not get out") + where;
+                    : !room ? "no way in to where its lines would end (" + shutPort + ")" : !valid ? "would stand against a line it is not to take from" : "its units could not get out") + where;
                 brain.syncGround();
                 continue;
             }

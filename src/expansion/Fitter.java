@@ -282,6 +282,8 @@ public class Fitter{
                 crusher.nearbySide(part.x, part.y, part.rotation, lane, Tmp.p1);
                 Tile wall = world.tile(Tmp.p1.x, Tmp.p1.y);
                 if(wall == null || !wall.block().isStatic() || wall.block().attributes.get(crusher.attribute) <= 0f) return false;
+                //not against ore: that face is a drill's. (a row of crushers run along a wall went on over the beryllium in it)
+                if(wall.wallDrop() != null && System.getProperty("xp.orecrush") == null) return false;
             }
         }
         return true;

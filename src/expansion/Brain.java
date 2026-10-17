@@ -820,6 +820,9 @@ public class Brain{
      * bring a breach down in three seconds, and lost all but three of them; the next fourteen it sent the same way)
      */
     private float caution = 1f;
+    /** Where in this round's order mining and power were put ahead of the rest, or -1; and whether that is what is being tried. */
+    private int economyAt = -1;
+    private boolean aheadOfRest;
     private @Nullable Building lastTaken;
 
     /**
@@ -2233,11 +2236,22 @@ public class Brain{
         //player's would be: holding it back longer, until a turret stood over it, left a line the player had merely cut
         //down for a minute and a half)
         if(block instanceof Turret || urgent.contains(pos) || (!attacked() && firsts.contains(pos))) return false;
+        //(tried: what it lives on, drills, generators, nodes and lines, put back without waiting for what the turrets need. on the
+        //third sector the first raids' damage then took the beryllium its first turret was waiting for, and six openings in
+        //eight were lost; kept as a switch, xp.rebuildeco)
+        if(System.getProperty("xp.rebuildeco") != null && livesOn(block)) return false;
         for(ItemStack stack : cost){
             int need = guardNeed(stack.item);
             if(need > 0 && stock.have(stack.item) - stack.amount < need) return true;
         }
         return false;
+    }
+
+    /** Whether a block is part of what its base lives on: what mines, makes power, or carries either. */
+    private static boolean livesOn(Block block){
+        return block instanceof Drill || block instanceof BeamDrill || block instanceof WallCrafter || block instanceof mindustry.world.blocks.power.PowerGenerator
+            || block instanceof BeamNode || block instanceof mindustry.world.blocks.power.PowerNode || block instanceof Duct || block instanceof DirectionBridge
+            || block instanceof DuctRouter || block instanceof mindustry.world.blocks.distribution.OverflowDuct || block instanceof mindustry.world.blocks.liquid.Conduit;
     }
 
     /** The game does not let a team's builders put up blocks its campaign has not unlocked. Rebuilding stays within that. */
@@ -2941,29 +2955,56 @@ public class Brain{
             order.insert(at, Director.Goal.firstYard);
             first = order.toArray(Director.Goal.class);
         }
-        //more drills on what it mines come before turrets, yards and factories while its home is not being hit and drills
-        //have had no more than half of what it spent lately: a drill pays for itself in a minute or two, and the rest waits on
-        //what it brings in
-        if(Options.ratios.on() && director.posture != Director.Posture.bootstrap && !homeHit(data) && minesUnderShare()){
+        //mining and power come first: drills on every wall of ore it can get at and generators on every free vent, before
+        //turrets, yards and factories. a drill pays for itself in a minute or two, and everything else waits on what it brings
+        //in. only a base that is being overrun puts its turrets first: a core hit, the other side's army at a core no turret
+        //of its own covers, or more being lost than comes in. (with drills first only while its home was not being hit at all,
+        //the fifth sector, raided a unit or two at a time from the sixth minute on, opened with a turret and a silicon plant,
+        //never added a drill, and watched its generators go down)
+        //(tried as the default: on the third sector, where the other side's ships come in the first minutes, saving up for drills
+        //ahead of everything left the base without a turret, and all eight openings were lost; kept as a switch, xp.econ)
+        boolean economyFirst = System.getProperty("xp.econ") != null;
+        if(Options.ratios.on() && director.posture != Director.Posture.bootstrap && (economyFirst ? !overrun(data) : !homeHit(data) && minesUnderShare())){
             Seq<Director.Goal> order = new Seq<>(first);
+            if(economyFirst){
+                order.remove(Director.Goal.ore);
+                order.remove(Director.Goal.vents);
+            }
             int at = 0;
-            while(at < order.size && (order.get(at) == Director.Goal.mend || order.get(at) == Director.Goal.owed || order.get(at) == Director.Goal.arm || order.get(at) == Director.Goal.activate || order.get(at) == Director.Goal.staples || order.get(at) == Director.Goal.task)) at++;
+            //(after the first yard, where there is none yet: put off behind the drills, it was laid out late, got no line of
+            //silicon in a base grown over with mines, and the second sector made its first unit at the fifteenth minute)
+            while(at < order.size && (order.get(at) == Director.Goal.mend || order.get(at) == Director.Goal.owed || order.get(at) == Director.Goal.arm || order.get(at) == Director.Goal.activate || order.get(at) == Director.Goal.staples || order.get(at) == Director.Goal.task
+                || (economyFirst && order.get(at) == Director.Goal.firstYard))) at++;
             order.insert(at, Director.Goal.ore);
+            if(economyFirst) order.insert(at + 1, Director.Goal.vents);
             first = order.toArray(Director.Goal.class);
+            economyAt = economyFirst ? at : -1;
+        }else{
+            economyAt = -1;
         }
         for(int i = 0; i < first.length; i++){
             //when a round ran out of time with nothing to show, the next begins one goal further down the list and comes to
             //the earlier ones last: one that takes all the time there is, round after round, would keep the rest from ever being tried
             Director.Goal goal = first[(i + firstShift) % first.length];
             saving = false;
+            //ahead of the rest, mining and power only for what is short: what the cores are well filled with is mined in its
+            //turn. (ahead of everything for every item, there was always one more drill somewhere, and the second sector's
+            //cores stood full at the tenth minute with not one unit made)
+            int slot = (i + firstShift) % first.length;
+            aheadOfRest = economyAt >= 0 && (slot == economyAt || slot == economyAt + 1);
             Project project = attempt(goal, data, targets);
+            aheadOfRest = false;
             if(project != null){
                 firstShift = 0;
                 return project;
             }
             if(!saving) continue;
             //drills ahead of everything else are built when they can be paid for, and not waited for
-            if(goal == Director.Goal.ore){
+            //(but saved up for, where mining comes first: skipped, what they were short of went into everything else, and a
+            //base whose beryllium went out as fast as it came in never had the forty for its next drill)
+            //(only while drills have had less than half of what it spent lately: saved up for without end, there was always
+            //one more drill, and on the second, third and fourth sectors no army or turret was ever paid for)
+            if(economyFirst ? (goal == Director.Goal.ore || goal == Director.Goal.vents) && (System.getProperty("xp.noe2") != null || !minesUnderShare()) : goal == Director.Goal.ore){
                 saving = false;
                 continue;
             }
@@ -3310,7 +3351,7 @@ public class Brain{
             case cool -> cool(data);
             case cover -> defence(data, targets);
             case speed -> Options.refit.on() ? boosts(data, true) : null;
-            case vents -> vents(data);
+            case vents -> aheadOfRest && !powerShort() && System.getProperty("xp.flatshort") == null ? null : vents(data);
             case tidy -> tidy(data);
             case power -> power(data);
             case refit -> refit(data);
@@ -5025,6 +5066,20 @@ public class Brain{
      * Whether its home is being hit just now: a core of its own was damaged a moment ago, or something of its own was
      * destroyed lately in a core's zone or right by it.
      */
+    /**
+     * Whether its base is being overrun: a core hit, the other side's army at a core of its own that no turret of its own
+     * covers, or more of what it built being lost than comes in.
+     */
+    private boolean overrun(TeamData data){
+        for(CoreBuild core : data.cores){
+            if(core.wasRecentlyDamaged()) return true;
+            if(clock < sightedUntil && !guarded(core.x, core.y)) return true;
+        }
+        float income = 0f;
+        for(Item item : useful()) income += stock.income(item) / 60f;
+        return lossRate > Math.max(income, 1f) * 0.5f;
+    }
+
     private boolean homeHit(TeamData data){
         if(!atlas.ready()) return attacked();
         for(CoreBuild core : data.cores){
@@ -5117,7 +5172,10 @@ public class Brain{
      */
     private @Nullable Project mines(TeamData data){
         flows(data);
-        Seq<Item> ores = useful().select(item -> builtWith(item) && hasSource(item) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null)));
+        //(what the base it started with mines counts as mined: counting only its own drills, the fifth sector's first minute went
+        //into a turret while its beryllium walls stood free)
+        Seq<Item> ores = useful().select(item -> builtWith(item) && (hasSource(item) || (System.getProperty("xp.econ") != null && comesIn(item))) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null))
+            && (!aheadOfRest || stock.have(item) < stock.cap() * 0.5f));
         ores.sort(item -> stock.have(item) + stock.income(item) * 2f);
         minesOnly = true;
         try{
@@ -6532,6 +6590,26 @@ public class Brain{
                 }
             }
         }
+    }
+
+    /** Whether the tiles where the lines of a yard's addition would come in, and the ones they come in from, are open for one way round of it at least. */
+    public boolean refitPortsOpen(Block block, int x, int y, int rotation){
+        if(!(block instanceof UnitFactory) || !Options.refit.on()) return true;
+        boolean any = false;
+        for(Blueprint addition : blueprints){
+            if(!addition.addon() || addition.main() != block || !addition.allowed(this::may)) continue;
+            any = true;
+            for(int flip = 0; flip < 2; flip++){
+                Layout layout = addition.at(x, y, rotation, flip == 1, 1);
+                boolean open = true;
+                for(Port port : layout.ports){
+                    if(port.role != Role.in) continue;
+                    if(!ground.open(port.x, port.y) || !ground.open(port.x - Geometry.d4x(port.rotation), port.y - Geometry.d4y(port.rotation))) open = false;
+                }
+                if(open) return true;
+            }
+        }
+        return !any;
     }
 
     /** Yards being built in the place of old ones: where the new one's main block goes, and the old one's. The old comes down when the new stands. */
