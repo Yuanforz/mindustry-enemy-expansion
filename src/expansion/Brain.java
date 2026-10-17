@@ -2198,6 +2198,7 @@ public class Brain{
             if(expansion && givenUp(plan, pos)) continue;
             //to the back of the queue, so that the next builder tries something else
             plans.addLast(plan);
+            if(rebuildWaits(plan, pos)) continue;
 
             //playing the player's side, what the map's own base lost is put back only as far as it has been researched, as the game has it for a player
             if(orders.contains(o -> o.pos() == pos) || (!expansion && (!allowed(plan.block) || (side != null && !may(plan.block)))) || !Build.validPlace(plan.block, team(), plan.x, plan.y, plan.rotation)) continue;
@@ -3720,6 +3721,8 @@ public class Brain{
                 if(!(build instanceof BeamDrill.BeamDrillBuild || build instanceof Drill.DrillBuild) || build.power == null || build.block.consPower == null
                     || build instanceof ConstructBuild || build.power.status > 0.01f || !world.isInMapArea(build.tileX(), build.tileY())
                     || rested.get(build.pos(), 0f) > clock || planner.late() || !calm(build.x, build.y, quiet)) continue;
+                //(not where things keep being destroyed and nothing guards it: what wired it up would go the same way)
+                if(System.getProperty("xp.rebuildall") == null && hot(build.tileX(), build.tileY(), total(build.block.requirements))) continue;
                 Item mined = build instanceof BeamDrill.BeamDrillBuild beam ? beam.lastItem : ((Drill.DrillBuild)build).dominantItem;
                 //(nothing of it seen coming in, measured: a source whose drill has no power has a line, and nothing on it)
                 if(mined == null || net.things.contains(thing -> (thing.kind == Net.Kind.mine || thing.kind == Net.Kind.maker) && thing.item == mined
@@ -6915,6 +6918,23 @@ public class Brain{
 
     /** When it last lost a building. */
     private float lastLossAt = -1e9f;
+
+    /**
+     * Whether something of its own that was destroyed waits to be put back: where it keeps being destroyed, lately more than
+     * three times what it costs on that stretch, and no turret of its own with enough to fire has the place under its guns.
+     * Put back at once, it went down again: on the third sector the generators on the far vents were destroyed and put back
+     * every few minutes for an hour, and what its yards were waiting for went into them.
+     */
+    private boolean rebuildWaits(BlockPlan plan, int pos){
+        if(System.getProperty("xp.rebuildall") != null || !fallen.containsKey(pos) || plan.block instanceof Turret) return false;
+        return hot(plan.x, plan.y, total(plan.block.requirements));
+    }
+
+    /** Whether a place keeps losing what stands there, lately more than three times so much, with no turret of its own over it. */
+    private boolean hot(int x, int y, float worth){
+        int cell = Point2.pack(x / 8, y / 8);
+        return lostIn(cell) > Math.max(worth, 20f) * 3f && !guarded(x * tilesize, y * tilesize);
+    }
 
 
     /** What it has lost lately on each stretch of ground eight tiles across, by the cost of what stood there, halving every minute and a half. */
