@@ -3732,7 +3732,13 @@ public class Brain{
                 }finally{
                     planner.needy = before;
                 }
-                if(project != null) return done("rewire", project);
+                //and that drill is let be until the chain has had time to go up: looked at again the next round, it was still without
+                //power, and was wired up again, round after round, under attack; the seventh sector laid three hundred nodes in
+                //twenty minutes, more beryllium than went into its drills
+                if(project != null){
+                    rested.put(build.pos(), clock + 60f * 120f);
+                    return done("rewire", project);
+                }
                 notes.put("rewire", planner.note);
                 if(!planner.timedOut) rested.put(build.pos(), clock + shunTime / 5f);
                 break;
@@ -6909,6 +6915,7 @@ public class Brain{
 
     /** When it last lost a building. */
     private float lastLossAt = -1e9f;
+
 
     /** What it has lost lately on each stretch of ground eight tiles across, by the cost of what stood there, halving every minute and a half. */
     private final IntFloatMap cellLost = new IntFloatMap(), cellLostAt = new IntFloatMap();
