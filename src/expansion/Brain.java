@@ -2961,9 +2961,10 @@ public class Brain{
         //of its own covers, or more being lost than comes in. (with drills first only while its home was not being hit at all,
         //the fifth sector, raided a unit or two at a time from the sixth minute on, opened with a turret and a silicon plant,
         //never added a drill, and watched its generators go down)
-        //(tried as the default: on the third sector, where the other side's ships come in the first minutes, saving up for drills
-        //ahead of everything left the base without a turret, and all eight openings were lost; kept as a switch, xp.econ)
-        boolean economyFirst = System.getProperty("xp.econ") != null;
+        //(the third sector's openings, all lost when this was first tried, were lost to putting back what the first raids
+        //destroyed without waiting for the turrets' reserve, which went in at the same time; on its own this holds them as before.
+        //xp.oldorder for the old way)
+        boolean economyFirst = System.getProperty("xp.oldorder") == null;
         if(Options.ratios.on() && director.posture != Director.Posture.bootstrap && (economyFirst ? !overrun(data) : !homeHit(data) && minesUnderShare())){
             Seq<Director.Goal> order = new Seq<>(first);
             if(economyFirst){
@@ -5174,7 +5175,7 @@ public class Brain{
         flows(data);
         //(what the base it started with mines counts as mined: counting only its own drills, the fifth sector's first minute went
         //into a turret while its beryllium walls stood free)
-        Seq<Item> ores = useful().select(item -> builtWith(item) && (hasSource(item) || (System.getProperty("xp.econ") != null && comesIn(item))) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null))
+        Seq<Item> ores = useful().select(item -> builtWith(item) && (hasSource(item) || (System.getProperty("xp.inherited") != null && comesIn(item))) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null))
             && (!aheadOfRest || stock.have(item) < stock.cap() * 0.5f));
         ores.sort(item -> stock.have(item) + stock.income(item) * 2f);
         minesOnly = true;
