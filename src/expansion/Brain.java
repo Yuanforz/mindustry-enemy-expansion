@@ -3070,7 +3070,7 @@ public class Brain{
         int fighters = data.units.count(Brain::fights);
         facts.army = Math.min(fighters / (float)Math.max(Units.getCap(team()), 1), 1f);
         facts.pressure = Math.max(director.losses / Director.pressure, clock < sightedUntil ? 0.6f : 0f);
-        facts.uncovered = data.cores.contains(core -> world.isInMapArea(core.tileX(), core.tileY()) && !covered(core.x, core.y, tilesize * 20f));
+        facts.uncovered = data.cores.contains(core -> world.isInMapArea(core.tileX(), core.tileY()) && (!covered(core.x, core.y, tilesize * 20f) || !approachCovered(core)));
         //what comes at it hits so lightly that a unit it can build shrugs most of it off: such units hold home as a turret does
         if(clock < sightedUntil && raiderHit > 0f){
             for(Blueprint blueprint : blueprints){
@@ -6255,7 +6255,12 @@ public class Brain{
             //turret stands over them, that one does not hold: more there
             Seq<int[]> hit = new Seq<>();
             for(CoreBuild core : data.cores){
-                if(world.isInMapArea(core.tileX(), core.tileY()) && !guarded(core.x, core.y)) hit.add(new int[]{core.tileX(), core.tileY(), -1});
+                if(!world.isInMapArea(core.tileX(), core.tileY())) continue;
+                if(!approachCovered(core)){
+                    int[] at = approachSpot(core);
+                    if(at != null) hit.add(new int[]{at[0], at[1], -1});
+                }
+                if(!guarded(core.x, core.y)) hit.add(new int[]{core.tileX(), core.tileY(), -1});
             }
             IntSet cells = new IntSet(), fresh = new IntSet();
             //only where more has been lost lately, within what a turret there would cover, than the turret costs: raiders that
@@ -6323,9 +6328,13 @@ public class Brain{
             if(out.isEmpty()) out.add(new int[]{fx, fy});
             spotsNote = "front at " + fx + "," + fy + ", " + zones.size + " stretches near it";
         }else if(net.count(Net.Kind.post, null) < data.cores.size){
-            //its first turret of its own goes up by each core, before anything else, whatever stands there already
+            //its first turret of its own goes up by each core, before anything else, whatever stands there already: on the side
+            //the other side's army comes from, where it can be had there
             for(CoreBuild core : data.cores){
-                if(world.isInMapArea(core.tileX(), core.tileY()) && usable.get(new int[]{core.tileX(), core.tileY()})) out.add(new int[]{core.tileX(), core.tileY()});
+                if(!world.isInMapArea(core.tileX(), core.tileY())) continue;
+                int[] at = approachCovered(core) ? null : approachSpot(core);
+                if(at != null && usable.get(at)) out.add(at);
+                if(usable.get(new int[]{core.tileX(), core.tileY()})) out.add(new int[]{core.tileX(), core.tileY()});
             }
             spotsNote = "first turret by the core";
             //nothing solid goes right by a core: the room for it is a little way off
@@ -6334,6 +6343,12 @@ public class Brain{
             //otherwise a few turrets, roughly: its cores, and each patch of what it lives on that has a yard in it or a good
             //deal else, where no turret has it under its guns; one turret for each, and no more than a few for each core in
             //all. the rest goes into units; more turrets come where it is hit, and at the front
+            //the way the other side comes to each core, whatever it has besides
+            for(CoreBuild core : data.cores){
+                if(!world.isInMapArea(core.tileX(), core.tileY()) || approachCovered(core)) continue;
+                int[] at = approachSpot(core);
+                if(at != null && usable.get(at)) out.add(at);
+            }
             if(net.count(Net.Kind.post, null) < coverPerCore * data.cores.size){
                 for(CoreBuild core : data.cores){
                     if(world.isInMapArea(core.tileX(), core.tileY()) && !covered(core.x, core.y, cover) && usable.get(new int[]{core.tileX(), core.tileY()})) out.add(new int[]{core.tileX(), core.tileY()});
@@ -7253,6 +7268,57 @@ public class Brain{
 
     private static boolean isTurret(Building build){
         return build.block instanceof Turret || (build instanceof ConstructBuild site && site.current instanceof Turret);
+    }
+
+    /**
+     * The tile on the way the other side's ground army comes to one of its cores, so many tiles out from it along that way:
+     * where the way runs over its own ground, the way it would take; otherwise straight towards the nearest of their cores.
+     */
+    private int approachAt(CoreBuild core, float tiles){
+        IntSeq lane = territory.lane(core);
+        int width = world.width(), last = -1;
+        for(int i = 0; i < lane.size; i++){
+            int x = lane.get(i) % width, y = lane.get(i) / width;
+            last = Point2.pack(x, y);
+            if(Mathf.dst(x, y, core.tileX(), core.tileY()) >= tiles) return last;
+        }
+        if(last != -1) return last;
+        CoreBuild near = Geometry.findClosest(core.x, core.y, foe().cores());
+        if(near == null) return -1;
+        float angle = Angles.angle(core.x, core.y, near.x, near.y);
+        return Point2.pack(Math.round(core.tileX() + Angles.trnsx(angle, tiles)), Math.round(core.tileY() + Angles.trnsy(angle, tiles)));
+    }
+
+    /**
+     * Whether a turret of its own, standing, going up or laid out, reaches the place on that way from which the other side's
+     * units could fire on the core. One close by on another side does not: on the seventh sector the core stood at the west
+     * edge of the base, its turrets east of it where the lines ran, and the other side's tanks came from the west, stopped
+     * eighteen tiles out, out of their reach, and shot the core down.
+     */
+    private boolean approachCovered(CoreBuild core){
+        if(System.getProperty("xp.noapproach") != null) return true;
+        //only where an army can come over the ground at all: on the sixth sector, across water from the other side, turrets went
+        //up one after another on the shore towards it, and no unit was made
+        if(!territory.walkable(core)) return true;
+        float reachOf = Math.max(raiderRange / tilesize, 20f) + core.block.size / 2f;
+        int at = approachAt(core, reachOf);
+        if(at == -1) return true;
+        float px = Point2.x(at) * tilesize, py = Point2.y(at) * tilesize;
+        if(indexer.findTile(team(), px, py, tilesize * 50f, build -> isTurret(build) && build.within(px, py, turretRange(build) * 0.95f)) != null) return true;
+        for(BlockPlan plan : team().data().plans){
+            if(plan.block instanceof Turret turret && Mathf.within(plan.x * tilesize, plan.y * tilesize, px, py, turret.range * 0.95f)) return true;
+        }
+        return false;
+    }
+
+    private static float turretRange(Building build){
+        return build.block instanceof Turret turret ? turret.range : build instanceof ConstructBuild site && site.current instanceof Turret turret ? turret.range : 0f;
+    }
+
+    /** Where a turret goes to cover that way: a little way out from the core along it. */
+    private @Nullable int[] approachSpot(CoreBuild core){
+        int at = approachAt(core, core.block.size / 2f + 5f);
+        return at == -1 ? null : new int[]{Point2.x(at), Point2.y(at)};
     }
 
     /** Whether a turret, standing or laid out, already watches over a spot. */
