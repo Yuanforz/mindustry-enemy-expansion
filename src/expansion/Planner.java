@@ -1858,7 +1858,10 @@ public class Planner{
                                     break;
                                 }
                             }
-                            if(supplied && !plumb(project, layout.parts)){
+                            //a layout with a liquid box of its own has what it runs on carried to it: no conduit is wanted where it can be
+                            boolean boxed = layout.parts.contains(part -> part.block == Blocks.reinforcedLiquidContainer);
+                            for(Plumbing.Tap tap : Plumbing.needs(layout.parts)) if(!brain.ferryable(tap.liquid)) boxed = false;
+                            if(supplied && !boxed && !plumb(project, layout.parts)){
                                 supplied = false;
                                 if(lacking != null){
                                     failed = "no " + lacking.name + " to be had near " + x + "," + y;
@@ -2271,7 +2274,17 @@ public class Planner{
         note = "ferry of " + liquid.name + " to the " + consumer.block.name + ": ";
         if(late()) return null;
         Block box = Blocks.reinforcedLiquidContainer;
-        int[] drop = boxBeside(consumer, -1, box);
+        int[] drop = null;
+        reuse = false;
+        //a liquid box of its own against it already: that is the end, and it starts there
+        for(Building near : consumer.proximity){
+            if(near.block == box && near.team == ground.team){
+                drop = new int[]{near.tileX(), near.tileY()};
+                reuse = true;
+                break;
+            }
+        }
+        if(drop == null) drop = boxBeside(consumer, -1, box);
         if(drop == null){
             note += "no room by it for a box [" + blockedBeside(consumer) + "]";
             return null;
@@ -2279,7 +2292,7 @@ public class Planner{
         int[] fill = null;
         sources.sort(build -> build.dst2(consumer));
         for(Building source : sources){
-            //on the side it gives that liquid off from, where it gives it off only to some
+            //on the side it gives that liquid off from, where it gives it off only to some (a generator gives off all round)
             int side = -1;
             if(source.block instanceof GenericCrafter crafter && crafter.outputLiquids != null && crafter.liquidOutputDirections != null && crafter.liquidOutputDirections.length == crafter.outputLiquids.length){
                 for(int i = 0; i < crafter.outputLiquids.length; i++){
@@ -2291,6 +2304,13 @@ public class Planner{
         }
         if(fill == null){
             note += "no room for a box against anything that gives it off";
+            return null;
+        }
+        if(reuse){
+            ferryFillX = fill[0];
+            ferryFillY = fill[1];
+            ferryDropX = drop[0];
+            ferryDropY = drop[1];
             return null;
         }
         Project project = new Project("ferry of " + liquid.name + " to the " + consumer.block.name);
@@ -2482,8 +2502,10 @@ public class Planner{
             }
             //(with what it is added to among what hands liquid over by touch: a turbine gives off water)
             if(supplied && !plumb(project, whole.parts)){
-                //what it runs on can be ferried to it in a box, once it stands, where no conduit can be laid
-                boolean boxed = true;
+                //what it runs on can be ferried to it in a box, once it stands, where no conduit can be laid: for what turns out
+                //better units only, which the ferries serve. (for any addition, turrets and drills given water by a box that never
+                //came went without it, and the sixth sector took fifteen minutes longer)
+                boolean boxed = layout.parts.contains(part -> part.block instanceof mindustry.world.blocks.units.Reconstructor) && System.getProperty("xp.boxanything") == null;
                 for(Plumbing.Tap tap : Plumbing.needs(layout.parts)) if(!brain.ferryable(tap.liquid)) boxed = false;
                 if(!boxed){
                     //with none to be had the place is good all the same: what it lacks can be built, and then this is taken up again

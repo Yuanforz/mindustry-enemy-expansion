@@ -1161,11 +1161,21 @@ public class Brain{
             //or it can take the first step there: a turret on the way, or by it, that it brings down well before what reaches it
             //brings the group down. it goes for that, and weighs again from there. (once thrown back, a group that had to be able
             //to take the core straight away, what fires on the way there counted, never set out again in an hour)
+            float edgeThen = lastEdge;
+            String sized = sizedUp;
+            Building step = null;
             if(!worth && first != null && System.getProperty("xp.nostep") == null){
                 Building was = marchTarget;
                 marchTarget = first;
-                worth = peel(home, hx, hy) != null;
+                step = peel(home, hx, hy);
+                worth = step != null;
                 marchTarget = was;
+            }
+            if(System.getProperty("xp.notes") != null){
+                ObjectIntMap<String> kinds = new ObjectIntMap<>();
+                for(Unit unit : home) kinds.increment(unit.type.name);
+                notes.put("setout", "home " + kinds + ", caution " + Strings.fixed(caution, 2) + ", against " + (first == null ? "nothing" : first.block.name + "@" + first.tileX() + "," + first.tileY())
+                    + ": edge " + Strings.fixed(edgeThen, 2) + " (" + sized + "), first step " + (step == null ? "none" : step.block.name + "@" + step.tileX() + "," + step.tileY()) + ", worth " + worth);
             }
         }
         if(!waveDue && ((home.size >= enough && worth) || able || (setOut > 0 && home.size >= Math.max(enough / 2, 3)) || (holding && home.size >= 3 && turretsHold))){
@@ -5411,10 +5421,21 @@ public class Brain{
             return null;
         }
 
-        for(Blueprint blueprint : kinds){
+        for(Blueprint kind : kinds){
             //each kind has its own turn at being tried, so that one that can't be placed does not keep the others from it
-            String key = "yard:" + blueprint.name;
+            String key = "yard:" + kind.name;
             if(!ready(key)) continue;
+            //a layout fed by boxes alone only out of plenty of what better units are made of, or where asked not to: else the kind's
+            //other layouts, led their lines. (skipped as a kind, the sixth sector's works led its lines never went up, and it won at
+            //the thirty-seventh minute where it had at the twenty-first; saved for at any time, it held up all else on the fifth)
+            Seq<Blueprint> ways = alike(kind);
+            if(System.getProperty("xp.noboxworks") != null || !(plenty(Items.silicon) && plenty(Items.tungsten))){
+                ways.removeAll(way -> way.parts.contains(part -> part.block instanceof Reconstructor) && !way.ports.contains(port -> port.role == Role.in));
+            }
+            if(ways.isEmpty()) continue;
+            //led its lines first, where they reach: one fed by boxes keeps the core's unit carrying, and goes where no line does
+            ways.sort(way -> way.ports.contains(port -> port.role == Role.in) ? 0 : 1);
+            Blueprint blueprint = ways.first();
             Item lack = lacks(blueprint);
             if(lack != null){
                 Project first = provide(lack, data, 0);
@@ -5429,8 +5450,21 @@ public class Brain{
                 return null;
             }
             Seq<int[]> spots = yardSpots(blueprint);
+            //one fed by boxes alone has no lines to stand by: any safe open ground near home will do, after the places by lines
+            if(ways.contains(way -> !way.ports.contains(port -> port.role == Role.in))){
+                CoreBuild home = data.core();
+                if(home != null){
+                    for(Atlas.Zone zone : atlas.zones){
+                        if(safeForWorks(zone.x(), zone.y()) && Mathf.dst(zone.x(), zone.y(), home.tileX(), home.tileY()) < 70f) spots.add(new int[]{zone.x(), zone.y()});
+                    }
+                    if(!blueprint.ports.contains(port -> port.role == Role.in)){
+                        spots.sort(at -> Mathf.dst(at[0], at[1], home.tileX(), home.tileY()));
+                    }
+                    if(spots.size > 36) spots.truncate(36);
+                }
+            }
             if(blueprint.parts.contains(part -> part.block instanceof Reconstructor)) spots.removeAll(at -> !safeForWorks(at[0], at[1]));
-            Project project = planner.fed(alike(blueprint), spots, targets, Net.Kind.yard);
+            Project project = planner.fed(ways, spots, targets, Net.Kind.yard);
             //with no room for the better one anywhere, it goes up where the old one stands: that comes down first, with what is
             //round it only for its sake. (the base grows over all the ground by its lines, and the better yards of the fifth
             //sector found room nowhere, with tungsten and silicon to spare; the old yard stood on the lines that fed it)
@@ -5762,7 +5796,9 @@ public class Brain{
     private @Nullable Project liquidFerry(TeamData data){
         if(System.getProperty("xp.noferry") != null || ferries.size >= 4 || !may(Blocks.reinforcedLiquidContainer)) return null;
         for(Building build : data.buildings){
-            if(!(build instanceof Reconstructor.ReconstructorBuild refit)) continue;
+            //a refabricator, or what makes the liquid it runs on against it (an electrolyzer short of water by a refabricator)
+            boolean feedsRefit = System.getProperty("xp.nowaterferry") == null && build.block instanceof GenericCrafter && build.proximity.contains(other -> other instanceof Reconstructor.ReconstructorBuild);
+            if(!(build instanceof Reconstructor.ReconstructorBuild) && !feedsRefit) continue;
             Liquid liquid = null;
             float wanted = 0f;
             for(var consume : build.block.consumers){
@@ -5778,8 +5814,7 @@ public class Brain{
             if(!ready(key)) continue;
             //what gives it off and could run, whether or not it does: one that stands with power and what it is made from, and
             //nowhere for what it makes to go, runs again once a box stands at its side
-            Seq<Building> sources = data.buildings.select(other -> other.block instanceof GenericCrafter crafter && crafter.outputLiquids != null
-                && java.util.Arrays.stream(crafter.outputLiquids).anyMatch(stack -> stack.liquid == needed) && (other.power == null || other.power.status > 0.5f));
+            Seq<Building> sources = data.buildings.select(other -> other != build && givesOff(other, needed) && (other.power == null || other.power.status > 0.5f || other.block instanceof mindustry.world.blocks.power.PowerGenerator));
             Seq<Building> safe = sources.select(other -> safeForWorks(other.tileX(), other.tileY()));
             if(safe.any() && System.getProperty("xp.anysource") == null) sources = safe;
             if(sources.isEmpty()){
@@ -5799,7 +5834,7 @@ public class Brain{
                 planner.clearing.clear();
                 ground.intoBody = null;
             }
-            if(project == null){
+            if(project == null && !planner.reuse){
                 notes.put(key, planner.note);
                 retry.put(key, clock + retryPeriod * 2f);
                 continue;
@@ -5813,7 +5848,7 @@ public class Brain{
             ferry.dropY = planner.ferryDropY;
             ferries.add(ferry);
             notes.put(key, "a box of " + liquid.name + " goes from " + ferry.fillX + "," + ferry.fillY + " to " + ferry.dropX + "," + ferry.dropY);
-            return project;
+            if(project != null) return project;
         }
         return null;
     }
@@ -6536,7 +6571,9 @@ public class Brain{
         for(Blueprint blueprint : blueprints){
             UnitType unit = finalUnit(blueprint);
             if(blueprint.kind() != Kind.yard || unit == null || !blueprint.allowed(this::may) || !may(unit) || data.countType(unit) >= cap) continue;
-            if(out.contains(other -> other.main() == blueprint.main() && finalUnit(other) == unit)) continue;
+            //(one for each way of making it alike: a works fed by boxes and one led its lines are two ways, and with only the first
+            //kept, the second never went up where lines could reach it)
+            if(out.contains(other -> other.main() == blueprint.main() && finalUnit(other) == unit && sameBlocks(other, blueprint) && sameInputs(other, blueprint))) continue;
             out.add(blueprint);
         }
         ObjectIntMap<UnitType> yards = new ObjectIntMap<>();
@@ -8321,7 +8358,14 @@ public class Brain{
     /** Whether a box of a liquid could be ferried: liquid boxes may be built, and something of its own gives it off. */
     public boolean ferryable(Liquid liquid){
         if(System.getProperty("xp.noferry") != null || !may(Blocks.reinforcedLiquidContainer)) return false;
-        return team().data().buildings.contains(build -> build.block instanceof GenericCrafter crafter && crafter.outputLiquids != null && java.util.Arrays.stream(crafter.outputLiquids).anyMatch(stack -> stack.liquid == liquid));
+        return team().data().buildings.contains(build -> givesOff(build, liquid));
+    }
+
+    /** Whether something of its own gives off a liquid to what stands against it: a crafter that makes it, or a generator that gives it off besides its power. */
+    static boolean givesOff(Building build, Liquid liquid){
+        if(build.block instanceof GenericCrafter crafter && crafter.outputLiquids != null) return java.util.Arrays.stream(crafter.outputLiquids).anyMatch(stack -> stack.liquid == liquid);
+        if(build.block instanceof mindustry.world.blocks.power.ThermalGenerator generator) return generator.outputLiquid != null && generator.outputLiquid.liquid == liquid;
+        return false;
     }
 
     /**
@@ -8385,7 +8429,7 @@ public class Brain{
             turbines.sort(build -> -room.get(build.pos(), 0) + build.dst(home) / tilesize * 0.1f);
             int tried = 0;
             for(Building turbine : turbines){
-                if(++tried > 4 || planner.late()) break;
+                if(++tried > Integer.getInteger("xp.turbinetries", 12) || planner.late()) break;
                 //walls, ducts and nodes of its own round the turbine make way: the turbines stand in among the lines
                 if(System.getProperty("xp.keepturbine") == null) makeWayBy(turbine);
                 Project project;

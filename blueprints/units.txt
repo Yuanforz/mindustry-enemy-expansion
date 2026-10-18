@@ -47,6 +47,27 @@ in silicon -2 1 0
 # Second tier: a fabricator facing straight into a refabricator, which takes each unit as it comes out.
 # The hydrogen the refabricator needs is piped from an electrolyzer.
 
+# 不依附涡轮机的二级坦克工厂：原来涡轮机的位置换成一个强化液体容器，贴着电解器给水；水也靠核心机搬：
+# 液体容器搬到任何一台涡轮机旁装满水，再搬回来。其余同上。可以建在任何安全的空地上。
+# The same works on any safe open ground: a liquid box where the turbine stood gives the electrolyzer its water,
+# filled by being carried to stand against any turbine and back.
+[tank-works-box]
+tank-fabricator 0 -3 0 stell
+reinforced-liquid-container 0 0
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+beam-node 0 2
+beam-node 5 2
+beam-node 5 0
+beam-node 5 -5
+beam-node 4 -5
+beam-node -2 -5
+beam-node -2 -2
+duct-unloader 0 -5 1
+reinforced-container -1 -7
+duct-unloader 3 -5 1
+reinforced-container 3 -7
+
 [tank-works]
 tank-fabricator 0 0 0 stell
 tank-refabricator 3 0 0
