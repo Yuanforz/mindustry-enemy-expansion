@@ -2428,10 +2428,17 @@ public class Planner{
             }
             //(with what it is added to among what hands liquid over by touch: a turbine gives off water)
             if(supplied && !plumb(project, whole.parts)){
-                //with none to be had the place is good all the same: what it lacks can be built, and then this is taken up again
-                if(lacking != null) return drop(project, "no " + lacking.name + " to be had" + where);
-                supplied = false;
-                failed = "no way to lay a conduit" + where;
+                //what it runs on can be ferried to it in a box, once it stands, where no conduit can be laid
+                boolean boxed = true;
+                for(Plumbing.Tap tap : Plumbing.needs(layout.parts)) if(!brain.ferryable(tap.liquid)) boxed = false;
+                if(!boxed){
+                    //with none to be had the place is good all the same: what it lacks can be built, and then this is taken up again
+                    if(lacking != null) return drop(project, "no " + lacking.name + " to be had" + where);
+                    supplied = false;
+                    failed = "no way to lay a conduit" + where;
+                }else{
+                    lacking = null;
+                }
             }
             if(supplied && !energize(project, groups(layout.parts), powerUse(layout.parts))){
                 supplied = false;

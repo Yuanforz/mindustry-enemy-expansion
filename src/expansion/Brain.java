@@ -2070,9 +2070,11 @@ public class Brain{
         }
         Project wet = liquidFerry(data);
         if(wet != null) return wet;
-        //and what it is short of in items, where no line brings it, out of the plenty its cores hold
+        //and what it is short of in items, where no line brings it, out of the plenty its cores hold: it, and the fabricator
+        //that hands it its units
         for(Building build : data.buildings){
-            if(!(build instanceof Reconstructor.ReconstructorBuild) || shortOf(build) == null) continue;
+            boolean betterUnits = build instanceof Reconstructor.ReconstructorBuild || (build instanceof UnitFactory.UnitFactoryBuild && build.front() instanceof Reconstructor.ReconstructorBuild);
+            if(!betterUnits || shortOf(build) == null) continue;
             Project dry = ferryFor(build);
             if(dry != null) return dry;
         }
@@ -2515,6 +2517,7 @@ public class Brain{
             notes.put("lift", "the " + lift[0].block.name + " at " + lift[0].tileX() + "," + lift[0].tileY() + " is lifted into the " + lift[1].block.name + " at " + lift[1].tileX() + "," + lift[1].tileY());
             return;
         }
+        if(!ai.carryHow.isEmpty()) notes.put("carry", ai.carryHow);
         //a box to ferry to a yard no line reaches, or back to be filled
         Object[] ferried = ferryJob(unit, data);
         if(ferried != null){
@@ -4626,7 +4629,7 @@ public class Brain{
         int tried = 0;
         for(Building build : data.buildings){
             if(planner.late() || tried >= 2) break;
-            if(!(build.block instanceof UnitBlock) || rested.get(build.pos(), 0f) > clock || !world.isInMapArea(build.tileX(), build.tileY())) continue;
+            if(!(build.block instanceof UnitBlock) || rested.get(build.pos(), 0f) > clock || !world.isInMapArea(build.tileX(), build.tileY()) || !safeForWorks(build.tileX(), build.tileY())) continue;
             Seq<Blueprint> ways = additionsFor(build, data);
             if(ways.isEmpty()) continue;
             Blueprint addition = ways.first();
@@ -5423,11 +5426,13 @@ public class Brain{
                 notes.put(key, "saving for it");
                 return null;
             }
-            Project project = planner.fed(alike(blueprint), yardSpots(blueprint), targets, Net.Kind.yard);
+            Seq<int[]> spots = yardSpots(blueprint);
+            if(blueprint.parts.contains(part -> part.block instanceof Reconstructor)) spots.removeAll(at -> !safeForWorks(at[0], at[1]));
+            Project project = planner.fed(alike(blueprint), spots, targets, Net.Kind.yard);
             //with no room for the better one anywhere, it goes up where the old one stands: that comes down first, with what is
             //round it only for its sake. (the base grows over all the ground by its lines, and the better yards of the fifth
             //sector found room nowhere, with tungsten and silicon to spare; the old yard stood on the lines that fed it)
-            if(project == null && old != null && !planner.late() && System.getProperty("xp.noinplace") == null){
+            if(project == null && old != null && !planner.late() && System.getProperty("xp.noinplace") == null && (!blueprint.parts.contains(part -> part.block instanceof Reconstructor) || safeForWorks(old.tileX(), old.tileY()))){
                 project = inPlace(blueprint, old, targets);
                 if(project != null) notes.put(key, "goes up in the place of the " + old.block.name + " at " + old.tileX() + "," + old.tileY());
             }
@@ -5783,6 +5788,7 @@ public class Brain{
             }finally{
                 ground.relaid.clear();
                 planner.clearing.clear();
+                ground.intoBody = null;
             }
             if(project == null){
                 notes.put(key, planner.note);
@@ -5816,7 +5822,8 @@ public class Brain{
         if(ferries.contains(ferry -> ferry.consumer == hungry.pos() && ferry.item == item)) return null;
         //only for what turns out better units, and only out of plenty: the core's unit is the builder too, and boxes carried to
         //first yards in the opening took it off building and mending, and five of eight games of the fifth sector were lost
-        if(!(hungry instanceof Reconstructor.ReconstructorBuild) || stock.have(item) < stock.cap() * 0.4f) return null;
+        boolean betterUnits = hungry instanceof Reconstructor.ReconstructorBuild || (hungry instanceof UnitFactory.UnitFactoryBuild && hungry.front() instanceof Reconstructor.ReconstructorBuild);
+        if(!betterUnits) return null;
         String key = "ferry:" + hungry.pos() + ":" + item.name;
         if(!ready(key)) return null;
         Seq<Building> sources = new Seq<>();
@@ -5837,6 +5844,7 @@ public class Brain{
         }finally{
             ground.relaid.clear();
             planner.clearing.clear();
+            ground.intoBody = null;
         }
         if(project == null){
             notes.put(key, planner.note);
@@ -5857,12 +5865,20 @@ public class Brain{
 
     /** Walls, ducts and nodes of its own right by something count as free ground for what is laid out next to it, and come down first: it stands in among lines. */
     private void makeWayBy(Building build){
+        //and the ground kept round it for what is to feed it is for this too
+        IntSet body = new IntSet();
+        build.tile.getLinkedTiles(tile -> body.add(tile.pos()));
+        body.add(build.pos());
+        ground.intoBody = body;
         int reachOut = build.block.size / 2 + 4;
         for(int dx = -reachOut; dx <= reachOut; dx++){
             for(int dy = -reachOut; dy <= reachOut; dy++){
                 Building near = world.build(build.tileX() + dx, build.tileY() + dy);
                 if(near == null || near.team != team() || near == build || planner.clearing.contains(near.pos())) continue;
-                if(near.block instanceof mindustry.world.blocks.defense.Wall || near.block instanceof Duct || near.block instanceof mindustry.world.blocks.power.BeamNode){
+                boolean way = near.block instanceof mindustry.world.blocks.defense.Wall || near.block instanceof Duct || near.block instanceof mindustry.world.blocks.power.BeamNode
+                    || near.block instanceof DuctRouter || near.block instanceof OverflowDuct || near.block instanceof DuctBridge
+                    || near.block instanceof mindustry.world.blocks.liquid.Conduit || near.block instanceof mindustry.world.blocks.liquid.LiquidBridge;
+                if(way){
                     planner.clearing.add(near.pos());
                     near.tile.getLinkedTiles(tile -> ground.relaid.add(tile.pos()));
                 }
@@ -7928,6 +7944,16 @@ public class Brain{
         return hot(plan.x, plan.y, total(plan.block.requirements));
     }
 
+    /**
+     * Whether a place will do for what turns out better units: under the guns of a turret of its own with something to fire,
+     * and nothing lost there lately. (the refabricators of the fifth sector stood a hundred tiles out, where the raids came; no
+     * line, no hydrogen and no box carried there ever got to them, and not one better unit was made)
+     */
+    private boolean safeForWorks(int x, int y){
+        if(System.getProperty("xp.anywhereworks") != null) return true;
+        return guarded(x * tilesize, y * tilesize) && lostIn(Point2.pack(x / 8, y / 8)) < 20f;
+    }
+
     /** Whether a place keeps losing what stands there, lately more than three times so much, with no turret of its own over it. */
     private boolean hot(int x, int y, float worth){
         int cell = Point2.pack(x / 8, y / 8);
@@ -8209,7 +8235,20 @@ public class Brain{
      * went up, with both items standing full in its cores)
      */
     public boolean leadLater(Item item){
-        return System.getProperty("xp.noleadlater") == null && Options.refit.on() && stock.have(item) >= stock.cap() * 0.4f && comesIn(item);
+        return System.getProperty("xp.noleadlater") == null && Options.refit.on() && (stock.have(item) >= stock.cap() * 0.4f && comesIn(item) || ferryable(item));
+    }
+
+    /** Whether a box of an item could be ferried: boxes and unloaders may be built, and something of its own makes it. */
+    public boolean ferryable(Item item){
+        if(System.getProperty("xp.noferry") != null || !may(Blocks.reinforcedContainer) || !may(Blocks.ductUnloader)) return false;
+        return team().data().buildings.contains(build -> (build instanceof Drill.DrillBuild drill && drill.dominantItem == item) || (build instanceof BeamDrill.BeamDrillBuild beam && beam.lastItem == item)
+            || (build.block instanceof GenericCrafter crafter && crafter.outputItems != null && crafter.outputItems.length > 0 && crafter.outputItems[0].item == item));
+    }
+
+    /** Whether a box of a liquid could be ferried: liquid boxes may be built, and something of its own gives it off. */
+    public boolean ferryable(Liquid liquid){
+        if(System.getProperty("xp.noferry") != null || !may(Blocks.reinforcedLiquidContainer)) return false;
+        return team().data().buildings.contains(build -> build.block instanceof GenericCrafter crafter && crafter.outputLiquids != null && java.util.Arrays.stream(crafter.outputLiquids).anyMatch(stack -> stack.liquid == liquid));
     }
 
     /**
@@ -8272,7 +8311,16 @@ public class Brain{
             int tried = 0;
             for(Building turbine : turbines){
                 if(++tried > 4 || planner.late()) break;
-                Project project = planner.addon(blueprint, turbine);
+                //walls, ducts and nodes of its own round the turbine make way: the turbines stand in among the lines
+                if(System.getProperty("xp.keepturbine") == null) makeWayBy(turbine);
+                Project project;
+                try{
+                    project = planner.addon(blueprint, turbine);
+                }finally{
+                    ground.relaid.clear();
+                    planner.clearing.clear();
+                    ground.intoBody = null;
+                }
                 notes.put("turbineworks", planner.note);
                 if(project != null){
                     for(Part part : project.parts){
