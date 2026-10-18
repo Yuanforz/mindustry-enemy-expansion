@@ -173,6 +173,27 @@ in tungsten 1 -2 1
 # 每秒 3 氢。不占新的喷口。实验台 lab/t2cell.txt 的 t2turbine 验证过。
 # The same works against a turbine condenser that stands already: the water it gives off besides its power (about 5 a second on
 # a full vent) runs the electrolyzer at half pace, the 3 hydrogen a second one refabricator takes. No vent of its own.
+# 涡轮机旁的二级坦克工厂，原料靠箱子转运：兵厂和改造厂南面各一个不设物品的卸载器，背后一个强化容器。
+# 核心机把装满的箱子搬到这里、搬空的搬回去装；氢气由贴着改造厂的电解器直接给，电解器的水由涡轮机直接给。
+# A works beside a turbine fed by boxes: an unloader set to nothing on the south of the fabricator and of the
+# refabricator, each with a box behind it, which the core's unit carries to be filled and back.
+[tank-works-turbine-box]
+@turbine-condenser 0 0
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+tank-fabricator 0 -3 0 stell
+beam-node 0 2
+beam-node 5 2
+beam-node 5 0
+beam-node 5 -5
+beam-node 4 -5
+beam-node -2 -5
+beam-node -2 -2
+duct-unloader 0 -5 1
+reinforced-container -1 -7
+duct-unloader 3 -5 1
+reinforced-container 3 -7
+
 [tank-works-turbine]
 @turbine-condenser 0 0
 electrolyzer 3 0 0

@@ -2330,6 +2330,22 @@ public class Planner{
         }
         StringBuilder out = new StringBuilder();
         for(var entry : why) out.append(entry.key).append(' ').append(entry.value).append(", ");
+        //and the ground round it drawn, top row first: the building itself as #, open ground as ., the rest by its letter
+        if(System.getProperty("xp.notes") != null){
+            out.append(" map");
+            for(int y = sy + s + 2; y >= sy - 3; y--){
+                out.append(" |");
+                for(int x = sx - 3; x <= sx + s + 2; x++){
+                    if(x >= sx && x < sx + s && y >= sy && y < sy + s) out.append('#');
+                    else if(ground.open(x, y)) out.append('.');
+                    else{
+                        char c = brain.whyNot(x, y);
+                        Building on = world.build(x, y);
+                        out.append(c == 'b' && on != null ? Character.toUpperCase(on.block.name.charAt(0)) : c == ' ' ? '?' : c);
+                    }
+                }
+            }
+        }
         return out.toString();
     }
 

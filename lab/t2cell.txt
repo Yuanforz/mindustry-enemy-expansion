@@ -27,3 +27,22 @@ item-source -2 -3 0 beryllium
 item-source 0 -5 0 silicon
 item-source 2 -5 0 silicon
 item-source 3 -5 0 tungsten
+
+# The box-fed works: each machine takes what an unloader set to nothing pulls out of the box behind it.
+# Item sources fill the boxes as the core's unit would by carrying them; a liquid source stands in for the turbine's water.
+[t2box]
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+tank-fabricator 0 -3 0 stell
+liquid-source 1 0 0 water
+power-source 5 0
+power-source 2 -5
+power-source -2 -2
+duct-unloader 0 -5 1
+reinforced-container -1 -7
+item-source -2 -7 0 silicon
+item-source -2 -6 0 beryllium
+duct-unloader 3 -5 1
+reinforced-container 3 -7
+item-source 5 -7 0 silicon
+item-source 5 -6 0 tungsten

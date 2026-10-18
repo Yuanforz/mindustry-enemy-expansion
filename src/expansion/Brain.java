@@ -8301,7 +8301,12 @@ public class Brain{
      * went up, with both items standing full in its cores)
      */
     public boolean leadLater(Item item){
-        return System.getProperty("xp.noleadlater") == null && Options.refit.on() && (stock.have(item) >= stock.cap() * 0.4f && comesIn(item) || ferryable(item));
+        return System.getProperty("xp.noleadlater") == null && Options.refit.on() && (plenty(item) || ferryable(item));
+    }
+
+    /** Whether its cores hold plenty of an item, coming in by line. */
+    private boolean plenty(Item item){
+        return stock.have(item) >= stock.cap() * 0.4f && comesIn(item);
     }
 
     /** Whether a box of an item could be ferried: boxes and unloaders may be built, and something of its own makes it. */
@@ -8348,7 +8353,9 @@ public class Brain{
             if(!fed) continue;
             //saved up for once its cores are full of what it would turn into better units, and not before
             if(!pays(blueprint.cost())){
-                if(leadLater(Items.silicon) && leadLater(Items.tungsten)){
+                //(saved up for only out of plenty in its cores: that boxes could bring what it lacks says nothing of whether it can be
+                //paid for, and saving for it whenever they could held up everything else, and half the games of the fifth sector)
+                if(plenty(Items.silicon) && plenty(Items.tungsten)){
                     saveFor(blueprint.parts.find(part -> part.block instanceof Reconstructor).block, blueprint.cost());
                     notes.put("turbineworks", "saving for " + blueprint.name);
                     return null;
