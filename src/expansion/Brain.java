@@ -2057,9 +2057,9 @@ public class Brain{
             for(Building build : data.buildings){
                 if(!(build instanceof Reconstructor.ReconstructorBuild refit)) continue;
                 Building behind = build.back();
-                refits.append(build.block.name).append('@').append(build.tileX()).append(',').append(build.tileY()).append(" liquids ").append(build.liquids == null ? "-" : build.liquids.toString())
-                    .append(" items ").append(build.items).append(" unit inside ").append(refit.payload != null).append(" eff ").append(Strings.fixed(build.efficiency, 2))
-                    .append(" behind ").append(behind == null ? "nothing" : behind.block.name).append("; ");
+                refits.append(build.block.name).append('@').append(build.tileX()).append(',').append(build.tileY()).append(" hydrogen ").append(build.liquids == null ? "-" : Strings.fixed(build.liquids.get(Liquids.hydrogen), 1))
+                    .append(" items ").append(build.items).append(" unit inside ").append(refit.payload != null).append(" eff ").append(Strings.fixed(build.efficiency, 2)).append(" power ").append(build.power == null ? "-" : Strings.fixed(build.power.status, 2))
+                    .append(" behind ").append(behind == null ? "nothing" : behind.block.name + " items " + behind.items + " eff " + Strings.fixed(behind.efficiency, 2) + (behind instanceof UnitFactory.UnitFactoryBuild yard ? " progress " + Strings.fixed(yard.fraction(), 2) : "")).append("; ");
             }
             for(Building build : data.buildings){
                 if(build.block != Blocks.electrolyzer) continue;
@@ -5946,10 +5946,12 @@ public class Brain{
                 if(box == null || !pay.canPickup(box)) continue;
                 int[] next = null;
                 if(stationAt == -1){
-                    //by what it feeds, and emptied of all it was filled with: back to the first place
-                    boolean empty = true;
-                    for(int[] station : ferry.stations) if(box.items.get(content.item(station[2])) > 0) empty = false;
-                    if(empty) next = ferry.stations.first();
+                    //by what it feeds, and out of any one thing it was filled with: back round the places it is filled at. (waiting
+                    //till it was empty of everything, it stood for ever by a fabricator full of beryllium, out of silicon, the
+                    //beryllium left in it never taken)
+                    boolean runOut = false;
+                    for(int[] station : ferry.stations) if(box.items.get(content.item(station[2])) < 10) runOut = true;
+                    if(runOut) next = ferry.stations.first();
                 }else{
                     int[] station = ferry.stations.get(stationAt);
                     if(box.items.get(content.item(station[2])) >= Math.min(100, box.block.itemCapacity * 0.6f)){
@@ -8365,7 +8367,7 @@ public class Brain{
             }
             CoreBuild home = data.core();
             if(home == null) return null;
-            Seq<Building> turbines = data.buildings.select(build -> build.block == blueprint.main() && world.isInMapArea(build.tileX(), build.tileY()));
+            Seq<Building> turbines = data.buildings.select(build -> build.block == blueprint.main() && world.isInMapArea(build.tileX(), build.tileY()) && safeForWorks(build.tileX(), build.tileY()));
             //the ones with most open ground beside them first: the works takes a square twice a turbine's width at one of its sides,
             //and the turbines nearest home stand in among the lines (on the fifth sector, with tungsten coming in, the four nearest
             //home were tried round after round and none had room)
