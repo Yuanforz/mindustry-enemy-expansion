@@ -115,6 +115,16 @@ case "$what" in
         ;;
     esac
     ;;
+  econ)
+    # ./test.sh econ <map> <sector> <unit> <machines>   the economy model's fastest plan for a unit on a map: e.g. econ atlas atlas locus 1
+    mkdir -p build/test-maps
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    java -cp "$CP" xtest.EconLab build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "$3" "$4" 2>build/test-err.log
+    ;;
+  econcheck)
+    # ./test.sh econcheck   the economy model against sums done by hand
+    java -cp "$CP" xtest.EconCheck build/test-data 2>build/test-err.log
+    ;;
   mind)
     # ./test.sh mind   the posture machine, what it holds it can't do without, what it spares for walls
     java -cp "$CP" xtest.Mind build/test-data blueprints 2>build/test-err.log

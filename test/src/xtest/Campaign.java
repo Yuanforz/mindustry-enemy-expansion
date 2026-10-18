@@ -109,6 +109,8 @@ public class Campaign{
     static final Seq<int[]> held = new Seq<>(), paidSoFar = new Seq<>();
     static int[] paidOut = new int[0];
     static final Seq<String> researched = new Seq<>();
+    static final ObjectIntMap<String> econBuilt = new ObjectIntMap<>();
+    static final Seq<String> econBlocks = Seq.with("silicon-arc-furnace", "tank-fabricator", "ship-fabricator", "mech-fabricator", "tank-refabricator", "impact-drill", "electrolyzer");
     static final ObjectIntMap<String> made = new ObjectIntMap<>(), lost = new ObjectIntMap<>(), killed = new ObjectIntMap<>();
     static int problems, built, buildingsLost, played, enemyBuildingsLost;
     /** For looking into a raid: what was lost since the last report, and how far from the core. */
@@ -162,6 +164,12 @@ public class Campaign{
         });
         Events.on(BlockBuildEndEvent.class, e -> {
             if(!e.breaking && e.team == me) built++;
+            //when the economy's main machines go up, for setting against what the economy model plans (xtest.EconLab)
+            if(!e.breaking && e.team == me && e.tile.build != null && econBlocks.contains(e.tile.block().name)){
+                econBuilt.increment(e.tile.block().name);
+                int second = (int)(Vars.state.tick / 60);
+                System.out.println(String.format("  econ: %s #%d built at %d:%02d", e.tile.block().name, econBuilt.get(e.tile.block().name), second / 60, second % 60));
+            }
             //what was spent on what, by item
             if(!e.breaking && e.team == me && e.tile.build != null){
                 for(ItemStack stack : e.tile.block().requirements) spentOn.get(stack.item.name, ObjectIntMap::new).increment(e.tile.block().name, stack.amount);
@@ -185,6 +193,10 @@ public class Campaign{
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team != me) return;
             made.increment(e.unit.type.name);
+            if(made.get(e.unit.type.name) == 1){
+                int second = (int)(Vars.state.tick / 60);
+                System.out.println(String.format("  econ: first %s at %d:%02d", e.unit.type.name, second / 60, second % 60));
+            }
             if(!e.unit.type.unlocked()){
                 problems++;
                 System.out.println("  PROBLEM: turned out a " + e.unit.type.name + ", which it has not researched");
@@ -282,6 +294,7 @@ public class Campaign{
         incomeAt10 = incomeAt30 = 0;
         researchAt30 = researchAt60 = -1;
         made.clear();
+        econBuilt.clear();
         lost.clear();
         killed.clear();
         Boot.frames(2);
