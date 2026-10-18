@@ -99,6 +99,22 @@ case "$what" in
     # ./test.sh compare <batch> [<batch>]   what each run of a batch measured, averaged with standard errors; two batches set against each other
     python3 -I test/compare.py "$@"
     ;;
+  scan)
+    # ./test.sh scan <map names...>   static facts about official maps: rules, waves, cores, resources by distance, routes and chokes per unit class, both bases
+    # ./test.sh scan -tech | -ranges   the Erekir tech tree with every gate resolved | turret, bridge and node ranges
+    mkdir -p build/test-maps build/maptools
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    javac --release 17 -proc:none -cp "$CP" -d build/maptools tools/maptools/src/maptools/*.java
+    case "$1" in
+      -tech) java -cp "$CP:build/maptools" maptools.TechDump build/test-data 2>build/test-err.log ;;
+      -ranges) java -cp "$CP:build/maptools" maptools.Ranges build/test-data 2>build/test-err.log ;;
+      *)
+        maps=""
+        for m in "$@"; do maps="$maps build/test-maps/maps/erekir/$m.msav"; done
+        java -cp "$CP:build/maptools" maptools.MapScan build/test-data $maps 2>build/test-err.log
+        ;;
+    esac
+    ;;
   mind)
     # ./test.sh mind   the posture machine, what it holds it can't do without, what it spares for walls
     java -cp "$CP" xtest.Mind build/test-data blueprints 2>build/test-err.log
