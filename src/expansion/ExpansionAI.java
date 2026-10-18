@@ -47,6 +47,8 @@ public class ExpansionAI extends BuilderAI{
     public @Nullable Building carry, carryTo;
     /** Where to set down what it carries, when that is a place and not a building to lift it into. */
     public @Nullable arc.math.geom.Vec2 carrySpot;
+    /** What ferry the box it carries goes for, if any. */
+    public @Nullable Object carryFerry;
     /** How the last carrying went, for looking into it. */
     public String carryHow = "";
     private float carryAge;
@@ -189,7 +191,8 @@ public class ExpansionAI extends BuilderAI{
         boolean holding = pay != null && pay.hasPayload();
         boolean nowhere = carrySpot == null && (carryTo == null || !carryTo.isValid());
         if(pay == null || nowhere || (carryAge += Time.delta) > haulPatience * 2f || (!holding && (carry == null || !carry.isValid()))){
-            carryHow = "given up: " + (pay == null ? "can't carry" : nowhere ? "nowhere to take it" : carryAge > haulPatience * 2f ? "out of time, " + (holding ? "holding it" : "not holding it") + " at " + unit.tileX() + "," + unit.tileY() : "the box is gone");
+            carryHow = "given up: " + (pay == null ? "can't carry" : nowhere ? "nowhere to take it" : carryAge > haulPatience * 2f ? "out of time, " + (holding ? "holding it" : "not holding it")
+                + ", " + (carrySpot == null ? "-" : (int)(unit.dst(carrySpot) / tilesize) + " tiles off") + (Brain.threat(unit.x, unit.y, fleeRange) != null ? ", shying" : "") + (order != null ? ", building" : "") + (haul != null ? ", hauling" : "") : "the box is gone");
             if(holding) pay.dropLastPayload();
             carry = carryTo = null;
             carrySpot = null;
@@ -225,6 +228,16 @@ public class ExpansionAI extends BuilderAI{
                 carrySpot = null;
                 carryAge = 0f;
             }else{
+                //what stands in the way, for looking into it
+                mindustry.world.Block held = pay.payloads().isEmpty() || !(pay.payloads().peek() instanceof mindustry.world.blocks.payloads.BuildPayload build) ? null : build.block();
+                int tx = held == null ? unit.tileX() : mindustry.core.World.toTile(unit.x - held.offset), ty = held == null ? unit.tileY() : mindustry.core.World.toTile(unit.y - held.offset);
+                StringBuilder there = new StringBuilder();
+                for(int dx = 0; dx < 2; dx++) for(int dy = 0; dy < 2; dy++){
+                    mindustry.gen.Building on = mindustry.Vars.world.build(tx + dx, ty + dy);
+                    mindustry.world.Tile tile = mindustry.Vars.world.tile(tx + dx, ty + dy);
+                    there.append(on != null ? on.block.name : tile == null ? "edge" : tile.solid() ? "solid" : tile.floor().isDeep() ? "deep" : "free").append(' ');
+                }
+                if(!carryHow.startsWith("could not")) brain.carryRefused = "could not set it down at " + tx + "," + ty + " (aiming at " + (int)(carrySpot.x / tilesize) + "," + (int)(carrySpot.y / tilesize) + "): " + there;
                 carryHow = "could not set it down at " + unit.tileX() + "," + unit.tileY();
             }
             return;

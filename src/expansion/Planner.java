@@ -2161,6 +2161,8 @@ public class Planner{
      */
     /** Where the two ends of the last ferry laid out are: the box's place at the source, and its place by what it feeds. */
     public int ferryFillX, ferryFillY, ferryDropX, ferryDropY;
+    /** Whether the last ferry laid out uses an unloader and a box that stand already, with nothing to build. */
+    public boolean reuse;
 
     /**
      * The two ends of a ferry: a duct unloader set to the item against what is short of it, with room behind it for a box, and
@@ -2173,6 +2175,19 @@ public class Planner{
         Block box = Blocks.reinforcedContainer, unloader = Blocks.ductUnloader;
         int size = consumer.block.size, off = -(size - 1) / 2, cx = consumer.tileX(), cy = consumer.tileY();
         int[] drop = null;
+        //an unloader of its own against it already, facing it, with a box behind it or room for one: that is the end (a works
+        //may be laid out with one)
+        reuse = false;
+        for(Building near : consumer.proximity){
+            if(near.block != unloader || near.team != ground.team || near.front() != consumer) continue;
+            int bx = near.tileX() - Geometry.d4x(near.rotation), by = near.tileY() - Geometry.d4y(near.rotation);
+            Building behind = world.build(bx, by);
+            if(behind != null && behind.block == box){
+                drop = new int[]{near.tileX(), near.tileY(), near.rotation, behind.tileX(), behind.tileY()};
+                reuse = true;
+                break;
+            }
+        }
         search:
         for(int d = 0; d < 4; d++){
             for(int along = 0; along < size; along++){
@@ -2196,6 +2211,19 @@ public class Planner{
         }
         if(drop == null){
             note += "no room by it for an unloader and a box [" + blockedBeside(consumer) + "]";
+            return null;
+        }
+        //with the unloader and its box standing, there is nothing to build: the box starts by what it feeds, empty
+        if(reuse){
+            int[] at = stationFor(item, sources);
+            if(at == null){
+                note += "no room for a box against anything that makes it";
+                return null;
+            }
+            ferryFillX = at[0];
+            ferryFillY = at[1];
+            ferryDropX = drop[3];
+            ferryDropY = drop[4];
             return null;
         }
         int[] fill = null;
@@ -2222,7 +2250,8 @@ public class Planner{
             return null;
         }
         Project project = new Project("ferry of " + item.name + " to the " + consumer.block.name);
-        add(project, Seq.with(new Part(unloader, drop[0], drop[1], drop[2], item), new Part(box, fill[0], fill[1], 0)));
+        //(set to nothing, it takes whatever the box holds that what it feeds will take: one box goes round for all it lacks)
+        add(project, Seq.with(new Part(unloader, drop[0], drop[1], drop[2], null), new Part(box, fill[0], fill[1], 0)));
         if(!buildable(project)){
             drop(project, "the game does not allow " + refused);
             return null;
@@ -2275,6 +2304,15 @@ public class Planner{
         ferryDropX = drop[0];
         ferryDropY = drop[1];
         return project;
+    }
+
+    /** A place for a box to be filled at, against one of the things that make an item, nearest first; null where none has room. */
+    public @Nullable int[] stationFor(Item item, Seq<Building> sources){
+        for(Building source : sources){
+            int[] at = boxBeside(source, -1, Blocks.reinforcedContainer);
+            if(at != null) return at;
+        }
+        return null;
     }
 
     /** What keeps the ground in the two rings round a building from being built on, letter by letter (see Brain.whyNot), for looking into it. */

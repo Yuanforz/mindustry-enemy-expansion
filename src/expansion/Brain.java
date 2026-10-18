@@ -2518,6 +2518,7 @@ public class Brain{
             return;
         }
         if(!ai.carryHow.isEmpty()) notes.put("carry", ai.carryHow);
+        if(!carryRefused.isEmpty()) notes.put("carryrefused", carryRefused);
         //a box to ferry to a yard no line reaches, or back to be filled
         Object[] ferried = ferryJob(unit, data);
         if(ferried != null){
@@ -2525,6 +2526,7 @@ public class Brain{
             ai.carry = (Building)ferried[0];
             ai.carryTo = null;
             ai.carrySpot = (Vec2)ferried[1];
+            ai.carryFerry = lastFerry;
             notes.put("ferry", "a builder carries the box at " + ai.carry.tileX() + "," + ai.carry.tileY() + " to " + (int)(ai.carrySpot.x / tilesize) + "," + (int)(ai.carrySpot.y / tilesize));
             return;
         }
@@ -5734,6 +5736,8 @@ public class Brain{
         int consumer, fillX, fillY, dropX, dropY;
         @Nullable Item item;
         @Nullable Liquid liquid;
+        /** For a ferry of items: the places a box is filled at, each against something that makes one of them: x, y, item id. */
+        final Seq<int[]> stations = new Seq<>();
 
         /** How much of what it ferries a box holds. */
         float in(Building box){
@@ -5776,9 +5780,14 @@ public class Brain{
             //nowhere for what it makes to go, runs again once a box stands at its side
             Seq<Building> sources = data.buildings.select(other -> other.block instanceof GenericCrafter crafter && crafter.outputLiquids != null
                 && java.util.Arrays.stream(crafter.outputLiquids).anyMatch(stack -> stack.liquid == needed) && (other.power == null || other.power.status > 0.5f));
+            Seq<Building> safe = sources.select(other -> safeForWorks(other.tileX(), other.tileY()));
+            if(safe.any() && System.getProperty("xp.anysource") == null) sources = safe;
             if(sources.isEmpty()){
-                notes.put(key, "nothing of its own gives off " + liquid.name);
-                retry.put(key, clock + retryPeriod * 2f);
+                //something to give it off first, near it: the ferry can be laid once that stands
+                notes.put(key, "nothing of its own gives off " + liquid.name + ": a source of it first");
+                retry.put(key, clock + retryPeriod);
+                Project first = provideLiquid(liquid, build.tileX(), build.tileY(), data);
+                if(first != null || saving) return first;
                 continue;
             }
             makeWayBy(build);
@@ -5810,6 +5819,10 @@ public class Brain{
     }
 
     private final Seq<Ferry> ferries = new Seq<>();
+    /** Why a builder last could not set a box down, for looking into it. */
+    public String carryRefused = "";
+    /** The ferry the last box handed out goes for. */
+    private @Nullable Ferry lastFerry;
 
     /**
      * A ferry for a yard short of something that no line can be led to it: a box filled where the item is made, and carried by
@@ -5819,7 +5832,8 @@ public class Brain{
     private @Nullable Project ferryFor(Building hungry){
         Item item = shortOf(hungry);
         if(item == null || System.getProperty("xp.noferry") != null || ferries.size >= 4 || !may(Blocks.reinforcedContainer) || !may(Blocks.ductUnloader)) return null;
-        if(ferries.contains(ferry -> ferry.consumer == hungry.pos() && ferry.item == item)) return null;
+        Ferry going = ferries.find(ferry -> ferry.consumer == hungry.pos() && ferry.item != null);
+        if(going != null && going.stations.contains(at -> at[2] == item.id)) return null;
         //only for what turns out better units, and only out of plenty: the core's unit is the builder too, and boxes carried to
         //first yards in the opening took it off building and mending, and five of eight games of the fifth sector were lost
         boolean betterUnits = hungry instanceof Reconstructor.ReconstructorBuild || (hungry instanceof UnitFactory.UnitFactoryBuild && hungry.front() instanceof Reconstructor.ReconstructorBuild);
@@ -5832,9 +5846,28 @@ public class Brain{
             else if(build instanceof BeamDrill.BeamDrillBuild beam && beam.lastItem == item) sources.add(build);
             else if(build.block instanceof GenericCrafter crafter && crafter.outputItems != null && crafter.outputItems.length > 0 && crafter.outputItems[0].item == item) sources.add(build);
         }
+        //where it is filled is where a builder goes and waits: those that stand safe first, then the nearest. (filled against
+        //drills out where the raids came, the box was given up held, nine carries in ten)
+        Seq<Building> safe = sources.select(build -> safeForWorks(build.tileX(), build.tileY()));
+        if(safe.any() && System.getProperty("xp.anysource") == null) sources = safe;
         if(sources.isEmpty()){
-            notes.put(key, "nothing of its own makes " + item.name);
-            retry.put(key, clock + retryPeriod * 2f);
+            //something to make it first: the ferry can be laid once that stands
+            notes.put(key, "nothing of its own makes " + item.name + ": a source of it first");
+            retry.put(key, clock + retryPeriod);
+            Project first = provide(item, team().data(), 0);
+            if(first != null || saving) return first;
+            return null;
+        }
+        //one box goes round for all it lacks: another place to fill it, on the way, against what makes this
+        if(going != null){
+            int[] at = planner.stationFor(item, sources);
+            if(at == null){
+                notes.put(key, "no room for a box against anything that makes " + item.name);
+                retry.put(key, clock + retryPeriod * 2f);
+                return null;
+            }
+            going.stations.add(new int[]{at[0], at[1], item.id});
+            notes.put(key, "the box going to the " + hungry.block.name + " is filled with " + item.name + " at " + at[0] + "," + at[1] + " as well");
             return null;
         }
         makeWayBy(hungry);
@@ -5846,7 +5879,7 @@ public class Brain{
             planner.clearing.clear();
             ground.intoBody = null;
         }
-        if(project == null){
+        if(project == null && !planner.reuse){
             notes.put(key, planner.note);
             retry.put(key, clock + retryPeriod * 2f);
             return null;
@@ -5858,6 +5891,7 @@ public class Brain{
         ferry.fillY = planner.ferryFillY;
         ferry.dropX = planner.ferryDropX;
         ferry.dropY = planner.ferryDropY;
+        ferry.stations.add(new int[]{ferry.fillX, ferry.fillY, item.id});
         ferries.add(ferry);
         notes.put(key, "a box of " + item.name + " goes from " + ferry.fillX + "," + ferry.fillY + " to " + ferry.dropX + "," + ferry.dropY);
         return project;
@@ -5893,12 +5927,43 @@ public class Brain{
             Building consumer = world.build(ferry.consumer);
             return consumer == null || consumer.team != team() || consumer.pos() != ferry.consumer;
         });
+        float offset = Blocks.reinforcedContainer.offset;
         for(Ferry ferry : ferries){
-            if(data.units.contains(other -> other.controller() instanceof ExpansionAI ai && ai.carrySpot != null && (ai.carry != null && (ai.carry.tileX() == ferry.fillX || ai.carry.tileX() == ferry.dropX)))) continue;
+            if(data.units.contains(other -> other.controller() instanceof ExpansionAI ai && ai.carrySpot != null && ai.carry != null && ai.carryFerry == ferry)) continue;
+            if(ferry.item != null){
+                //where the box is: by what it feeds, or at one of the places it is filled at
+                Building atDrop = world.build(ferry.dropX, ferry.dropY);
+                int stationAt = -1;
+                Building box = null;
+                if(ferry.box(atDrop) && atDrop.team == team()) box = atDrop;
+                for(int i = 0; i < ferry.stations.size && box == null; i++){
+                    Building there = world.build(ferry.stations.get(i)[0], ferry.stations.get(i)[1]);
+                    if(ferry.box(there) && there.team == team()){
+                        box = there;
+                        stationAt = i;
+                    }
+                }
+                if(box == null || !pay.canPickup(box)) continue;
+                int[] next = null;
+                if(stationAt == -1){
+                    //by what it feeds, and emptied of all it was filled with: back to the first place
+                    boolean empty = true;
+                    for(int[] station : ferry.stations) if(box.items.get(content.item(station[2])) > 0) empty = false;
+                    if(empty) next = ferry.stations.first();
+                }else{
+                    int[] station = ferry.stations.get(stationAt);
+                    if(box.items.get(content.item(station[2])) >= Math.min(100, box.block.itemCapacity * 0.6f)){
+                        next = stationAt + 1 < ferry.stations.size ? ferry.stations.get(stationAt + 1) : new int[]{ferry.dropX, ferry.dropY};
+                    }
+                }
+                if(next == null || world.build(next[0], next[1]) != null) continue;
+                lastFerry = ferry;
+                return new Object[]{box, new Vec2(next[0] * tilesize + offset, next[1] * tilesize + offset)};
+            }
             Building filled = world.build(ferry.fillX, ferry.fillY), emptied = world.build(ferry.dropX, ferry.dropY);
             boolean filledBox = ferry.box(filled) && filled.team == team();
             boolean droppedBox = ferry.box(emptied) && emptied.team == team();
-            float offset = Blocks.reinforcedContainer.offset;
+            lastFerry = ferry;
             //an empty one by the yard goes back to be filled
             if(droppedBox && ferry.in(emptied) < 1f && filled == null && pay.canPickup(emptied)){
                 return new Object[]{emptied, new Vec2(ferry.fillX * tilesize + offset, ferry.fillY * tilesize + offset)};
@@ -7512,6 +7577,7 @@ public class Brain{
                 for(int dy = 0; dy < 2; dy++){
                     ground.kept.add(Point2.pack(ferry.fillX + dx, ferry.fillY + dy));
                     ground.kept.add(Point2.pack(ferry.dropX + dx, ferry.dropY + dy));
+                    for(int[] station : ferry.stations) ground.kept.add(Point2.pack(station[0] + dx, station[1] + dy));
                 }
             }
         }
