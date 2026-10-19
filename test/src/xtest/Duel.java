@@ -160,7 +160,7 @@ public class Duel{
         ControlSync.step();
         for(Side side : sides){
             if(side.team.core() == null) return "DUEL map=" + map + " skipped: a core could not be put down";
-            for(ItemStack stack : ItemStack.list(Items.beryllium, 1500, Items.graphite, 600, Items.silicon, 600, Items.tungsten, 200)) side.team.core().items.set(stack.item, stack.amount);
+            for(ItemStack stack : ItemStack.list(Items.beryllium, 2000, Items.graphite, 1500, Items.silicon, 1500, Items.tungsten, 400)) side.team.core().items.set(stack.item, stack.amount);
             for(Feed feed : side.feeds){
                 while(feed.turret.acceptItem(feed.duct, Items.beryllium)) feed.turret.handleItem(feed.duct, Items.beryllium);
             }
@@ -269,6 +269,19 @@ public class Duel{
 
     /** What each line brings its turret, a little every frame. */
     static void feed(Side side){
+        //the turret creep's posts: the duct its supply line would end in gets two a second (a drill's worth for each turret)
+        if(side.army != null && side.army.flags.creep){
+            for(var post : side.army.creep.posts){
+                if(post.item == null || post.portX < 0) continue;
+                Building duct = Vars.world.build(post.portX, post.portY);
+                if(duct == null || duct.team != side.team || duct.block != Blocks.duct) continue;
+                post.owed = Math.min(post.owed + 2f / 60f, 3f);
+                if(post.owed >= 1f && duct.items.total() == 0){
+                    duct.handleItem(duct, post.item);
+                    post.owed -= 1f;
+                }
+            }
+        }
         for(Feed feed : side.feeds){
             if(!feed.bore.isValid() || !feed.duct.isValid() || feed.duct.tile.build != feed.duct) continue;
             feed.owed = Math.min(feed.owed + feedRate / 60f, 3f);
@@ -314,7 +327,7 @@ public class Duel{
         }
         //a side whose army layer baits gets the core unit a player would have (the other side has nothing for one to do here)
         CoreBuild core = side.team.core();
-        if(side.army != null && (side.army.flags.bait || side.army.flags.decoy) && core != null && second % 10 == 0 && !side.team.data().units.contains(Bait::coreUnit)){
+        if(side.army != null && (side.army.flags.bait || side.army.flags.decoy || side.army.flags.creep) && core != null && second % 10 == 0 && !side.team.data().units.contains(Bait::coreUnit)){
             Unit unit = ((mindustry.world.blocks.storage.CoreBlock)core.block).unitType.create(side.team);
             unit.set(core.x, core.y);
             unit.add();

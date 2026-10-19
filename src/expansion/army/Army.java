@@ -26,7 +26,7 @@ import mindustry.gen.*;
 public class Army{
     /** Which parts are on. */
     public static class Flags{
-        public boolean allot, harass, cut, bait, decoy, micro, review;
+        public boolean allot, harass, cut, bait, decoy, creep, micro, review;
 
         /** The parts on by default: those that won more games than they lost in the duels (docs/PLAN.md §22.8). */
         public static Flags defaults(){
@@ -50,17 +50,18 @@ public class Army{
                 String name = on ? part : part.substring(1);
                 switch(name){
                     case "all" -> {
-                        flags.allot = flags.harass = flags.cut = flags.bait = flags.decoy = flags.micro = flags.review = on;
+                        flags.allot = flags.harass = flags.cut = flags.bait = flags.decoy = flags.creep = flags.micro = flags.review = on;
                     }
                     case "defaults" -> {
                         Flags d = defaults();
-                        flags.allot |= d.allot; flags.harass |= d.harass; flags.cut |= d.cut; flags.bait |= d.bait; flags.decoy |= d.decoy; flags.micro |= d.micro; flags.review |= d.review;
+                        flags.allot |= d.allot; flags.harass |= d.harass; flags.cut |= d.cut; flags.bait |= d.bait; flags.decoy |= d.decoy; flags.creep |= d.creep; flags.micro |= d.micro; flags.review |= d.review;
                     }
                     case "allot" -> flags.allot = on;
                     case "harass" -> flags.harass = on;
                     case "cut" -> flags.cut = on;
                     case "bait" -> flags.bait = on;
                     case "decoy" -> flags.decoy = on;
+                    case "creep" -> flags.creep = on;
                     case "micro" -> flags.micro = on;
                     case "review" -> flags.review = on;
                     case "none", "" -> {}
@@ -72,7 +73,7 @@ public class Army{
 
         @Override
         public String toString(){
-            return (allot ? "allot " : "") + (harass ? "harass " : "") + (cut ? "cut " : "") + (bait ? "bait " : "") + (decoy ? "decoy " : "") + (micro ? "micro " : "") + (review ? "review" : "");
+            return (allot ? "allot " : "") + (harass ? "harass " : "") + (cut ? "cut " : "") + (bait ? "bait " : "") + (decoy ? "decoy " : "") + (creep ? "creep " : "") + (micro ? "micro " : "") + (review ? "review" : "");
         }
     }
 
@@ -111,6 +112,7 @@ public class Army{
     public final Allot allot;
     public final Ops ops;
     public final Bait bait;
+    public final Creep creep;
     public final Review review = new Review();
     /** Ticks since it began. */
     public float clock;
@@ -126,6 +128,11 @@ public class Army{
         allot = new Allot(this);
         ops = new Ops(this);
         bait = new Bait(this);
+        creep = new Creep(this);
+        //the one army of a team that hears what is lost
+        live.removeAll(a -> a.team == team);
+        live.add(this);
+        listen();
         baseMinSquad = team.rules().rtsMinSquad;
         baseMinWeight = team.rules().rtsMinWeight;
     }
@@ -141,7 +148,8 @@ public class Army{
             if(flags.allot) allot.update();
             if(flags.harass || flags.cut) ops.update();
         }
-        if(flags.bait || flags.decoy){
+        if(flags.creep && frame % 60 == 5) creep.update();
+        if(flags.bait || flags.decoy || flags.creep){
             if(frame % 30 == 4) bait.plan();
             bait.track();
         }
@@ -168,17 +176,34 @@ public class Army{
         return Math.max(sum / 4f, 50f);
     }
 
+    static final arc.struct.Seq<Army> live = new arc.struct.Seq<>();
+    static boolean listening;
+
+    /** What is lost on the map, told to the army of the team that lost it and to the others. */
+    static void listen(){
+        if(listening) return;
+        listening = true;
+        arc.Events.on(mindustry.game.EventType.UnitDestroyEvent.class, e -> {
+            for(Army army : live) if(army.team == e.unit.team) army.creep.lost(e.unit);
+        });
+        arc.Events.on(mindustry.game.EventType.BlockDestroyEvent.class, e -> {
+            if(e.tile.build == null) return;
+            for(Army army : live) if(army.team != e.tile.team()) army.creep.enemyLost(e.tile.build);
+        });
+    }
+
     /** Hands everything back to the game: its units' orders as they are, the squad AI's knobs as they were. */
     public void release(){
         team.rules().rtsMinSquad = baseMinSquad;
         team.rules().rtsMinWeight = baseMinWeight;
         bait.release();
+        live.remove(this);
     }
 
     /** What it is doing now, for looking into it. */
     public String debug(){
         StringBuilder out = new StringBuilder();
-        if(flags.bait || flags.decoy){
+        if(flags.bait || flags.decoy || flags.creep){
             Unit worker = null;
             for(int i = 0; i < team.data().units.size; i++) if(team.data().units.get(i).controller() instanceof Bait.BaitAI) worker = team.data().units.get(i);
             out.append(" worker ").append(worker == null ? "none" : worker.tileX() + "," + worker.tileY() + " plans " + worker.plans().size + (worker.buildPlan() != null ? " building " + worker.buildPlan().x + "," + worker.buildPlan().y : "") + " " + ((Bait.BaitAI)worker.controller()).state + (worker instanceof Payloadc pay && pay.hasPayload() ? " loaded" : ""));
@@ -192,6 +217,11 @@ public class Army{
                 out.append(" exp ").append((int)job.expected).append("]");
             }
         }
+        if(flags.creep){
+            out.append(" creep").append(creep.stuck ? " stuck" : "");
+            if(creep.building != null) out.append(" building ").append(creep.building.module.name).append(" at ").append(creep.building.x).append(",").append(creep.building.y);
+            for(Creep.Post post : creep.posts) out.append(" post ").append(post.module.name).append(" ").append(post.x).append(",").append(post.y);
+        }
         if(flags.allot) out.append(" ratio ").append(Strings.fixed(allot.lastRatio, 2)).append(" go ").append(allot.go);
         return out.toString();
     }
@@ -200,6 +230,6 @@ public class Army{
         int dodged = 0;
         for(int i = 0; i < team.data().units.size; i++) if(team.data().units.get(i).controller() instanceof Dodger d) dodged += d.dodged;
         return "flags " + flags.toString().trim().replace(' ', '+') + (flags.allot ? " go " + allot.go + " changes " + allot.changes : "") + (flags.harass || flags.cut ? " " + ops.report() : "")
-            + (flags.bait || flags.decoy ? " " + bait.report() : "") + (flags.micro ? " dodging " + dodged : "") + " review " + review.jobs;
+            + (flags.bait || flags.decoy ? " " + bait.report() : "") + (flags.creep ? " " + creep.report() : "") + (flags.micro ? " dodging " + dodged : "") + " review " + review.jobs;
     }
 }

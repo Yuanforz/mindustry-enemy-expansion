@@ -252,6 +252,8 @@ public class Bait{
 
         @Override
         public void updateMovement(){
+            //a post of the turret creep to put up comes first
+            if(bait.army.flags.creep && bait.army.creep.work(unit, this)) return;
             Spot spot = bait.next(unit);
             boolean wallDown = spot != null && !bait.standing(spot);
             if(bait.army.flags.decoy && !wallDown && decoy()) return;
