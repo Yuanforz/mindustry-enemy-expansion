@@ -7,6 +7,6 @@ GAME_JAR="${1:-../Mindustry.jar}"
 
 rm -rf build/classes build/EnemyExpansion.jar
 mkdir -p build/classes
-javac --release 17 -proc:none -cp "$GAME_JAR" -d build/classes src/expansion/*.java src/expansion/econ/*.java src/expansion/defense/*.java
+javac --release 17 -proc:none -cp "$GAME_JAR" -d build/classes $(find src -name "*.java")
 jar --create --file build/EnemyExpansion.jar -C build/classes . mod.hjson bundles blueprints
 echo "Built build/EnemyExpansion.jar"
