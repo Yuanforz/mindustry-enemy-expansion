@@ -241,7 +241,8 @@ public class Duel{
         listening = true;
         Events.on(UnitDestroyEvent.class, e -> {
             Side side = of(e.unit.team);
-            if(side != null && !e.unit.spawnedByCore) side.unitsLost += e.unit.maxHealth;
+            //(the core unit is not counted: the core gives a new one for nothing)
+            if(side != null && !e.unit.spawnedByCore && !Bait.coreUnit(e.unit)) side.unitsLost += e.unit.maxHealth;
         });
         Events.on(BlockDestroyEvent.class, e -> {
             Side side = of(e.tile.team());
