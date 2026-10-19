@@ -32,6 +32,23 @@ public final class Field{
             this.tiles = tiles;
         }
 
+        /**
+         * The block it was found for. Two machines on the same kind of ground need not fit the same places: a plasma bore
+         * and a large one differ in size and reach. Null where any will do.
+         */
+        public String block;
+
+        /** Whether this recipe's machine can stand here: the block it was found for, or for a vent any of its size. */
+        public boolean fits(Recipe r){
+            if(block == null || r.block == null || block.equals(r.block)) return true;
+            if(ground == Recipe.Ground.vent){
+                var a = mindustry.Vars.content.block(block);
+                var b = mindustry.Vars.content.block(r.block);
+                return a != null && b != null && a.size == b.size;
+            }
+            return false;
+        }
+
         @Override
         public String toString(){
             return ground + (item >= 0 ? "/" + item : "") + " " + factor + " at " + x + "," + y + " (" + (int)distance + " tiles)";

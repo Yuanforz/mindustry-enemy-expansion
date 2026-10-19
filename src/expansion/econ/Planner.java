@@ -167,7 +167,9 @@ public final class Planner{
                     sofar = plan;
                     if(add == null) break;
                     if(Math.hypot(add.x - c.x, add.y - c.y) > localLiquid * 1.5f){
-                        free.add(0, new Field.Site(add.recipe.ground, add.x, add.y, add.rotation, add.item, add.factor, add.distance, new int[0]));
+                        Field.Site back = new Field.Site(add.recipe.ground, add.x, add.y, add.rotation, add.item, add.factor, add.distance, new int[0]);
+                        back.block = add.recipe.block;
+                        free.add(0, back);
                         break;
                     }
                     plan.add(add);
@@ -248,7 +250,7 @@ public final class Planner{
             //from a liquid floor (slag, arkycite), by a pump on the best free place, when that is the cheapest way
             if(chains != null && chains.by[res] != null && chains.by[res].ground == Recipe.Ground.liquidFloor){
                 Recipe pump = chains.by[res];
-                Field.Site site = take(pump.ground, res);
+                Field.Site site = take(pump, res);
                 if(site != null) return machine(pump, site);
             }
             Recipe best = null;
@@ -290,7 +292,7 @@ public final class Planner{
         Recipe bestRecipe = null;
         for(Recipe r : cat.recipes){
             if(r.ground == Recipe.Ground.none || r.perFactor[res] <= 0f) continue;
-            Field.Site site = peek(r.ground, res);
+            Field.Site site = peek(r, res);
             if(site != null && (bestSite == null || r.perFactor[res] * site.factor / cost(r) > bestRecipe.perFactor[res] * bestSite.factor / cost(bestRecipe))){
                 bestSite = site;
                 bestRecipe = r;
@@ -327,7 +329,7 @@ public final class Planner{
         //a turbine on a free vent first (power and water for nothing but itself)
         for(Recipe r : cat.recipes){
             if(r.powerOut > 0f && r.ground == Recipe.Ground.vent){
-                Field.Site site = take(Recipe.Ground.vent, -1);
+                Field.Site site = take(r, -1);
                 if(site != null) return machine(r, site);
             }
         }
@@ -351,13 +353,13 @@ public final class Planner{
         return Math.max(1, r.totalCost());
     }
 
-    Field.Site peek(Recipe.Ground ground, int item){
-        for(Field.Site s : free) if(s.ground == ground && (item < 0 || s.item == item)) return s;
+    Field.Site peek(Recipe r, int item){
+        for(Field.Site s : free) if(s.ground == r.ground && s.fits(r) && (item < 0 || s.item == item)) return s;
         return null;
     }
 
-    Field.Site take(Recipe.Ground ground, int item){
-        Field.Site s = peek(ground, item);
+    Field.Site take(Recipe r, int item){
+        Field.Site s = peek(r, item);
         if(s != null) free.remove(s);
         return s;
     }
@@ -752,10 +754,11 @@ public final class Planner{
         Set<String> kinds = new HashSet<>();
         boolean[] made = madeSomewhere(n);
         for(Field.Site s : n.pool){
-            if(!kinds.add(s.ground + "/" + s.item)) continue;
             for(Recipe r : cat.recipes){
-                boolean fits = r.ground == s.ground && (s.ground == Recipe.Ground.vent ? r.powerOut > 0f : s.item >= 0 && r.perFactor[s.item] > 0f && noInputs(r));
+                boolean fits = r.ground == s.ground && s.fits(r) && (s.ground == Recipe.Ground.vent ? r.powerOut > 0f : s.item >= 0 && r.perFactor[s.item] > 0f && noInputs(r));
                 if(!fits) continue;
+                //(one option for each kind of ground and item and the machine that goes there)
+                if(!kinds.add(s.ground + "/" + s.item + "/" + r.name)) break;
                 list.add(List.of(extra(r, s, false)));
                 if(r.boostRes >= 0 && made[r.boostRes]) list.add(List.of(extra(r, s, true)));
                 break;
@@ -820,7 +823,7 @@ public final class Planner{
                 for(Field.Site s : pool){
                     if(used.contains(s) || s.item != k) continue;
                     for(Recipe d : cat.recipes){
-                        if(d.ground == s.ground && d.perFactor[k] > 0f && noInputs(d) && (best == null || d.perFactor[k] * s.factor > bestRecipe.perFactor[k] * best.factor)){
+                        if(d.ground == s.ground && s.fits(d) && d.perFactor[k] > 0f && noInputs(d) && (best == null || d.perFactor[k] * s.factor > bestRecipe.perFactor[k] * best.factor)){
                             best = s;
                             bestRecipe = d;
                         }

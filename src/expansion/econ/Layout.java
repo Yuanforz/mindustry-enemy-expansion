@@ -131,7 +131,7 @@ public final class Layout{
             a.at.put(m, p);
             g.plan(p, -1, -1, dumpOf(m));
             if(p.block instanceof BeamDrill drill) for(int t : g.beam(drill, m.x, m.y, m.rotation)) g.noSolid[t] = true;
-            for(Field.Site s : field.sites) if(s.x == m.x && s.y == m.y && s.rotation == m.rotation && s.ground == m.recipe.ground) used.add(s);
+            for(Field.Site s : field.sites) if(s.x == m.x && s.y == m.y && s.rotation == m.rotation && s.ground == m.recipe.ground && s.fits(m.recipe)) used.add(s);
         }
         for(Machine m : field.existing) a.at.put(m, new Part(block(m), m.x, m.y, m.rotation, null));
         int keptTiles = Packing.reserve(g, cat, field.sites, used, 3f);

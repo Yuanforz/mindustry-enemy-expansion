@@ -46,9 +46,11 @@ public class Match{
         Brain brain = ExpansionMod.brain;
         for(Fi file : new Fi("blueprints").list()) if(file.extEquals("txt")) brain.blueprints.addAll(Blueprint.parse(file.readString()));
         Core.settings.put("expansion-grace", 0);
-        if(!Boolean.getBoolean("match.plain")) Core.settings.put("expansion-strongest", true);
+        if(!Boolean.getBoolean("match.plain") && !Boolean.getBoolean("match.nobrain")) Core.settings.put("expansion-strongest", true);
         Core.settings.put("expansion-time-limit", Integer.getInteger("xp.timelimit", 100));
         Boot.modTime = () -> brain.lastThink;
+        //(for looking into our side alone: the Brain switched off)
+        if(Boolean.getBoolean("match.nobrain")) Core.settings.put("expansion-enabled", false);
         //nothing is researched in a fresh data dir: the Brain may build all it knows, as in the other tests
         brain.unlocked = content -> true;
 
@@ -96,6 +98,7 @@ public class Match{
         Boot.frames(1);
         //the whole map open, the way the map's own script opens it up (as the other tests run it, "open")
         if(rules.limitMapArea){
+            System.out.println("  the map's area was limited to " + rules.limitX + "," + rules.limitY + " " + rules.limitWidth + "x" + rules.limitHeight + ": opened");
             int x = rules.limitX, y = rules.limitY, w = rules.limitWidth, h = rules.limitHeight;
             rules.limitMapArea = false;
             Vars.world.checkMapArea(x, y, w, h);
@@ -108,6 +111,7 @@ public class Match{
         });
         Events.on(UnitDestroyEvent.class, e -> lostUnits.increment(e.unit.team == us ? "us" : e.unit.team == them ? "them" : "other"));
         Events.on(BlockDestroyEvent.class, e -> {
+            if(e.tile.team() == us && Boolean.getBoolean("match.losses")) System.out.println(String.format("    lost %s at %d,%d at %s", e.tile.block().name, e.tile.x, e.tile.y, Plan.time((float)(Vars.state.tick / 60.0))));
             if(e.tile.team() == us) blocksLostUs++;
             else if(e.tile.team() == them) blocksLostThem++;
         });
@@ -130,22 +134,33 @@ public class Match{
             //the next stage, planned from what stands, once the last is all up
             if((hand == null || hand.done()) && stage + 1 < stages.length && us.core() != null){
                 stage++;
-                String[] st = stages[stage].split(":");
                 long p0 = System.nanoTime();
-                Plan plan = new Plan(System.out);
-                plan.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
-                try{
-                    plan = plan.make(us, blocks, allowed, library, st[0], Float.parseFloat(st[1]), null);
-                }catch(Throwable t){
-                    System.out.println("  stage " + (stage + 1) + " could not be planned: " + t);
-                    t.printStackTrace(System.out);
-                    plan = null;
+                Plan plan = null;
+                //each stage may name ways to go, the first that can be done is taken: "locus:1|merui:2"
+                for(String way : stages[stage].split("\\|")){
+                    String[] st = way.split(":");
+                    Plan p = new Plan(System.out);
+                    p.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
+                    try{
+                        plan = p.make(us, blocks, allowed, library, st[0], Float.parseFloat(st[1]), null);
+                    }catch(Throwable t){
+                        System.out.println("  stage " + (stage + 1) + " (" + way + ") could not be planned: " + t);
+                        t.printStackTrace(System.out);
+                        plan = null;
+                    }
+                    if(plan != null) break;
+                    System.out.println("  stage " + (stage + 1) + ": " + way + " can't be done here");
                 }
                 planSeconds += (System.nanoTime() - p0) / 1e9f;
+                if(plan != null && Boolean.getBoolean("match.checkplace")) for(Machine m : plan.model.order){
+                    var part = plan.works.at.get(m);
+                    if(part != null && !part.block.canPlaceOn(Vars.world.tile(part.x, part.y), us, part.rotation)) System.out.println("    at planning, can't go down: " + m.recipe.name + " at " + part.x + "," + part.y + " r" + part.rotation);
+                }
                 if(plan != null && plan.model != null){
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
                     Intent.current = plan.works.intent();
                     hand.intent = Intent.current;
+                    hand.rallyUnits = false;
                     if(builder != null && !builder.dead()) builder.controller(hand);
                 }
             }
@@ -157,6 +172,48 @@ public class Match{
             Boot.frames(1);
             squads.update();
             if(f % 3600 == 0 && f > 0) System.out.println(report(f / 60f, hand, stage));
+            if(f == 1 && System.getProperty("match.around") != null){
+                String[] a = System.getProperty("match.around").split(",");
+                int ax = Integer.parseInt(a[0]), ay = Integer.parseInt(a[1]);
+                for(int y = ay + 6; y >= ay - 6; y--){
+                    StringBuilder row = new StringBuilder("    ");
+                    for(int x = ax - 6; x <= ax + 6; x++){
+                        Tile o = Vars.world.tile(x, y);
+                        row.append(o.solid() ? (o.wallDrop() != null ? o.wallDrop().name.charAt(0) : '#') : o.drop() != null ? Character.toUpperCase(o.drop().name.charAt(0)) : '.');
+                    }
+                    System.out.println(row);
+                }
+            }
+            if(f == Integer.getInteger("match.probe", -1) && hand != null){
+                for(int i = 0; i < Math.min(hand.next, hand.order.size()); i++){
+                    Machine m = hand.order.get(i);
+                    var part = hand.works.at.get(m);
+                    if(part == null) continue;
+                    Tile tile = Vars.world.tile(part.x, part.y);
+                    if(i == 0) for(String tr : hand.trouble) System.out.println("    trouble: " + tr);
+                    System.out.println(String.format("    probe #%d %s at %d,%d: there %s (%s), team %s, build %s; valid %b, enemy near %s, dark %.0f", i + 1, m.recipe.name, part.x, part.y, tile.block().name, tile.build == null ? "-" : tile.build.tileX() + "," + tile.build.tileY(), tile.team(), tile.build,
+                        Build.validPlace(part.block, us, part.x, part.y, part.rotation), Build.getEnemyOverlap(part.block, us, part.x, part.y), Vars.world.getDarkness(part.x, part.y)));
+                    int off = -(part.block.size - 1) / 2;
+                    StringBuilder fp = new StringBuilder("      footprint:");
+                    for(int dx = 0; dx < part.block.size; dx++) for(int dy = 0; dy < part.block.size; dy++){
+                        Tile c = Vars.world.tile(part.x + off + dx, part.y + off + dy);
+                        fp.append(String.format(" [%d,%d %s/%s/%s %s deep %b place %b]", c.x, c.y, c.floor().name, c.overlay().name, c.block().name, c.team(), c.floor().isDeep(), c.floor().placeableOn));
+                    }
+                    fp.append(" canPlaceOn " + part.block.canPlaceOn(tile, us, part.rotation) + " rot " + part.rotation + " limit " + part.block.isOverPlacementLimit(us) + " envOK " + part.block.environmentBuildable() + " supportsEnv " + part.block.supportsEnv(Vars.state.rules.env));
+                    if(part.block instanceof mindustry.world.blocks.production.BeamDrill bd){
+                        for(int i2 = 0; i2 < bd.size; i2++){
+                            bd.nearbySide(tile.x, tile.y, part.rotation, i2, arc.util.Tmp.p1);
+                            fp.append("\n        ray " + i2 + ":");
+                            for(int j = 0; j < bd.range; j++){
+                                Tile o = Vars.world.tile(arc.util.Tmp.p1.x + arc.math.geom.Geometry.d4x(part.rotation) * j, arc.util.Tmp.p1.y + arc.math.geom.Geometry.d4y(part.rotation) * j);
+                                fp.append(o == null ? " null" : String.format(" %d,%d:%s/%s/%s%s", o.x, o.y, o.floor().name, o.overlay().name, o.block().name, o.solid() ? "(solid," + o.wallDrop() + ")" : ""));
+                            }
+                        }
+                    }
+                    System.out.println(fp);
+                }
+            }
+            if(f % (3600 * 3) == 0 && f > 0 && hand != null && Boolean.getBoolean("match.watch")) System.out.print(hand.watch.report(hand.works.cat));
             if(f == 600 || (f % 3600 == 0 && Boolean.getBoolean("match.brainlog"))) System.out.println("  the Brain: active " + brain.active() + "; " + brain.status().replace("\n", "; "));
             if(us.cores().isEmpty()){
                 winner = "Brain";

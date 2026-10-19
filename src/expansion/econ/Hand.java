@@ -280,8 +280,11 @@ public final class Hand extends mindustry.entities.units.AIController{
     float rallyAt;
 
     /** Units standing about by the core are sent a little way off, out of the doors of the factories that made them. */
+    /** Whether units made are sent to wait by the core, out of the way (off where something else leads them: a unit told where to go is left alone by the game's squad AI). */
+    public boolean rallyUnits = true;
+
     void rally(){
-        if(now() < rallyAt) return;
+        if(!rallyUnits || now() < rallyAt) return;
         rallyAt = now() + 3f;
         var core = unit.team.core();
         if(core == null) return;

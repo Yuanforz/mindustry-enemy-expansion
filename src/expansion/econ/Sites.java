@@ -63,6 +63,7 @@ public final class Sites{
                         if(!Build.validPlace(block, team, x, y, rot) || occupied(block, x, y)) continue;
                         if(liq) dbg[1]++;
                         Field.Site site = site(cat, field, r.ground, block, x, y, rot);
+                        if(site != null) site.block = r.block;
                         if(site != null) all.add(site);
                         if(liq && site != null) dbg[2]++;
                     }

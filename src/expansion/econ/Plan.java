@@ -91,8 +91,10 @@ public final class Plan{
             String pruned = Sites.prune(cat, field, income, me);
             if(!pruned.isEmpty()) out.println("  the map's own: " + pruned);
         }
+        check("after the scan");
         planner = new Planner(cat, field);
         Recipes.modules(cat, library, allowed);
+        check("after the modules");
         Recipe making = null;
         unit = cat.id(unitName);
         if(unit < 0) return null;
@@ -109,11 +111,16 @@ public final class Plan{
         model = planner.order(plant, unit);
         out.println("######## " + label + unitName + " from " + machines + "; the model has it done by " + time(model.t)
             + ", first " + unitName + " at " + time(model.first[unit]) + "; " + model.order.size() + " machines");
+        //never got to: nothing laid out (a later stage may ask for something the map has no way to make)
+        if(Float.isInfinite(model.first[unit]) || Float.isNaN(model.first[unit])) return null;
 
         //laid out on the map; what it all really costs goes back to the planner, which may then order it otherwise
         long l0 = System.nanoTime();
+        check("after the balance");
         works = new Layout(cat, field, me, allowed);
+        check("after a new layout");
         works.prepare(model.order);
+        check("after the layout");
         Set<String> noTap = new HashSet<>();
         //takers the layout could not feed get makers of their own, and it is all done again
         for(int round = 0; round < 3; round++){
@@ -237,6 +244,20 @@ public final class Plan{
             modelSpent, realSpent, time(model.t), unitName, time(model.first[unit]), time(doneModel), time(firstModel)));
         for(String p : works.problems) out.println("  checker: " + p);
         return this;
+    }
+
+    /** (debug, -Dxp.checksites: how many of the places found can no longer be built on) */
+    void check(String when){
+        if(!Boolean.getBoolean("xp.checksites")) return;
+        int bad = 0;
+        for(Field.Site st : field.sites){
+            Recipe r = null;
+            for(Recipe q : cat.recipes) if(q.ground == st.ground) r = q;
+            Block b = null;
+            for(Recipe q : cat.recipes) if(q.ground == st.ground && Vars.content.block(q.name) != null && Vars.content.block(q.name).canPlaceOn(Vars.world.tile(st.x, st.y), Vars.state.rules.defaultTeam, st.rotation)) b = Vars.content.block(q.name);
+            if(b == null) bad++;
+        }
+        out.println("  sites " + when + ": " + bad + " of " + field.sites.size() + " can't be built on");
     }
 
     public static String time(float s){
