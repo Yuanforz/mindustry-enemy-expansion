@@ -82,9 +82,28 @@ public class EconRun{
         System.out.println("######## " + new Fi(args[1]).nameWithoutExtension() + ": " + unitName + " from " + machines + "; the model has it done by " + EconLab.time(model.t)
             + ", first " + unitName + " at " + EconLab.time(model.first[unit]) + "; " + model.order.size() + " machines");
 
-        //and the game
-        Works works = new Works(cat, field, me, allowed);
+        //laid out on the map; what it all really costs goes back to the planner, which may then order it otherwise
+        long l0 = System.nanoTime();
+        Layout works = new Layout(cat, field, me, allowed);
         works.prepare(model.order);
+        long l1 = System.nanoTime();
+        System.out.println(String.format("  laid out in %.1fs: %s", (l1 - l0) / 1e9, works.summary()));
+        int modelSpent = 0, realSpent = 0;
+        for(Machine m : model.order){
+            int[] real = works.realCost(m);
+            for(int k = 0; k < real.length; k++){
+                modelSpent += m.cost[k];
+                realSpent += real[k];
+                m.cost[k] = real[k];
+            }
+        }
+        planner.extras = 0;
+        Timeline again = planner.order(new ArrayList<>(model.order), unit);
+        System.out.println(String.format("  the plan cost %d in items, the layout %d; ordered again on what it really costs: done by %s, first %s at %s (was %s, %s)",
+            modelSpent, realSpent, EconLab.time(again.t), unitName, EconLab.time(again.first[unit]), EconLab.time(model.t), EconLab.time(model.first[unit])));
+        model = again;
+        works.reorder(model.order);
+        for(String p : works.problems) System.out.println("  checker: " + p);
         expansion.econ.Hand hand = new expansion.econ.Hand(works, model.order);
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == me && !firstMade.containsKey(e.unit.type.name)) firstMade.put(e.unit.type.name, (float)(Vars.state.tick / 60.0));
@@ -127,6 +146,9 @@ public class EconRun{
                 b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild uf ? (uf.payload != null ? " a unit waiting to get out" : "") + String.format(" progress %.0f/%.0f", uf.progress, uf.currentPlan >= 0 ? ((mindustry.world.blocks.units.UnitFactory)uf.block).plans.get(uf.currentPlan).time : 0f) : "");
             System.out.println(String.format("    %-30s at %d,%d: %s", m.recipe.name, p.x, p.y, state));
         }
+        System.out.println("  how each ran since it was built (watch):");
+        System.out.print(hand.watch.report(cat));
+        if(hand.watch.repaired > 0) System.out.println("  parts put back: " + hand.watch.repaired);
         System.out.println(picture(works, me));
         //where what each maker sends out ends up: followed duct by duct from it
         for(Machine m : model.order){
@@ -168,7 +190,7 @@ public class EconRun{
     }
 
     /** The ground round everything the plan put down, as text: blocks by their codes, ore walls by their item, vents '::'. */
-    static String picture(Works works, Team me){
+    static String picture(Layout works, Team me){
         int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE;
         for(Part p : works.at.values()){
             if(Math.hypot(p.x - works.field.coreX, p.y - works.field.coreY) > 45) continue;

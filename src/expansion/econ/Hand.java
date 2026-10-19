@@ -17,7 +17,9 @@ import java.util.*;
  * still lacks, and once the core can pay for the machine and everything that goes with it, flies there and builds it all.
  */
 public final class Hand extends mindustry.entities.units.AIController{
-    public final Works works;
+    public final Layout works;
+    /** Keeps an eye on what is built: puts back what went missing, and counts how each machine runs. */
+    public final Watch watch;
     public final List<Machine> order;
     public int next;
     /** What is being built now, for which machine of the order; null when it is digging. */
@@ -33,9 +35,10 @@ public final class Hand extends mindustry.entities.units.AIController{
     public final Seq<String> trouble = new Seq<>();
     float checkAt;
 
-    public Hand(Works works, List<Machine> order){
+    public Hand(Layout works, List<Machine> order){
         this.works = works;
         this.order = order;
+        watch = new Watch(works, order);
         begun = new float[order.size()];
         finished = new float[order.size()];
         partsOf = new int[order.size()];
@@ -51,6 +54,14 @@ public final class Hand extends mindustry.entities.units.AIController{
     @Override
     public void updateUnit(){
         rally();
+        watch.update(next);
+        //something built that went missing is put back before anything new
+        if(job == null && !watch.repairs.isEmpty()){
+            job = watch.repairs;
+            watch.repairs = new Seq<>();
+            repairing = true;
+            unit.mineTile = null;
+        }
         if(job == null && next < order.size()){
             Machine m = order.get(next);
             //its place not yet seen: a unit goes to have a look (the core unit sees nothing), and meanwhile it digs
@@ -88,7 +99,7 @@ public final class Hand extends mindustry.entities.units.AIController{
         dig(null);
     }
 
-    boolean cut;
+    boolean cut, repairing;
     float rallyAt;
 
     /** Units standing about by the core are sent a little way off, out of the doors of the factories that made them. */
@@ -138,12 +149,18 @@ public final class Hand extends mindustry.entities.units.AIController{
                 }
                 if(tile == null || unit.dst(tile.worldx(), tile.worldy()) > Vars.tilesize * 4f) continue;
                 if(tile.block() != p.block && !(tile.build instanceof ConstructBuild) && !Build.validPlace(p.block, unit.team, p.x, p.y, p.rotation)){
-                    trouble.add(String.format("%s at %d,%d for %s (there: %s)", p.block.name, p.x, p.y, machine.recipe.name, tile.block().name));
+                    trouble.add(String.format("%s at %d,%d for %s (there: %s)", p.block.name, p.x, p.y, machine == null ? "a repair" : machine.recipe.name, tile.block().name));
                     job.remove(p);
                     unit.plans.remove(b -> b.x == p.x && b.y == p.y);
                     return;
                 }
             }
+        }
+        if(all && repairing){
+            repairing = false;
+            job = null;
+            unit.plans.clear();
+            return;
         }
         if(all){
             finished[next] = now();

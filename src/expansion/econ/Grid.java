@@ -293,9 +293,9 @@ public final class Grid{
 
     /**
      * What the thing on tile (fx, fy) pushes into the neighbouring tile (tx, ty), whether that takes it or not: -1 for
-     * nothing, else what (-2 when that is not known). Items and liquids alike, as res ids.
+     * nothing, else what (-2 when that is not known); only items, or only liquids.
      */
-    public int pushes(int fx, int fy, int tx, int ty){
+    public int pushes(int fx, int fy, int tx, int ty, boolean liquid){
         if(!in(fx, fy)) return -1;
         Block b = block(fx, fy);
         if(b == null) return -1;
@@ -303,15 +303,18 @@ public final class Grid{
         int dir = dirTo(originX(fx, fy), originY(fx, fy), b.size, tx, ty);
         if(dir < 0) return -1;
         int rot = rotation(fx, fy);
-        int what = carries(fx, fy);
-        int known = what < 0 ? -2 : what;
-        if(isDuct(b) || isConduit(b)) return dir == rot ? known : -1;
-        if(isOneWay(b)) return dir == (rot + 2) % 4 ? -1 : known;
-        if(isBridge(b)) return dir == rot && bridgeLink(fx, fy) == null ? known : -1;
-        if(b instanceof LiquidRouter) return known;
-        if(b instanceof CoreBlock || b instanceof LiquidJunction) return -1;
-        if(dumps[p] >= 0) return dumps[p];
-        return liquidOut(b, rot, dir);
+        boolean pipe = isConduit(b) || b instanceof LiquidRouter || b instanceof DirectionLiquidBridge || b instanceof LiquidJunction;
+        if(isLine(b)){
+            if(pipe != liquid) return -1;
+            int what = carries(fx, fy), known = what < 0 ? -2 : what;
+            if(isDuct(b) || isConduit(b)) return dir == rot ? known : -1;
+            if(isOneWay(b)) return dir == (rot + 2) % 4 ? -1 : known;
+            if(isBridge(b)) return dir == rot && bridgeLink(fx, fy) == null ? known : -1;
+            if(b instanceof LiquidRouter) return known;
+            return -1;
+        }
+        if(b instanceof CoreBlock) return -1;
+        return liquid ? liquidOut(b, rot, dir) : dumps[p];
     }
 
     /** Where a bridge on a tile links to by the game's rule (the first of its kind within range along its facing), or null. */
