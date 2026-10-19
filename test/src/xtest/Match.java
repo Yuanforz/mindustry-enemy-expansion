@@ -98,7 +98,7 @@ public class Match{
         mindustry.ai.RtsAI squads = new mindustry.ai.RtsAI(us.data());
         //and our army layer over it (-Dmatch.us=rts for the squad AI alone, or army:parts); the Brain is played as the main
         //line has it, without the layer (-Dmatch.brainarmy=true to give it the layer too)
-        String ours = System.getProperty("match.us", "army");
+        String ours = System.getProperty("match.us", "army:defaults,push");
         expansion.army.Army army = ours.startsWith("army") ? new expansion.army.Army(us, expansion.army.Army.Flags.parse(ours)) : null;
         if(!Boolean.getBoolean("match.brainarmy")) System.setProperty("xp.noarmy", "true");
         System.out.println("  our units: " + (army == null ? "the squad AI alone" : "the squad AI with the army layer: " + army.flags.toString().trim()));
@@ -160,6 +160,7 @@ public class Match{
                 for(String way : stages[stage].split("\\|")){
                     st = way.split(":");
                     Plan p = new Plan(System.out);
+                    p.gate = !Boolean.getBoolean("match.allblocks");
                     p.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
                     try{
                         if(st[0].equals("defend")){

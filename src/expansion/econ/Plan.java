@@ -30,6 +30,14 @@ public final class Plan{
     public int unit;
     public float wanted;
     public long layoutNanos;
+    /**
+     * Whether only the blocks that can be paid for now are planned with: those whose every material the core holds
+     * enough of, or a drill (that can itself be paid for) or the core unit digs here. A player does not lay large bores
+     * that cost oxide and tungsten on a map with no tungsten and no oxide coming in; the planner, given all the tech,
+     * would, and then plan a whole chain of crafters to pay for its own drills. (Off for the economy bench, which plans
+     * with each sector's tech.)
+     */
+    public boolean gate;
     /** Put before the plan's heading line (a map's name, say). */
     public String label = "";
 
@@ -87,6 +95,21 @@ public final class Plan{
         cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
         cat.logistics(allowed);
         field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        if(gate){
+            List<String> kept = gated(blocks, me);
+            if(kept.size() < blocks.size()){
+                Set<String> left = new TreeSet<>(blocks);
+                left.removeAll(kept);
+                out.println("  not yet (what they are built of is neither in the core nor dug here): " + String.join(" ", left));
+                blocks = kept;
+                Set<String> fewer = new HashSet<>(allowed);
+                fewer.removeAll(left);
+                allowed = fewer;
+                cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+                cat.logistics(allowed);
+                field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+            }
+        }
         if(income != null){
             String pruned = Sites.prune(cat, field, income, me);
             if(!pruned.isEmpty()) out.println("  the map's own: " + pruned);
@@ -244,6 +267,64 @@ public final class Plan{
             modelSpent, realSpent, time(model.t), unitName, time(model.first[unit]), time(doneModel), time(firstModel)));
         for(String p : works.problems) out.println("  checker: " + p);
         return this;
+    }
+
+    /**
+     * The blocks of these whose materials can be had now (see {@link #gate}): what the core holds, what the core unit digs,
+     * and what a machine that can itself be paid for makes here out of what can be had (round till nothing more comes in).
+     */
+    List<String> gated(List<String> blocks, Team me){
+        CoreBlock.CoreBuild core = me.core();
+        boolean[] had = new boolean[cat.size()];
+        for(int k = 0; k < cat.size(); k++){
+            Res r = cat.get(k);
+            if(r.kind == Res.Kind.item){
+                Item item = Vars.content.item(r.name);
+                if(item != null && core.items.get(item) > 0) had[k] = true;
+                if(field.handDistance != null && k < field.handDistance.length && !Float.isInfinite(field.handDistance[k])) had[k] = true;
+            }
+        }
+        //places on the ground, by block, and what each gives
+        Map<String, Set<Integer>> placed = new HashMap<>();
+        boolean vents = false;
+        for(Field.Site st : field.sites){
+            if(st.ground == Recipe.Ground.vent) vents = true;
+            if(st.item >= 0 && st.block != null) placed.computeIfAbsent(st.block, x -> new HashSet<>()).add(st.item);
+        }
+        for(boolean more = true; more; ){
+            more = false;
+            for(Recipe r : cat.recipes){
+                if(r.makesUnits() || r.block == null) continue;
+                Block b = Vars.content.block(r.block);
+                if(b == null || !payable(b, core, had)) continue;
+                boolean fed = true;
+                for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f && !had[k]) fed = false;
+                if(!fed) continue;
+                if(r.ground == Recipe.Ground.vent && !vents) continue;
+                for(int k = 0; k < cat.size(); k++){
+                    boolean gives = r.out[k] > 0f;
+                    if(r.perFactor[k] > 0f) gives |= placed.getOrDefault(r.block, Set.of()).contains(k);
+                    if(gives && !had[k]){
+                        had[k] = true;
+                        more = true;
+                    }
+                }
+            }
+        }
+        List<String> kept = new ArrayList<>();
+        for(String name : blocks){
+            Block b = Vars.content.block(name);
+            if(b == null || b instanceof CoreBlock || payable(b, core, had)) kept.add(name);
+        }
+        return kept;
+    }
+
+    boolean payable(Block b, CoreBlock.CoreBuild core, boolean[] had){
+        for(mindustry.type.ItemStack stack : b.requirements){
+            int k = cat.id(stack.item.name);
+            if((k < 0 || !had[k]) && core.items.get(stack.item) < stack.amount) return false;
+        }
+        return true;
     }
 
     /** (debug, -Dxp.checksites: how many of the places found can no longer be built on) */
