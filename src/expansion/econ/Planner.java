@@ -467,8 +467,30 @@ public final class Planner{
      * "Done" is the plant built and the first unit out; of two orders done at the same time, the one with the first unit
      * out earlier is better.
      */
+    /**
+     * Whether the orders a search plays through skip the rest once stuck for good (Timeline#watched): the scores come out
+     * the same, far sooner where much of what is tried waits on something nothing makes (-Dxp.slowsearch=true: off).
+     */
+    public boolean quick = !Boolean.getBoolean("xp.slowsearch");
+    int watchedUnit = -1;
+
     public Timeline order(List<Machine> plant, int unit){
+        scored.clear();
+        ordering = true;
+        try{
+            return ordered(plant, unit);
+        }finally{
+            ordering = false;
+            scored.clear();
+        }
+    }
+
+    /** Whether an ordering is under way (what is kept of the scores holds only while it is). */
+    boolean ordering;
+
+    Timeline ordered(List<Machine> plant, int unit){
         stages.clear();
+        watchedUnit = unit;
         List<Machine> best = rollout(plant, unit, null);
         float[] bestScore = score(best, unit);
         stages.put("rollout", bestScore);
@@ -532,10 +554,23 @@ public final class Planner{
     /** When the order is done (plant built and first unit out) and when the first unit is out; infinite if never. */
     public float[] score(List<Machine> seq, int unit){
         evaluated++;
+        //(an order played from the start comes out the same each time: within one ordering, where nothing about the
+        //machines changes, what was worked out once is kept)
+        List<Machine> key = quick && ordering ? new ArrayList<>(seq) : null;
+        if(key != null){
+            float[] known = scored.get(key);
+            if(known != null && (int)known[3] == unit) return new float[]{known[0], known[1], known[2]};
+        }
         Timeline t = new Timeline(cat, field, seq);
+        t.watched = quick ? unit : -1;
         t.runToGoal(unit, limit);
-        return new float[]{reached(t, unit) ? t.t : Float.POSITIVE_INFINITY, t.first[unit], spent(seq)};
+        float[] out = {reached(t, unit) ? t.t : Float.POSITIVE_INFINITY, t.first[unit], spent(seq)};
+        if(key != null) scored.put(key, new float[]{out[0], out[1], out[2], unit});
+        return out;
     }
+
+    /** Scores of whole orders worked out in this ordering, by the order (cleared as each ordering begins). */
+    final Map<List<Machine>, float[]> scored = new HashMap<>();
 
     /** Items the order spends, all counted alike: of two orders as fast, the one that leaves more in the core is better. */
     static float spent(List<Machine> seq){
@@ -596,6 +631,7 @@ public final class Planner{
     Node start(List<Machine> plant, List<Machine> guide){
         Node n = new Node();
         n.now = new Timeline(cat, field, new ArrayList<>());
+        n.now.watched = quick ? watchedUnit : -1;
         n.done = new ArrayList<>();
         n.left = new ArrayList<>(plant);
         //the extras the guide took are kept (moves may still leave them out), and more may be added

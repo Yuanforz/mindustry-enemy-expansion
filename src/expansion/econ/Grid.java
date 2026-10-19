@@ -164,7 +164,39 @@ public final class Grid{
     public boolean free(int x, int y){
         if(!in(x, y)) return false;
         int p = pos(x, y);
-        return ground[p] && planned[p] == null && Vars.world.tile(x, y).build == null;
+        return ground[p] && planned[p] == null && buildAt(x, y) == null;
+    }
+
+    /**
+     * While a layout is worked out nothing in the world changes, and what stands on a tile is asked again and again: then
+     * it is looked up once a tile. Off again once the layout is done, as the grid goes on serving the builder in the game.
+     */
+    boolean frozen;
+    Building[] buildCache;
+    boolean[] buildKnown;
+
+    public void freeze(){
+        frozen = true;
+    }
+
+    public void thaw(){
+        frozen = false;
+        buildCache = null;
+        buildKnown = null;
+    }
+
+    Building buildAt(int x, int y){
+        if(!frozen || !in(x, y)) return Vars.world.build(x, y);
+        int p = pos(x, y);
+        if(buildKnown == null){
+            buildKnown = new boolean[w * h];
+            buildCache = new Building[w * h];
+        }
+        if(!buildKnown[p]){
+            buildCache[p] = Vars.world.build(x, y);
+            buildKnown[p] = true;
+        }
+        return buildCache[p];
     }
 
     /** Whether a block could be planned here: every tile free, and nothing solid on a tile that must stay clear. */
@@ -183,7 +215,34 @@ public final class Grid{
     }
 
     /** Puts a part of the plan down. For a machine that hands out an item, which. */
+    /**
+     * Where each block of one tile is planned (a tile may be listed that no longer has it, never the other way): for asking
+     * quickly whether one is anywhere near, as a bridge's rules want.
+     */
+    final java.util.Map<Block, arc.struct.IntSet> plannedAt = new java.util.HashMap<>();
+    /** Where each block of one tile of the side's stands, worked out once (what stands does not change while planning). */
+    java.util.Map<Block, arc.struct.IntSeq> standingAt;
+
+    /** The tiles where this block (of one tile) is planned or stands, maybe with a few more: for each, the consumer is called. */
+    void eachAt(Block b, arc.func.Intc cons){
+        arc.struct.IntSet p = plannedAt.get(b);
+        if(p != null){
+            var it = p.iterator();
+            while(it.hasNext) cons.get(it.next());
+        }
+        if(standingAt == null){
+            standingAt = new java.util.HashMap<>();
+            for(Building build : team.data().buildings){
+                if(build.block.size != 1 || !in(build.tileX(), build.tileY())) continue;
+                standingAt.computeIfAbsent(build.block, k -> new arc.struct.IntSeq()).add(pos(build.tileX(), build.tileY()));
+            }
+        }
+        arc.struct.IntSeq s = standingAt.get(b);
+        if(s != null) for(int i = 0; i < s.size; i++) cons.get(s.get(i));
+    }
+
     public void plan(Part p, int netId, int carries, int dumpsRes){
+        if(p.block.size == 1 && in(p.x, p.y)) plannedAt.computeIfAbsent(p.block, k -> new arc.struct.IntSet()).add(pos(p.x, p.y));
         Vars.world.tile(p.x, p.y).getLinkedTilesAs(p.block, t -> {
             int q = pos(t.x, t.y);
             planned[q] = p;
@@ -215,7 +274,7 @@ public final class Grid{
 
     /** The building of the side's standing on a tile, if any (another side's counts as nothing of ours). */
     Building standing(int x, int y){
-        Building b = Vars.world.build(x, y);
+        Building b = buildAt(x, y);
         return b == null || b.team != team ? null : b;
     }
 
