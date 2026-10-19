@@ -188,7 +188,9 @@ public class Match{
                 if(plan != null && plan.model != null){
                     if(hand != null) before.add(hand);
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
-                    hand.urgent = st[0].equals("defend");
+                    //its own jobs before putting back what raiders broke, every stage (a stage put off till every raid's damage
+                    //is mended never gets its factory up: lake, raided from the second minute on, made no unit in twenty)
+                    hand.urgent = true;
                     //our units are the squad AI's to lead (a unit told where to wait is left alone by it)
                     hand.rallyUnits = false;
                     Intent.current = plan.works.intent();

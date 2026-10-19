@@ -92,24 +92,7 @@ public final class Plan{
      */
     public Plan make(Team me, List<String> blocks, Set<String> allowed, List<Design> library, String unitName, float machines, Map<String, Float> income){
         CoreBlock.CoreBuild core = me.core();
-        cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-        cat.logistics(allowed);
-        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
-        if(gate){
-            List<String> kept = gated(blocks, me);
-            if(kept.size() < blocks.size()){
-                Set<String> left = new TreeSet<>(blocks);
-                left.removeAll(kept);
-                out.println("  not yet (what they are built of is neither in the core nor dug here): " + String.join(" ", left));
-                blocks = kept;
-                Set<String> fewer = new HashSet<>(allowed);
-                fewer.removeAll(left);
-                allowed = fewer;
-                cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-                cat.logistics(allowed);
-                field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
-            }
-        }
+        allowed = read(me, blocks, allowed);
         if(income != null){
             String pruned = Sites.prune(cat, field, income, me);
             if(!pruned.isEmpty()) out.println("  the map's own: " + pruned);
@@ -270,6 +253,29 @@ public final class Plan{
     }
 
     /**
+     * The catalog and the places on the map, for these blocks; with {@link #gate} on, for those of them that can be paid
+     * for now only. What may be built, as it then is.
+     */
+    Set<String> read(Team me, List<String> blocks, Set<String> allowed){
+        CoreBlock.CoreBuild core = me.core();
+        cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+        cat.logistics(allowed);
+        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        if(!gate) return allowed;
+        List<String> kept = gated(blocks, me);
+        if(kept.size() == blocks.size()) return allowed;
+        Set<String> left = new TreeSet<>(blocks);
+        left.removeAll(kept);
+        out.println("  not yet (what they are built of is neither in the core nor dug here): " + String.join(" ", left));
+        Set<String> fewer = new HashSet<>(allowed);
+        fewer.removeAll(left);
+        cat = Recipes.read(kept, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+        cat.logistics(fewer);
+        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        return fewer;
+    }
+
+    /**
      * The blocks of these whose materials can be had now (see {@link #gate}): what the core holds, what the core unit digs,
      * and what a machine that can itself be paid for makes here out of what can be had (round till nothing more comes in).
      */
@@ -347,9 +353,7 @@ public final class Plan{
      */
     public Plan defend(Team me, List<String> blocks, Set<String> allowed, expansion.defense.Planner.Plan defence, Collection<String> feedable){
         CoreBlock.CoreBuild core = me.core();
-        cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-        cat.logistics(allowed);
-        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        allowed = read(me, blocks, allowed);
         StringBuilder notes = new StringBuilder();
         //our turrets standing dry first (only a line to build), then what the defence planner laid
         List<Machine> guard = new ArrayList<>(Defence.existing(cat, me, feedable, notes));
