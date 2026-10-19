@@ -52,7 +52,10 @@ if [ "$mode" = campaign ]; then
   javac --release 17 -proc:none -cp "$MOD/../Mindustry.jar:build/classes:build/test-classes" -d build/playtest-classes tools/playtest/src/xpwatch/*.java tools/playtest/src/xtest/*.java
   cp -R build/test-classes/xtest build/playtest-classes/
 else
-  javac --release 17 -proc:none -cp "$MOD/../Mindustry.jar" -d build/playtest-classes tools/playtest/src/xpwatch/*.java
+  # the watcher names the live campaign's class, so that has to be compiled along with it
+  mkdir -p build/test-classes
+  javac --release 17 -proc:none -cp "$MOD/../Mindustry.jar:build/classes" -d build/test-classes test/src/xtest/*.java
+  javac --release 17 -proc:none -cp "$MOD/../Mindustry.jar:build/classes:build/test-classes" -d build/playtest-classes tools/playtest/src/xpwatch/*.java tools/playtest/src/xtest/*.java
 fi
 jar cf "$DATA/mods/XpWatch.jar" -C tools/playtest mod.hjson -C build/playtest-classes .
 

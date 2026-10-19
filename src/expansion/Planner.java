@@ -1163,7 +1163,7 @@ public class Planner{
             int x = Point2.x(vents.get(i)), y = Point2.y(vents.get(i));
             if(ground.clear(onVent, x, y) && brain.territory.ours(x, y) && Math.abs(x - homeX) + Math.abs(y - homeY) <= 60) free.add(new int[]{x, y});
         }
-        free.sort(at -> Math.abs(at[0] - homeX) + Math.abs(at[1] - homeY));
+        free.sort(at -> (Point2.pack(at[0], at[1]) == preferVent ? -100000 : 0) + Math.abs(at[0] - homeX) + Math.abs(at[1] - homeY));
         int tries = 0;
         for(int[] vent : free){
             if(++tries > 5 || late()) break;
@@ -1172,8 +1172,23 @@ public class Planner{
                 Layout probe = blueprint.at(0, 0, turn, false, 1);
                 Part anchor = probe.parts.get(ventIndex);
                 Layout layout = trim(blueprint.at(vent[0] - anchor.x, vent[1] - anchor.y, turn, false, 1));
-                if(!clear(layout, false, true) || !fitter.valid(layout) || !exitsClear(layout, false, false)){
-                    note = blueprint.name + ": no room by the vent at " + vent[0] + "," + vent[1];
+                boolean room = clear(layout, false, true), valid = room && fitter.valid(layout), exits = valid && exitsClear(layout, false, false);
+                if(!exits){
+                    String what = "";
+                    Part blocked = layout.parts.find(part -> !ground.clear(part.block, part.x, part.y));
+                    if(blocked != null){
+                        int off = -(blocked.block.size - 1) / 2;
+                        for(int dx = 0; dx < blocked.block.size && what.isEmpty(); dx++) for(int dy = 0; dy < blocked.block.size && what.isEmpty(); dy++){
+                            int bx = blocked.x + off + dx, by = blocked.y + off + dy;
+                            if(!ground.open(bx, by)) what = " (its " + blocked.block.name + ": " + bx + "," + by + " '" + brain.whyNot(bx, by) + "'" + (world.build(bx, by) != null ? " " + world.build(bx, by).block.name : "") + ")";
+                        }
+                    }
+                    note = blueprint.name + ": no room by the vent at " + vent[0] + "," + vent[1] + " turned " + turn + (!room ? what.isEmpty() ? " (a port shut: " + shutPort + ")" : what : !valid ? " (would stand against a line)" : " (its units could not get out)");
+                    if(Point2.pack(vent[0], vent[1]) == preferVent && System.getProperty("xp.notes") != null){
+                        StringBuilder parts = new StringBuilder();
+                        for(Part part : layout.parts) parts.append(part.block.name).append('@').append(part.x).append(',').append(part.y).append(ground.clear(part.block, part.x, part.y) ? "" : "!").append(' ');
+                        Log.info("[EnemyExpansion] @ | room @ valid @ exits @ | ports @ | @", note, room, valid, exits, layout.ports.size, parts);
+                    }
                     continue;
                 }
                 Project project = new Project(blueprint.name);
@@ -1185,7 +1200,7 @@ public class Planner{
                     holdPorts(layout, port, true);
                     boolean fed = feed(project, port, wanted(taker(layout, port, layout.main().block), port.item));
                     holdPorts(layout, port, false);
-                    if(!fed && brain.leadLater(port.item)) continue;
+                    if(!fed && !mustFeed && brain.leadLater(port.item)) continue;
                     if(!fed){
                         supplied = false;
                         note = blueprint.name + ": no line to branch " + port.item.name + " off within reach of the vent at " + vent[0] + "," + vent[1] + " [" + feedNote + "]";
@@ -1560,12 +1575,20 @@ public class Planner{
                 //then out of reach of everything it takes. (with time to look that far, a sector's first furnace waited
                 //minutes for a place by a long wall forty tiles out)
                 fitter.farOk = false;
+                //(a longer row a little further out before a short one by home, xp.longrows, was tried: on generated maps it made
+                //no more units by the fifteenth minute, and on the sector won by holding out its waves the furnace it put far off
+                //left no beryllium line for a yard to stand by, and no yard went up in sixteen tries)
+                fitter.least = System.getProperty("xp.longrows") == null ? 1 : Math.min(want, 3);
                 row = fitter.row(crushers, null, want, Math.min(reach, plantNear));
+                if(row == null && fitter.least > 1) row = fitter.row(crushers, null, want, Math.min(reach, plantNear * 2));
+                fitter.least = 1;
                 fitter.farOk = far;
+                if(row == null) row = fitter.row(crushers, null, want, Math.min(reach, plantNear));
                 if(row == null) row = fitter.row(crushers, null, want, reach);
             }finally{
                 fitter.order = null;
                 fitter.farOk = far;
+                fitter.least = 1;
             }
             if(row == null) return null;
             fitter.skip.add(Point2.pack(row.main().x, row.main().y));
@@ -1593,7 +1616,9 @@ public class Planner{
             Layout placed = null;
             int tries = 0;
             String why = "";
+            //first only where a yard could later stand against it, with room on a side of it: then anywhere
             search:
+            for(int pass = brain.yardSides() ? 0 : 1; pass < 2; pass++)
             for(int radius = 3; radius <= 9; radius++){
                 for(int dx = -radius; dx <= radius; dx++){
                     for(int dy = -radius; dy <= radius; dy++){
@@ -1604,10 +1629,16 @@ public class Planner{
                         for(int way = 0; way < 8; way++){
                             Layout layout = factory.at(x, y, way % 4, way >= 4, 1);
                             if(!clear(layout) || !fitter.valid(layout)) continue;
+                            if(pass == 0 && !sideFor(layout)) continue;
                             if(++tries > 10 || late()) break search;
 
                             int before = project.parts.size, lastBefore = project.last.size, thingsBefore = project.things.size;
                             add(project, layout);
+                            //a side of it kept for a yard to stand against, before its lines are laid round it
+                            IntSeq held = new IntSeq();
+                            for(Port port : layout.ports) if(ground.kept.add(Point2.pack(port.x, port.y))) held.add(Point2.pack(port.x, port.y));
+                            brain.noteSide(brain.keepYardSide(crafter, layout.main().x, layout.main().y, true), layout.main().x, layout.main().y);
+                            for(int i = 0; i < held.size; i++) ground.kept.remove(held.get(i));
                             boolean supplied = supply(project, layout, row, from, rowTiles, crusher.output, share);
                             if(supplied && lead(project, layout, Net.Kind.maker, made, Rates.makes(crafter, made) * share)){
                                 placed = layout;
@@ -1649,6 +1680,19 @@ public class Planner{
             return project;
         }
         return null;
+    }
+
+    /** Whether a side of a factory laid out so would be open for a yard to stand against it, its own blocks and ports counted as there. */
+    private boolean sideFor(Layout layout){
+        ground.plan(layout.parts);
+        IntSeq held = new IntSeq();
+        for(Port port : layout.ports) if(ground.kept.add(Point2.pack(port.x, port.y))) held.add(Point2.pack(port.x, port.y));
+        try{
+            return brain.keepYardSide(layout.main().block, layout.main().x, layout.main().y, false);
+        }finally{
+            for(int i = 0; i < held.size; i++) ground.kept.remove(held.get(i));
+            ground.unplan(layout.parts);
+        }
     }
 
     /** Lays the lines into a factory: sand straight from the crushers, everything else off the enemy's own lines. */
@@ -2191,8 +2235,10 @@ public class Planner{
                 break;
             }
         }
+        //(and only where there is none: looked for anyway, a place for a new one was found beside the one that stood, and the box was looked
+        //for there and never found, while the unloader and box laid out with the works stood empty)
         search:
-        for(int d = 0; d < 4; d++){
+        for(int d = 0; d < 4 && (drop == null || System.getProperty("xp.oldreuse") != null); d++){
             for(int along = 0; along < size; along++){
                 int ux, uy;
                 if(d == 0){ ux = cx + off + size; uy = cy + off + along; }
@@ -2445,6 +2491,17 @@ public class Planner{
      * in front of the fabricator whose units it is to take.
      */
     public @Nullable Project addon(Blueprint blueprint, Building anchor){
+        //what it is added to may hand it things by touch: that is what it stands against it for
+        fitter.welcome.clear();
+        anchor.tile.getLinkedTiles(tile -> fitter.welcome.add(tile.pos()));
+        try{
+            return addonAt(blueprint, anchor);
+        }finally{
+            fitter.welcome.clear();
+        }
+    }
+
+    private @Nullable Project addonAt(Blueprint blueprint, Building anchor){
         lacking = null;
         if(late()) return null;
         String where = " at " + anchor.tileX() + "," + anchor.tileY();
@@ -2469,7 +2526,20 @@ public class Planner{
             boolean room = clear(layout, false, System.getProperty("xp.nobridgedports") == null), valid = room && fitter.valid(layout), exits = valid && exitsClear(layout, false, false);
             if(!exits){
                 Part blocked = layout.parts.find(part -> !ground.clear(part.block, part.x, part.y));
-                note = blueprint.name + ": " + (blocked != null ? "no room for its " + blocked.block.name + " at " + blocked.x + "," + blocked.y
+                String what = "";
+                if(blocked != null){
+                    int off = -(blocked.block.size - 1) / 2;
+                    for(int dx = 0; dx < blocked.block.size && what.isEmpty(); dx++){
+                        for(int dy = 0; dy < blocked.block.size && what.isEmpty(); dy++){
+                            int bx = blocked.x + off + dx, by = blocked.y + off + dy;
+                            if(!ground.open(bx, by)){
+                                Tile t = world.tile(bx, by);
+                                what = " (" + bx + "," + by + ": " + (t == null ? "off the map" : t.build != null ? t.build.block.name : t.solid() ? "rock" : ground.vent.contains(Point2.pack(bx, by)) ? "vent kept" : ground.ore.contains(Point2.pack(bx, by)) ? "ore kept" : ground.kept.contains(Point2.pack(bx, by)) ? "kept" : ground.planned(bx, by) != null ? "planned " + ground.planned(bx, by).block.name : "'" + brain.whyNot(bx, by) + "'") + ")";
+                            }
+                        }
+                    }
+                }
+                note = blueprint.name + ": " + (blocked != null ? "no room for its " + blocked.block.name + " at " + blocked.x + "," + blocked.y + what
                     : !room ? "no way in to where its lines would end (" + shutPort + ")" : !valid ? "would stand against a line it is not to take from" : "its units could not get out") + where;
                 brain.syncGround();
                 continue;
@@ -2484,8 +2554,9 @@ public class Planner{
                 holdPorts(layout, port, true);
                 boolean fed = feed(project, port, wanted(taker(layout, port, layout.main().block), port.item));
                 holdPorts(layout, port, false);
-                //what its cores are full of can be led to it once it stands, a whole line of it turned in
-                if(!fed && brain.leadLater(port.item)){
+                //what its cores are full of can be led to it once it stands, a whole line of it turned in (but not to a yard
+                //against a furnace: led nothing, it stood by the furnace with its silicon and never a unit)
+                if(!fed && !mustFeed && brain.leadLater(port.item)){
                     later = true;
                     continue;
                 }
@@ -2507,6 +2578,9 @@ public class Planner{
                 //came went without it, and the sixth sector took fifteen minutes longer)
                 boolean boxed = layout.parts.contains(part -> part.block instanceof mindustry.world.blocks.units.Reconstructor) && System.getProperty("xp.boxanything") == null;
                 for(Plumbing.Tap tap : Plumbing.needs(layout.parts)) if(!brain.ferryable(tap.liquid)) boxed = false;
+                //(but where it is the liquid that is short within reach, not the way for a conduit, what makes it is built near first: laid dry for a
+                //box that never found room by it, the refabricators of generated maps stood empty all game)
+                if(lacking != null && System.getProperty("xp.drytrefit") == null) boxed = false;
                 if(!boxed){
                     //with none to be had the place is good all the same: what it lacks can be built, and then this is taken up again
                     if(lacking != null) return drop(project, "no " + lacking.name + " to be had" + where);
@@ -2522,6 +2596,10 @@ public class Planner{
             }
             if(supplied && buildable(project)){
                 springs(project, layout.parts);
+                //a fabricator added against what makes what its units are made of is a yard like any other
+                for(Part part : layout.parts){
+                    if(part.block instanceof mindustry.world.blocks.units.UnitFactory) project.things.add(new Thing(Net.Kind.yard, part.x, part.y, (Item)null, 0f));
+                }
                 return project;
             }
             brain.syncGround();
@@ -2530,7 +2608,32 @@ public class Planner{
         return null;
     }
 
+    /**
+     * A conduit to something that stands and runs on a liquid it has none of: from what of its own has that liquid to spare.
+     * @return what to lay, or null: {@link #lacking} then says if it is that none is to be had within reach
+     */
+    public @Nullable Project liquidTo(Building build, Liquid liquid, float rate){
+        lacking = null;
+        if(pipes.duct == null || late()) return null;
+        note = "no way to lead " + liquid.name + " to the " + build.block.name + " at " + build.tileX() + "," + build.tileY();
+        Project project = new Project(liquid.name + " led to the " + build.block.name);
+        IntSet into = new IntSet();
+        build.tile.getLinkedTiles(tile -> into.add(tile.pos()));
+        float shortBy = pipe(project, liquid, rate, into, build.tileX(), build.tileY());
+        if(shortBy > rate * 0.2f){
+            if(lacking != null) note = "no " + liquid.name + " to spare within reach of the " + build.block.name + " at " + build.tileX() + "," + build.tileY();
+            return drop(project, note);
+        }
+        if(project.parts.isEmpty() && project.last.isEmpty()) return drop(project, note);
+        if(!buildable(project)) return drop(project, "the game does not allow " + refused);
+        return project;
+    }
+
     private final IntSeq front = new IntSeq();
+    /** The vent a works on a vent is to go on first, by its place, or -1. */
+    public int preferVent = -1;
+    /** Whether an addition has to have every line it takes laid with it, none left for later. */
+    public boolean mustFeed;
 
     /**
      * Lets a liquid that makes its blocks faster into something that stands. Where its blueprint says

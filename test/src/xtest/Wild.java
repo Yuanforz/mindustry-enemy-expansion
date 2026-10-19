@@ -39,7 +39,7 @@ public class Wild{
                 System.out.println("######## seed " + seed + ": the generator left no place for an enemy core");
                 continue;
             }
-            Sim.begun.clear(); Sim.finished.clear(); Sim.turnedOut.clear();
+            Sim.begun.clear(); Sim.finished.clear(); Sim.turnedOut.clear(); Sim.firstUnitAt = -1f;
             Boot.slowest = Boot.slowestGame = Boot.modShare = 0;
             Sim.nearestToPlayer = Integer.MAX_VALUE;
             Boot.frames(1);
@@ -61,7 +61,15 @@ public class Wild{
                 }
                 continue;
             }
+            //-Dxtest.raid=minute: the player's side raids, as a person would: from that minute a tank and a ship are turned out at
+            //its core every forty and forty-five seconds, up to fifteen of each standing, and the game's own squad AI sends them
+            //at the enemy. its core can be destroyed, and so can the enemy's: whichever falls first ends the run
+            Raid raid = System.getProperty("xtest.raid") != null ? new Raid(enemy, Float.parseFloat(System.getProperty("xtest.raid"))) : null;
+            Sim.perSecond = raid;
             Sim.watch(minutes, enemy);
+            Sim.perSecond = null;
+            if(raid != null) System.out.println("  RAID " + raid.report());
+            System.out.println(String.format("  FIRST UNIT at minute %.1f", Sim.firstUnitAt));
 
             for(mindustry.gen.Unit unit : enemy.data().units){
                 if(unit.controller() instanceof ExpansionAI ai) System.out.println("  builder at " + unit.tileX() + "," + unit.tileY() + ": " + (ai.order != null ? "building " + ai.order.block.name : ai.haul != null ? "carrying " + ai.haul.item.name : ai.dig != null ? "mining " + ai.dig.item.name + " at " + ai.dig.wall.x + "," + ai.dig.wall.y + (unit.mineTile == null ? " (not at it)" : "") : "nothing to do") + ", holds " + unit.stack.amount + " " + (unit.hasItem() ? unit.item().name : "") + ", stock cap " + brain.stock.cap());

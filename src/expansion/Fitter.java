@@ -97,7 +97,7 @@ public class Fitter{
                         if(!tried.add(((ox + oy * world.width()) * 4 + d) * 2 + flip)) continue;
                         Layout all = blueprint.at(ox, oy, d, flip == 1, blueprint.copies);
                         int count = Math.min(prefix(all, item), want);
-                        if(count == 0) continue;
+                        if(count == 0 || count < least) continue;
 
                         //a row that can later be given what makes it faster stands one tile back from the wall, where there is room for that
                         float score = count * 100f - home - (blueprint.boosts.isEmpty() ? gap * 2f : gap == 1 ? 0f : gap == 0 ? 3f : 4f);
@@ -127,6 +127,10 @@ public class Fitter{
     public long deadline = Long.MAX_VALUE;
     /** Whether a row may go beyond how far it looks, when there is nothing nearer. */
     public boolean farOk = true;
+    /** Tiles of what a layout is added to, which may hand it things by touch: an addition stands against them on purpose. */
+    public final IntSet welcome = new IntSet();
+    /** The fewest copies a row may have to be taken at all: a shorter one is passed over for a longer one further out. */
+    public int least = 1;
 
     /** Ground where drills are not to go just now, such as a zone where what was built kept being lost. */
     public interface Avoid{
@@ -358,7 +362,7 @@ public class Fitter{
                     //the tile outside the block, next to the i-th tile of this side
                     int x = part.x + offset + (side == 0 ? size : side == 2 ? -1 : i), y = part.y + offset + (side == 1 ? size : side == 3 ? -1 : i);
                     int ix = part.x + offset + (side == 0 ? size - 1 : side == 2 ? 0 : i), iy = part.y + offset + (side == 1 ? size - 1 : side == 3 ? 0 : i);
-                    if(around.contains(Point2.pack(x, y))) continue;
+                    if(around.contains(Point2.pack(x, y)) || welcome.contains(Point2.pack(x, y))) continue;
                     //a duct of the layout faces what it feeds, and may: that is what ports are for
                     if(takes && ground.pushesInto(x, y, ix, iy) && !(part.block.rotate && part.block.isDuct && Geometry.d4x(part.rotation) == x - ix && Geometry.d4y(part.rotation) == y - iy)) return false;
                     if(makes && ground.look(x, y) && Ground.takesItems(ground.block)) return false;

@@ -331,6 +331,16 @@ public class Brain{
         secureAt = -1;
         cellLost.clear();
         cellLostAt.clear();
+        cellLostSlow.clear();
+        leftAlone.clear();
+        cellMined.clear();
+        refitRan.clear();
+        refitSince.clear();
+        sideKept.clear();
+        t2Vent = -1;
+        t2Tiles.clear();
+        t2LookedAt = -1e9f;
+        fielded = false;
         firsts.clear();
         inherited = looked = ventsKnown = false;
         ground.vent.clear();
@@ -481,7 +491,8 @@ public class Brain{
         stock.update(Time.delta);
         director.tick(Time.delta);
         //the player's units stand where they are until they are sent somewhere: playing that side, the mod sends them
-        if(side != null) marshal(team().data());
+        //(-Dxp.nomarshal=<team>: not for that team, whose units the game's own squad AI leads instead; a test setting the two against each other)
+        if(side != null && !team().name.equals(System.getProperty("xp.nomarshal"))) marshal(team().data());
 
         clock += Time.delta;
         if((thinkTimer += Time.delta) < thinkPeriod) return;
@@ -548,6 +559,52 @@ public class Brain{
             if(build == null || !build.enabled || atCap(build)) continue;
             health.put(thing, Mathf.lerp(health.get(thing, 1f), Mathf.clamp(build.efficiency), 0.012f));
         }
+        for(Building build : team().data().buildings){
+            if(!(build instanceof Reconstructor.ReconstructorBuild refit)) continue;
+            if(!refitSince.containsKey(build.pos())) refitSince.put(build.pos(), clock);
+            if(refit.payload != null && build.efficiency > 0f) refitRan.add(build.pos());
+        }
+    }
+
+    /** Refabricators of its own that have been seen at work, and when each was first seen standing. */
+    private final IntSet refitRan = new IntSet();
+    private final IntFloatMap refitSince = new IntFloatMap();
+
+    /** The refabricator a building is of the works of: itself, the one a fabricator hands its units to, or one it stands against and makes something for; or null. */
+    private static @Nullable Building worksOf(@Nullable Building build){
+        if(build == null) return null;
+        if(build instanceof Reconstructor.ReconstructorBuild) return build;
+        if(build instanceof UnitFactory.UnitFactoryBuild) return build.front() instanceof Reconstructor.ReconstructorBuild refit ? refit : null;
+        if(build.block instanceof GenericCrafter) return build.proximity.find(other -> other instanceof Reconstructor.ReconstructorBuild);
+        return null;
+    }
+
+    /**
+     * A works for better units of its own that stands and has never yet been at work, for want of something it takes, and has
+     * not stood so long that it is given up on; or null. Until it runs, another fed by boxes would only stand beside it unfed.
+     */
+    private @Nullable Building unrunWorks(){
+        for(Building build : team().data().buildings){
+            if(!(build instanceof Reconstructor.ReconstructorBuild) || refitRan.contains(build.pos()) || atCap(build)) continue;
+            if(clock - refitSince.get(build.pos(), clock) > 60f * 60f * Integer.getInteger("xp.refitwait", 10)) continue;
+            return build;
+        }
+        return null;
+    }
+
+    /**
+     * Whether boxes are carried to another works than this one's that has never yet run: one is fed in full before the next is
+     * begun. (four ferries went to two electrolyzers, one refabricator and one fabricator of three works on the fifth sector,
+     * and none of the three had all it takes)
+     */
+    private boolean ferriedElsewhere(Building hungry){
+        Building works = worksOf(hungry);
+        if(works == null || System.getProperty("xp.ferryspread") != null) return false;
+        return ferries.contains(ferry -> ferry.works != -1 && ferry.works != works.pos() && !refitRan.contains(ferry.works) && world.build(ferry.works) instanceof Reconstructor.ReconstructorBuild other && other.team == team() && other.pos() == ferry.works);
+    }
+
+    private static int ferryCap(){
+        return Integer.getInteger("xp.ferrycap", 6);
     }
 
     /** The factory or yard a note of the net stands for, once it is standing. */
@@ -1702,7 +1759,7 @@ public class Brain{
             IntSet.IntSetIterator next = at.near.iterator();
             while(next.hasNext) seen += atlas.zones.get(next.next()).peakDps * 0.5f;
             float turrets = 0f;
-            against[0] = Math.max(against[0], against[0] + seen * 0.5f);
+            against[0] = Math.max(against[0], against[0] + seen * peakShare);
         }
         //what is fired at it from the side the group comes from hits whatever stands in the way first: walls round a turret
         //have to be got through before the turret itself is hurt
@@ -1763,6 +1820,9 @@ public class Brain{
         fightIds.clear();
         fightHurtAt = -1f;
     }
+
+    /** How much of the most of the other side's army seen about a place is counted as there when a group comes to it. */
+    static final float peakShare = Float.parseFloat(System.getProperty("xp.peakshare", "0.5"));
 
     /** The last sizing up as a number: above one, the group brings the thing down with the margin wanted. */
     private float lastEdge;
@@ -2078,6 +2138,11 @@ public class Brain{
             }
             notes.put("refits", refits.length() == 0 ? "none" : refits.toString());
         }
+        //a conduit first, from what makes the liquid and has it to spare; where none has any within reach, something that makes it
+        //is built near; and boxes only where neither can be done. (laid dry, the refabricators of generated maps waited all game for a
+        //box that never found room by them, with electrolyzers fifty tiles off standing full of hydrogen)
+        Project piped = System.getProperty("xp.ferryliquid") != null ? null : pipeToRefits(data);
+        if(piped != null) return piped;
         Project wet = liquidFerry(data);
         if(wet != null) return wet;
         //and what it is short of in items, where no line brings it, out of the plenty its cores hold: it, and the fabricator
@@ -2087,6 +2152,30 @@ public class Brain{
             if(!betterUnits || shortOf(build) == null) continue;
             Project dry = ferryFor(build);
             if(dry != null) return dry;
+        }
+        return null;
+    }
+
+    /** A conduit to a refabricator that stands without what it runs on, or something that makes that, near it. */
+    private @Nullable Project pipeToRefits(TeamData data){
+        for(Building build : data.buildings){
+            if(!(build instanceof Reconstructor.ReconstructorBuild) || build.liquids == null || planner.late()) continue;
+            for(Rates.Flow need : Rates.liquidNeeds(build.block)){
+                if(build.liquids.get(need.liquid) > 1f) continue;
+                String key = "pipeto:" + build.pos() + ":" + need.liquid.name;
+                if(!ready(key)) continue;
+                Project project = planner.liquidTo(build, need.liquid, need.rate);
+                notes.put(key, project != null ? "laid a conduit of " + need.liquid.name + " to it" : planner.note);
+                if(project != null) return done(key, project);
+                if(planner.lacking != null){
+                    //(not waited for here: this is looked at every round, before anything else, and what the rest of the round would do
+                    //is not to wait on it)
+                    Project spring = provideLiquid(planner.lacking, build.tileX(), build.tileY(), data);
+                    saving = false;
+                    if(spring != null) return spring;
+                }
+                retry.put(key, clock + retryPeriod / 2f);
+            }
         }
         return null;
     }
@@ -2472,6 +2561,15 @@ public class Brain{
         return null;
     }
 
+    private void carry(ExpansionAI ai, Object[] ferried){
+        ai.stopDigging();
+        ai.carry = (Building)ferried[0];
+        ai.carryTo = null;
+        ai.carrySpot = (Vec2)ferried[1];
+        ai.carryFerry = lastFerry;
+        notes.put("ferry", "a builder carries the box at " + ai.carry.tileX() + "," + ai.carry.tileY() + " to " + (int)(ai.carrySpot.x / tilesize) + "," + (int)(ai.carrySpot.y / tilesize));
+    }
+
     private void assign(ExpansionAI ai, Unit unit, TeamData data){
         //builders work from this far away
         reach = (unit.type.buildRange - tilesize * 2f) * 0.8f;
@@ -2490,6 +2588,14 @@ public class Brain{
         //deciding what to build next is not a job for anyone in particular
         plan(data);
 
+        //a box for a works that stands paid for goes before more building: what it has brings nothing till it runs, and the core's
+        //unit is the only one to carry it. (on the fifth sector it built and rebuilt for the last quarter hour while the box stood
+        //full at its filling place.) not while home is being hit: then what it builds is what keeps it
+        Object[] ferried = System.getProperty("xp.buildfirst") != null || overrun(data) ? null : ferryJob(unit, data);
+        if(ferried != null){
+            carry(ai, ferried);
+            return;
+        }
         //with the enemy building by itself, its builders have only the carrying and the mining to do
         Order order = Options.hands.on() ? null : nextOrder(data);
         Haul spare = order == null && Options.haul.on() ? surplus(data, unit, home) : null;
@@ -2530,14 +2636,9 @@ public class Brain{
         if(!ai.carryHow.isEmpty()) notes.put("carry", ai.carryHow);
         if(!carryRefused.isEmpty()) notes.put("carryrefused", carryRefused);
         //a box to ferry to a yard no line reaches, or back to be filled
-        Object[] ferried = ferryJob(unit, data);
+        ferried = ferryJob(unit, data);
         if(ferried != null){
-            ai.stopDigging();
-            ai.carry = (Building)ferried[0];
-            ai.carryTo = null;
-            ai.carrySpot = (Vec2)ferried[1];
-            ai.carryFerry = lastFerry;
-            notes.put("ferry", "a builder carries the box at " + ai.carry.tileX() + "," + ai.carry.tileY() + " to " + (int)(ai.carrySpot.x / tilesize) + "," + (int)(ai.carrySpot.y / tilesize));
+            carry(ai, ferried);
             return;
         }
         //with nothing to build and nothing to carry: what of its own is hurt is mended first, where that can be done in peace
@@ -2973,7 +3074,11 @@ public class Brain{
     public static int unitCap(TeamData data){
         int same = Math.max(state.rules.unitCapVariable ? state.rules.unitCap + data.unitCap : state.rules.unitCap, 0);
         //an enemy with many cores would by that rule be allowed far more than a game runs well with
-        return Math.min(Math.round(same * Options.unitCap.fraction()), Options.unitMost.get());
+        //(and never more than the game lets it have: the setting can't raise that, and at four times the game's number, the
+        //strongest setting's, it took a kind at fifteen of fifteen for a quarter of what it may have, never thought better units due,
+        //and put up yards for kinds that stood at their number)
+        int most = Math.min(Math.round(same * Options.unitCap.fraction()), Options.unitMost.get());
+        return System.getProperty("xp.overcap") != null ? most : Math.min(most, same);
     }
 
     /** Output that is piling up in one of the base's own factories or drills, to be carried to the core. */
@@ -3446,6 +3551,7 @@ public class Brain{
         retireLines();
         posture();
 
+        reserveT2Vent(data);
         //a refabricator standing with nothing to run on gets its liquid ferried, whatever else is going on: it is the one way
         //better units come of it
         Project wet = refitsNote(data);
@@ -3470,7 +3576,7 @@ public class Brain{
         }
         //what takes things comes before what makes them: with no yard yet, the first comes right after what is needed first
         //and the turrets asked for; the sources are then added for what it takes
-        if(Options.ratios.on() && director.posture != Director.Posture.bootstrap && net.count(Net.Kind.yard, null) == 0){
+        if(Options.ratios.on() && director.posture != Director.Posture.bootstrap && openingYard(data)){
             Seq<Director.Goal> order = new Seq<>(first);
             order.remove(Director.Goal.firstYard);
             int at = 0;
@@ -3505,6 +3611,42 @@ public class Brain{
             economyAt = economyFirst ? at : -1;
         }else{
             economyAt = -1;
+        }
+        //what a yard is made of lying about in its cores, twice over, with the yards it has all supplied: another yard comes
+        //before more drills. it is units it is short of, not what they are made of. (with a single yard, the cores of generated
+        //maps stood at a thousand or two silicon by the fifteenth minute while drills went on being added)
+        if(Options.ratios.on() && director.posture != Director.Posture.bootstrap && System.getProperty("xp.noidleyards") == null && unitsIdle(data)){
+            Seq<Director.Goal> order = new Seq<>(first);
+            order.remove(Director.Goal.army);
+            int at = 0;
+            while(at < order.size && (order.get(at) == Director.Goal.mend || order.get(at) == Director.Goal.owed || order.get(at) == Director.Goal.arm || order.get(at) == Director.Goal.activate || order.get(at) == Director.Goal.staples || order.get(at) == Director.Goal.task || order.get(at) == Director.Goal.firstYard)) at++;
+            order.insert(at, Director.Goal.army);
+            first = order.toArray(Director.Goal.class);
+            if(economyAt >= at) economyAt++;
+            notes.put("idleyards", "yards first: what one is made of lies about");
+        }
+        //units before turrets: until its first unit is out, no turret goes up but where its home is being overrun. turrets in
+        //the opening cost what the first yard waits for (a breach is three quarters of a yard's silicon), and units hold home as
+        //well. (people who play it call the early turret a trap; on generated maps the first turret went up a minute before the
+        //first yard, and half the openings had no unit by the tenth minute)
+        if(!fielded) fielded = data.units.contains(unit -> !(unit.controller() instanceof ExpansionAI) && !unit.spawnedByCore);
+        //(but not where waves are sent against it on a timer: those come whatever it does, and the turrets that meet them have to
+        //be up and fed before the first. on the sector won by holding out its waves, every opening fell to the first wave with no
+        //turret up: what the opening had laid out kept its builder busy until the wave was at the core)
+        boolean waveDue = state.rules.waves && state.rules.waveTeam != team() && state.rules.waveTimer;
+        if(System.getProperty("xp.notes") != null) notes.put("wavedue", waveDue + ": waves " + state.rules.waves + ", wave team " + state.rules.waveTeam + " (we " + team() + "), timer " + state.rules.waveTimer + ", next in " + (int)(state.wavetime / 60f) + " s, fielded " + fielded);
+        if(!fielded && System.getProperty("xp.turretsfirst") == null && director.posture != Director.Posture.bootstrap && !overrun(data) && !waveDue){
+            Seq<Director.Goal> order = new Seq<>(first);
+            order.removeAll(goal -> goal == Director.Goal.cover || goal == Director.Goal.defence || goal == Director.Goal.firstPost);
+            if(order.size != first.length){
+                first = order.toArray(Director.Goal.class);
+                if(economyAt >= first.length) economyAt = -1;
+                //where the drills were put ahead of the rest, they still are
+                if(economyAt >= 0){
+                    int at = order.indexOf(Director.Goal.ore);
+                    economyAt = at;
+                }
+            }
         }
         for(int i = 0; i < first.length; i++){
             //when a round ran out of time with nothing to show, the next begins one goal further down the list and comes to
@@ -3896,7 +4038,7 @@ public class Brain{
                 yield null;
             }
             //an opponent with no army is no opponent: its first yard comes before anything else it would like
-            case firstYard -> net.count(Net.Kind.yard, null) == 0 && Options.yards.on() ? army(data, targets) : null;
+            case firstYard -> openingYard(data) && Options.yards.on() ? army(data, targets) : null;
             //and with an army begun, its first turrets: one for each core it has
             //once something of its own has been destroyed the turret does not wait for the yard
             case firstPost -> net.count(Net.Kind.post, null) < data.cores.size ? defence(data, targets) : null;
@@ -4609,6 +4751,179 @@ public class Brain{
         return out;
     }
 
+    /** The furnace a yard is being fitted against just now, whose kept side is let go meanwhile; -1 for none. */
+    private int yardSideFor = -1;
+
+    /**
+     * Keeps clear the first side of a factory where a fabricator added against it would stand, with the tile its other
+     * supply comes in by and the ground its units leave over, if that is all open. A furnace laid out with its lines
+     * all round it has no room for one later: generated maps' furnaces never had.
+     * @return whether a side was kept
+     */
+    public boolean keepYardSide(Block block, int x, int y){
+        return keepYardSide(block, x, y, true);
+    }
+
+    /** Whether the factories it lays out are to have a side kept for a yard. */
+    public boolean yardSides(){
+        return System.getProperty("xp.nofurnaceyard") == null && System.getProperty("xp.nokeepside") == null;
+    }
+
+    /** Which side was kept by each furnace, by its place: the blueprint's index and the flip, so that the same one stays kept. */
+    private final IntIntMap sideKept = new IntIntMap();
+    /**
+     * Whether a yard is still owed to the opening: the first, and then one of a second kind once the first is turning
+     * units out. What it may have is counted kind by kind, so the second kind is what lets the army it masses grow past the
+     * first kind's number. (with the second yard left to its turn, it came at the tenth to fifteenth minute, and the army
+     * stood at fifteen or sixteen at the twentieth with the cores full)
+     */
+    private boolean openingYard(TeamData data){
+        int yards = net.count(Net.Kind.yard, null);
+        if(yards == 0) return true;
+        if(yards >= 2 || System.getProperty("xp.oneopening") != null) return false;
+        return fielded && starving(Net.Kind.yard, null) == null;
+    }
+
+    /** Whether its cores hold what another yard of a kind it may build takes twice over, with every yard it has supplied. */
+    private boolean unitsIdle(TeamData data){
+        if(net.count(Net.Kind.yard, null) == 0 || starving(Net.Kind.yard, null) != null) return false;
+        if(net.count(Net.Kind.yard, null) - retiring.size >= data.cores.size * Options.yardsPerCore.get()) return false;
+        for(Blueprint kind : yardKinds(data)){
+            if(kind.parts.contains(part -> part.block instanceof Reconstructor)) continue;
+            if(stock.covers(ItemStack.mult(kind.cost(), 2))) return true;
+        }
+        return false;
+    }
+
+    /** Whether a unit of its own that fights has ever stood: until then the yard comes before any turret. */
+    private boolean fielded;
+
+    /** @param commit whether to keep the side, or only to say whether there is one */
+    public boolean keepYardSide(Block block, int x, int y, boolean commit){
+        if(!yardSides()) return false;
+        lastSideNote = "";
+        int at = Point2.pack(x, y), was = sideKept.get(at, -1);
+        //the side kept before first, as long as it is still open: else what was laid round the furnace since, kept off that
+        //side, would have another chosen each time and every side built over in turn
+        for(int round = was >= 0 ? 0 : 1; round < 2; round++)
+        for(int index = 0; index < blueprints.size; index++){
+            Blueprint way = blueprints.get(index);
+            if(!way.addon() || way.main() != block || way.parts.size < 2 || !(way.parts.get(1).block instanceof UnitFactory) || !way.allowed(this::may)) continue;
+            for(int flip = 0; flip < 2; flip++){
+                if(round == 0 && index * 2 + flip != was) continue;
+                Layout layout = way.at(x, y, 0, flip == 1, 1);
+                Part fab = layout.parts.get(1);
+                sideTiles.clear();
+                Shape.tiles(fab, sideTiles);
+                for(Port port : layout.ports) sideTiles.add(Point2.pack(port.x, port.y));
+                boolean free = true;
+                for(IntSet.IntSetIterator it = sideTiles.iterator(); it.hasNext && free; ){
+                    int pos = it.next();
+                    if(!sideOpen(pos)) free = false;
+                }
+                if(!free){
+                    if(commit && System.getProperty("xp.notes") != null){
+                        int bad = -1;
+                        for(IntSet.IntSetIterator it = sideTiles.iterator(); it.hasNext; ){ int pos = it.next(); if(!sideOpen(pos)){ bad = pos; break; } }
+                        Tile t = bad == -1 ? null : world.tile(bad);
+                        if(way.parts.get(1).block == Blocks.tankFabricator) lastSideNote += way.name.replace("tank-yard-on-furnace-", "") + flip + ":" + (t == null ? "?" : (t.build != null ? t.build.block.name : t.solid() ? "solid" : ground.planned(t.x, t.y) != null ? "planned " + ground.planned(t.x, t.y).block.name : ground.kept.contains(bad) ? "kept" : ground.ore.contains(bad) ? "ore" : ground.lane.contains(bad) ? "lane" : ground.beams.contains(bad) ? "beams" : ground.vent.contains(bad) ? "vent" : ground.apron.containsKey(bad) ? "apron" : !world.isInMapArea(t.x, t.y) ? "edge" : "rule")) + " ";
+                    }
+                    continue;
+                }
+                if(!commit) return true;
+                sideKept.put(at, index * 2 + flip);
+                fronts.clear();
+                frontOf(fab.block, fab.x, fab.y, fab.rotation, fronts);
+                for(IntSet.IntSetIterator it = sideTiles.iterator(); it.hasNext; ) ground.kept.add(it.next());
+                for(int i = 0; i < fronts.size; i++) if(sideOpen(fronts.get(i))) ground.kept.add(fronts.get(i));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether a tile is ground a block could stand on now, what was only shunned for a while counting as open. */
+    private boolean sideOpen(int pos){
+        int x = Point2.x(pos), y = Point2.y(pos);
+        Tile tile = world.tile(x, y);
+        return tile != null && tile.build == null && !tile.solid() && !tile.floor().isDeep() && tile.floor().placeableOn && world.isInMapArea(x, y)
+            && ground.planned(x, y) == null && !ground.kept.contains(pos) && !ground.ore.contains(pos) && !ground.vent.contains(pos) && !ground.beams.contains(pos)
+            && !scripted.contains(pos) && territory.ours(x, y) && workable(x, y);
+    }
+
+    private final IntSet sideTiles = new IntSet();
+    public String lastSideNote = "";
+    public void noteSide(boolean kept, int x, int y){
+        notes.put("keepside", (kept ? "kept a side of the furnace at " : "no side free by the furnace at ") + x + "," + y + (kept ? "" : " (" + lastSideNote + ")"));
+    }
+
+    /**
+     * A fabricator added right against a factory that makes something its units are made of, so that the factory hands
+     * that over by touch: on the side of it that is free, its other supply led from the lines. Null where no factory has
+     * room by it, or one has a yard against it already.
+     */
+    private @Nullable Project onFurnace(Block fab, TeamData data){
+        if(System.getProperty("xp.nofurnaceyard") != null || !(fab instanceof UnitFactory factory) || factory.plans.isEmpty()) return null;
+        Seq<Blueprint> ways = blueprints.select(way -> way.addon() && way.parts.size > 1 && way.parts.get(1).block == fab && usable(way));
+        if(ways.isEmpty()) return null;
+        ItemStack[] makes = factory.plans.first().requirements;
+        int tried = 0;
+        for(Building build : data.buildings){
+            if(planner.late() || tried >= 3) break;
+            if(!(build.block instanceof GenericCrafter crafter) || crafter.outputItems == null || !world.isInMapArea(build.tileX(), build.tileY())) continue;
+            if(!Structs.contains(crafter.outputItems, out -> Structs.contains(makes, stack -> stack.item == out.item))) continue;
+            if(rested.get(build.pos(), 0f) > clock || build.proximity.contains(other -> other instanceof UnitFactory.UnitFactoryBuild)) continue;
+            Seq<Blueprint> here = ways.select(way -> way.main() == build.block);
+            if(here.isEmpty()) continue;
+            boolean taken = false;
+            for(Blueprint way : blueprints){
+                if(way.addon() && way.main() == build.block && way.parts.size > 1 && way.parts.get(1).block instanceof UnitFactory && added(way, build)) taken = true;
+            }
+            if(taken) continue;
+            tried++;
+            //the side kept for it is let go while it is fitted; and the places tried for the furnace and given up are given up
+            //no more, now that the furnace stands
+            for(int dx = -6; dx <= 6; dx++) for(int dy = -6; dy <= 6; dy++) unshun(build.tileX() + dx, build.tileY() + dy);
+            yardSideFor = build.pos();
+            try{
+                syncGround();
+                StringBuilder why = new StringBuilder();
+                for(Blueprint way : here){
+                    if(planner.late()) break;
+                    if(!pays(way.cost())) continue;
+                    planner.mustFeed = true;
+                    Project project;
+                    try{
+                        project = planner.addon(way, build);
+                    }finally{
+                        planner.mustFeed = false;
+                    }
+                    if(project != null){
+                        notes.put("onfurnace", way.name + " against the " + build.block.name + " at " + build.tileX() + "," + build.tileY());
+                        return project;
+                    }
+                    why.append(planner.note.replace(way.name + ": ", way.name.substring(way.name.lastIndexOf('-') + 1) + ": "));
+                    if(System.getProperty("xp.notes") != null){
+                        why.append(" [");
+                        for(int flip = 0; flip < 2; flip++){
+                            Part fabPart = way.at(build.tileX(), build.tileY(), 0, flip == 1, 1).parts.get(1);
+                            for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++) why.append(whyNot(fabPart.x + dx, fabPart.y + dy) == ' ' ? '.' : whyNot(fabPart.x + dx, fabPart.y + dy));
+                            why.append(flip == 0 ? "|" : "");
+                        }
+                        why.append("]");
+                    }
+                    why.append("; ");
+                }
+                notes.put("onfurnace", why.toString());
+            }finally{
+                yardSideFor = -1;
+            }
+            syncGround();
+            if(!planner.timedOut) rested.put(build.pos(), clock + shunTime);
+        }
+        return null;
+    }
+
     /** Whether an addition is on a building already, standing or laid out. */
     private boolean added(Blueprint addition, Building build){
         if(addition.parts.size < 2) return true;
@@ -4691,6 +5006,9 @@ public class Brain{
             if(layout == null) continue;
             for(Liquid liquid : boosters(layout.blueprint)){
                 if((asset.boosted & (1 << liquid.id)) != 0 || !obtainable(liquid)) continue;
+                //what refabricators run on is theirs, on a map where there is tungsten to build them: (the hydrogen of every electrolyzer
+                //it had went into making its drills faster, one line of a hundred blocks after another, and its refabricators stood dry)
+                if(reservedForUnits(liquid)) continue;
                 String key = "boost:" + liquid.name;
                 tried++;
                 Project project = asset.kind == Net.Kind.post ? worthIt(planner.boost(layout, liquid, liquidRouter), layout) : planner.boost(layout, liquid, liquidRouter);
@@ -5101,6 +5419,28 @@ public class Brain{
                     return null;
                 }
                 Project project = planner.mine(wall, item, copies, reachFor(item));
+                //a mine of what it has a source of already, whose line and power cost more than it brings in in a few minutes,
+                //is not worth it: the nearest wall left is too far, and what it would cost goes into units. (on generated maps,
+                //a sixth of the mines laid out had sixty blocks or more and held half of all the blocks: lines and nodes took
+                //four tenths of the beryllium of the first fifteen minutes, yards a twentieth)
+                //(not for what the recipes are short of: there the far wall is all there is, and on the sector won by holding out
+                //its waves, beryllium mines held back so left its yards no line of it to stand by, and fifteen games in sixteen
+                //were lost where they had been won)
+                boolean shortByRecipe = demand[item.id] > supply[item.id] * 1.1f + 0.05f;
+                if(project != null && hasSource(item) && !shortByRecipe && System.getProperty("xp.anymine") == null){
+                    float rate = 0f;
+                    for(Net.Thing thing : project.things) if(thing.kind == Net.Kind.mine && thing.item == item) rate += thing.rate;
+                    float spent = 0f;
+                    for(Part part : project.parts) spent += total(part.block.requirements);
+                    for(Part part : project.last) spent += total(part.block.requirements);
+                    float minutes = spent / Math.max(rate * 60f, 0.1f);
+                    if(minutes > Integer.getInteger("xp.payback", 3)){
+                        notes.put(key, "the nearest mine left costs " + (int)spent + " for " + Strings.fixed(rate * 60f, 0) + " a minute: not worth it now");
+                        syncGround();
+                        retry.put(key, clock + retryPeriod * 3f);
+                        return null;
+                    }
+                }
                 //no wall with it left within reach: what there is of it is taken up
                 if(project == null && planner.lacking == null && !planner.timedOut && planner.note.endsWith("no wall with it in reach") && home.isEmpty()) minedOut.put(item.id, clock);
                 if(project != null) minedOut.remove(item.id, 0f);
@@ -5375,7 +5715,10 @@ public class Brain{
             Project works = worksAtVent(data);
             if(works != null || saving) return works;
         }
-        if(!full && Options.refit.on() && net.count(Net.Kind.yard, null) >= 2 && mostOfAKind(data) >= unitCap(data) * 0.6f){
+        //(or as soon as the tungsten for it comes in: with its yards held to their units' number first, the first refabricator went
+        //up at the nineteenth minute with two thousand tungsten in the cores, and no unit of the second tier was ever made)
+        boolean tungstenIn = System.getProperty("xp.latert2") == null && upgradeDue(data);
+        if(!full && Options.refit.on() && net.count(Net.Kind.yard, null) >= (tungstenIn ? 1 : 2) && (tungstenIn || mostOfAKind(data) >= unitCap(data) * 0.6f)){
             Project added = additions(data);
             if(added != null || saving) return added;
             //with no room by any of them for what would make their units better, a better yard goes up where there is room,
@@ -5412,6 +5755,13 @@ public class Brain{
             if(starved >= 2) return null;
         }
         Seq<Blueprint> kinds = yardKinds(data);
+        //the yards of the opening are of the first tier, of what it has already: better units only once the first tier is
+        //massed, and the opening is not spent on the tungsten they wait for (a tungsten drill of three hundred blocks went up
+        //for a first yard, and the first unit came at the seventeenth minute)
+        if(openingYard(data) && System.getProperty("xp.worksopening") == null){
+            Seq<Blueprint> plain = kinds.select(kind -> !kind.parts.contains(part -> part.block instanceof Reconstructor) && lacks(kind) == null);
+            if(!plain.isEmpty()) kinds = plain;
+        }
         notes.put("yardkinds", kinds.toString(", ", blueprint -> blueprint.name + (ready("yard:" + blueprint.name) ? "" : " (not ready)")));
         //in the place of an old one, only what is better than it
         int least = old == null ? 0 : grade(old);
@@ -5429,7 +5779,18 @@ public class Brain{
             //other layouts, led their lines. (skipped as a kind, the sixth sector's works led its lines never went up, and it won at
             //the thirty-seventh minute where it had at the twenty-first; saved for at any time, it held up all else on the fifth)
             Seq<Blueprint> ways = alike(kind);
-            if(System.getProperty("xp.noboxworks") != null || !(plenty(Items.silicon) && plenty(Items.tungsten))){
+            //(enough tungsten is what pays for the works and its first units, and keeps coming: plenty of it, as of silicon, came
+            //only in the last half hour of the fifth sector, and better units are what take its cores: given fifteen at the
+            //thirtieth minute, seven games of eight took one)
+            boolean tungstenEnough = hasSource(Items.tungsten) && stock.have(Items.tungsten) >= Integer.getInteger("xp.worksw", 300);
+            //and not while a works stands that has never yet run: another fed by boxes would stand beside it as unfed. (three
+            //stood so on the fifth sector, each a part fed)
+            Building unrun = System.getProperty("xp.manyworks") != null ? null : unrunWorks();
+            if(unrun != null) notes.put("unrun", "the works at " + unrun.tileX() + "," + unrun.tileY() + " has not yet run");
+            //(or once better units are due: with the first tier's yards spending the silicon as it came, its cores were full of it only
+            //at the twentieth minute, and the works it then put up had not run by the twenty-fifth)
+            boolean boxesDue = (plenty(Items.silicon) && tungstenEnough) || (System.getProperty("xp.plentybox") == null && upgradeDue(data));
+            if(System.getProperty("xp.noboxworks") != null || !boxesDue || unrun != null){
                 ways.removeAll(way -> way.parts.contains(part -> part.block instanceof Reconstructor) && !way.ports.contains(port -> port.role == Role.in));
             }
             if(ways.isEmpty()) continue;
@@ -5448,6 +5809,14 @@ public class Brain{
                 saveFor(blueprint.main(), blueprint.cost());
                 notes.put(key, "saving for it");
                 return null;
+            }
+            //right against a furnace of what its units are made of, before anywhere else: the furnace hands it what it makes
+            //with no line at all, and before its own line to a core gets any. (fed off the lines to the cores, the yards of
+            //generated maps stood short of silicon half the opening with silicon coming home: no unit by the tenth minute in
+            //half of them)
+            if(!blueprint.parts.contains(part -> part.block instanceof Reconstructor)){
+                Project touching = onFurnace(blueprint.main(), data);
+                if(touching != null) return done(key, touching);
             }
             Seq<int[]> spots = yardSpots(blueprint);
             //one fed by boxes alone has no lines to stand by: any safe open ground near home will do, after the places by lines
@@ -5489,6 +5858,60 @@ public class Brain{
                 return null;
             }
         }
+        //none of them had a place by its lines: a yard of the opening goes up as a cell of its own by the nearest ore it is
+        //made of, with drills of its own for the yard and for a furnace that hands the yard what it makes by touch, and crushers
+        //for the furnace. (fitted only by lines that ran to the cores, a sixth of generated maps had no yard by the fifteenth
+        //minute: no place by them)
+        if(openingYard(data) && System.getProperty("xp.nohomecell") == null){
+            Project cell = homeCell(data, kinds);
+            if(cell != null || saving) return cell;
+        }
+        return null;
+    }
+
+    /** A yard with its own supply, as an outpost has, by the ore nearest home that its units are made of. */
+    private @Nullable Project homeCell(TeamData data, Seq<Blueprint> kinds){
+        if(!ready("homecell") || planner.late()) return null;
+        Blueprint crushers = find(Kind.quarry);
+        if(crushers == null) return null;
+        for(Blueprint yard : kinds){
+            if(yard.parts.contains(part -> part.block instanceof Reconstructor)) continue;
+            for(Port takesOre : yard.ports){
+                if(takesOre.role != Role.in || survey.ore(takesOre.item).isEmpty()) continue;
+                Item ore = takesOre.item;
+                Blueprint drills = mineFor(ore);
+                Port other = yard.ports.find(port -> port.role == Role.in && port.item != ore);
+                if(drills == null || other == null) continue;
+                Blueprint furnace = maker(other.item);
+                if(furnace == null || !furnace.has(Role.in, ore) || !furnace.has(Role.in, Items.sand)) continue;
+                ItemStack[] whole = sum(sum(sum(yard.cost(), furnace.cost()), ItemStack.mult(crushers.cost(), 2)), ItemStack.mult(drills.cost(), 4));
+                //not saved up for: it is what is left to try, and where it can't be placed what was kept back for it would be lost
+                if(!pays(whole)){
+                    notes.put("homecell", "not enough yet for a " + yard.name + " of its own by the " + ore.name);
+                    return null;
+                }
+                //the face of that ore nearest home
+                IntSeq faces = survey.ore(ore);
+                int best = -1, bestFar = Integer.MAX_VALUE;
+                for(int i = 0; i < faces.size; i++){
+                    int x = survey.x(faces.get(i)), y = survey.y(faces.get(i)), far = territory.fromHome(x, y);
+                    if(far < bestFar && territory.ours(x, y) && ground.open(x, y)){
+                        bestFar = far;
+                        best = faces.get(i);
+                    }
+                }
+                if(best == -1) continue;
+                Project project = planner.outpost(yard, drills, ore, crushers, furnace, survey.x(best), survey.y(best));
+                if(project == null){
+                    syncGround();
+                    notes.put("homecell", planner.note);
+                    continue;
+                }
+                notes.put("homecell", "laid out a " + yard.name + " of its own by the " + ore.name + " at " + survey.x(best) + "," + survey.y(best));
+                return done("homecell", project);
+            }
+        }
+        retry.put("homecell", clock + retryPeriod);
         return null;
     }
 
@@ -5653,6 +6076,9 @@ public class Brain{
             if(build instanceof UnitFactory.UnitFactoryBuild yard){
                 if(yard.currentPlan == -1) continue;
                 yardStands = true;
+                //one held still with its units at their number takes nothing: counted, the silicon its lines carried past it was spoken for
+                //and the works of better units, wanting it, was told none was to spare
+                if(!yard.enabled && System.getProperty("xp.countheld") == null) continue;
                 UnitFactory.UnitPlan plan = ((UnitFactory)build.block).plans.get(yard.currentPlan);
                 for(ItemStack stack : plan.requirements) demand[stack.item.id] += stack.amount * 60f / plan.time;
             }else if(build.block instanceof GenericCrafter && Rates.inputs(build.block) != null){
@@ -5768,6 +6194,8 @@ public class Brain{
     /** A box carried between something that makes an item and something that is short of it, where no line could be led. */
     static class Ferry{
         int consumer, fillX, fillY, dropX, dropY;
+        /** The refabricator whose works the consumer is of, or -1. */
+        int works = -1;
         @Nullable Item item;
         @Nullable Liquid liquid;
         /** For a ferry of items: the places a box is filled at, each against something that makes one of them: x, y, item id. */
@@ -5794,7 +6222,7 @@ public class Brain{
      * unit: each stood with no hydrogen led to it, and what is short of a liquid was never seen as short of anything)
      */
     private @Nullable Project liquidFerry(TeamData data){
-        if(System.getProperty("xp.noferry") != null || ferries.size >= 4 || !may(Blocks.reinforcedLiquidContainer)) return null;
+        if(System.getProperty("xp.noferry") != null || ferries.size >= ferryCap() || !may(Blocks.reinforcedLiquidContainer)) return null;
         for(Building build : data.buildings){
             //a refabricator, or what makes the liquid it runs on against it (an electrolyzer short of water by a refabricator)
             boolean feedsRefit = System.getProperty("xp.nowaterferry") == null && build.block instanceof GenericCrafter && build.proximity.contains(other -> other instanceof Reconstructor.ReconstructorBuild);
@@ -5809,6 +6237,9 @@ public class Brain{
             }
             if(liquid == null || build.liquids == null || build.liquids.get(liquid) > wanted * 60f) continue;
             Liquid needed = liquid;
+            //what stands against it and makes it hands it over by itself: that one is what is seen to, for what it is short of
+            if(build instanceof Reconstructor.ReconstructorBuild && System.getProperty("xp.ferrytouching") == null && build.proximity.contains(other -> givesOff(other, needed))) continue;
+            if(ferriedElsewhere(build)) continue;
             if(ferries.contains(ferry -> ferry.consumer == build.pos() && ferry.liquid == needed)) continue;
             String key = "ferry:" + build.pos() + ":" + liquid.name;
             if(!ready(key)) continue;
@@ -5841,6 +6272,7 @@ public class Brain{
             }
             Ferry ferry = new Ferry();
             ferry.consumer = build.pos();
+            ferry.works = worksOf(build) == null ? -1 : worksOf(build).pos();
             ferry.liquid = liquid;
             ferry.fillX = planner.ferryFillX;
             ferry.fillY = planner.ferryFillY;
@@ -5866,7 +6298,7 @@ public class Brain{
      */
     private @Nullable Project ferryFor(Building hungry){
         Item item = shortOf(hungry);
-        if(item == null || System.getProperty("xp.noferry") != null || ferries.size >= 4 || !may(Blocks.reinforcedContainer) || !may(Blocks.ductUnloader)) return null;
+        if(item == null || System.getProperty("xp.noferry") != null || ferries.size >= ferryCap() || !may(Blocks.reinforcedContainer) || !may(Blocks.ductUnloader)) return null;
         Ferry going = ferries.find(ferry -> ferry.consumer == hungry.pos() && ferry.item != null);
         if(going != null && going.stations.contains(at -> at[2] == item.id)) return null;
         //only for what turns out better units, and only out of plenty: the core's unit is the builder too, and boxes carried to
@@ -5875,6 +6307,10 @@ public class Brain{
         if(!betterUnits) return null;
         String key = "ferry:" + hungry.pos() + ":" + item.name;
         if(!ready(key)) return null;
+        if(going == null && ferriedElsewhere(hungry)){
+            notes.put(key, "boxes go to another works till it runs");
+            return null;
+        }
         Seq<Building> sources = new Seq<>();
         for(Building build : team().data().buildings){
             if(build instanceof Drill.DrillBuild drill && drill.dominantItem == item) sources.add(build);
@@ -5896,6 +6332,18 @@ public class Brain{
         //one box goes round for all it lacks: another place to fill it, on the way, against what makes this
         if(going != null){
             int[] at = planner.stationFor(item, sources);
+            //or where another box is filled with it: the boxes take turns there. (a furnace has room for one box by it among its lines at
+            //most, and the works' fabricator, with that place taken by the refabricator's box, was never brought silicon)
+            if(at == null && System.getProperty("xp.ownstation") == null){
+                for(Ferry other : ferries){
+                    if(other == going) continue;
+                    int[] shared = other.stations.find(station -> station[2] == item.id);
+                    if(shared != null){
+                        at = new int[]{shared[0], shared[1]};
+                        break;
+                    }
+                }
+            }
             if(at == null){
                 notes.put(key, "no room for a box against anything that makes " + item.name);
                 retry.put(key, clock + retryPeriod * 2f);
@@ -5921,6 +6369,7 @@ public class Brain{
         }
         Ferry ferry = new Ferry();
         ferry.consumer = hungry.pos();
+        ferry.works = worksOf(hungry) == null ? -1 : worksOf(hungry).pos();
         ferry.item = item;
         ferry.fillX = planner.ferryFillX;
         ferry.fillY = planner.ferryFillY;
@@ -5930,6 +6379,21 @@ public class Brain{
         ferries.add(ferry);
         notes.put(key, "a box of " + item.name + " goes from " + ferry.fillX + "," + ferry.fillY + " to " + ferry.dropX + "," + ferry.dropY);
         return project;
+    }
+
+    /** Walls, ducts, conduits and nodes of its own on some ground count as free for what is laid out there, and come down first. */
+    private void makeWayIn(IntSeq tiles){
+        for(int i = 0; i < tiles.size; i++){
+            Building near = world.build(tiles.get(i));
+            if(near == null || near.team != team() || planner.clearing.contains(near.pos())) continue;
+            boolean way = near.block instanceof mindustry.world.blocks.defense.Wall || near.block instanceof Duct || near.block instanceof mindustry.world.blocks.power.BeamNode
+                || near.block instanceof DuctRouter || near.block instanceof OverflowDuct || near.block instanceof DuctBridge
+                || near.block instanceof mindustry.world.blocks.liquid.Conduit || near.block instanceof mindustry.world.blocks.liquid.LiquidBridge;
+            if(way){
+                planner.clearing.add(near.pos());
+                near.tile.getLinkedTiles(tile -> ground.relaid.add(tile.pos()));
+            }
+        }
     }
 
     /** Walls, ducts and nodes of its own right by something count as free ground for what is laid out next to it, and come down first: it stands in among lines. */
@@ -5963,8 +6427,28 @@ public class Brain{
             return consumer == null || consumer.team != team() || consumer.pos() != ferry.consumer;
         });
         float offset = Blocks.reinforcedContainer.offset;
+        StringBuilder why = System.getProperty("xp.notes") == null ? null : new StringBuilder();
+        //what holds none of what is ferried to it first, and of those the shortest carry: a builder alone carried the refabricator's
+        //tungsten from a hundred and eighty tiles off while the fabricator behind it, with no box of beryllium, made it nothing to
+        //work on (sorted afresh each time: what is short changes as the boxes come)
+        //(xp.ferryfirst: tried, and the sector raided from its first minutes lost nine games in thirty-two the old way and fifteen this way,
+        //with no more better units anywhere: left off)
+        if(System.getProperty("xp.ferryfirst") != null){
+            ferries.sort(ferry -> {
+                Building consumer = world.build(ferry.consumer);
+                boolean empty = consumer == null || (ferry.item != null ? consumer.items == null || consumer.items.get(ferry.item) == 0 : consumer.liquids == null || consumer.liquids.get(ferry.liquid) < 1f);
+                return (empty ? 0f : 100000f) + Mathf.dst(ferry.fillX, ferry.fillY, ferry.dropX, ferry.dropY);
+            });
+        }
         for(Ferry ferry : ferries){
-            if(data.units.contains(other -> other.controller() instanceof ExpansionAI ai && ai.carrySpot != null && ai.carry != null && ai.carryFerry == ferry)) continue;
+            if(why != null){
+                Building consumer = world.build(ferry.consumer);
+                why.append(consumer == null ? "?" : consumer.block.name).append(' ').append(ferry.item != null ? ferry.item.name : ferry.liquid.name).append(": ");
+            }
+            if(data.units.contains(other -> other.controller() instanceof ExpansionAI ai && ai.carrySpot != null && ai.carry != null && ai.carryFerry == ferry)){
+                if(why != null) why.append("being carried; ");
+                continue;
+            }
             if(ferry.item != null){
                 //where the box is: by what it feeds, or at one of the places it is filled at
                 Building atDrop = world.build(ferry.dropX, ferry.dropY);
@@ -5978,7 +6462,10 @@ public class Brain{
                         stationAt = i;
                     }
                 }
-                if(box == null || !pay.canPickup(box)) continue;
+                if(box == null || !pay.canPickup(box)){
+                    if(why != null) why.append(box == null ? "no box at its places; " : "can't pick it up; ");
+                    continue;
+                }
                 int[] next = null;
                 if(stationAt == -1){
                     //by what it feeds, and out of any one thing it was filled with: back round the places it is filled at. (waiting
@@ -5993,7 +6480,11 @@ public class Brain{
                         next = stationAt + 1 < ferry.stations.size ? ferry.stations.get(stationAt + 1) : new int[]{ferry.dropX, ferry.dropY};
                     }
                 }
-                if(next == null || world.build(next[0], next[1]) != null) continue;
+                if(next == null || world.build(next[0], next[1]) != null){
+                    if(why != null) why.append("box at ").append(box.tileX()).append(',').append(box.tileY()).append(" holds ").append(box.items).append(next == null ? ", waits" : ", the way on is taken by " + world.build(next[0], next[1]).block.name + " at " + next[0] + "," + next[1]).append("; ");
+                    continue;
+                }
+                if(why != null) notes.put("ferryjobs", why.append("carried").toString());
                 lastFerry = ferry;
                 return new Object[]{box, new Vec2(next[0] * tilesize + offset, next[1] * tilesize + offset)};
             }
@@ -6009,7 +6500,9 @@ public class Brain{
             if(filledBox && ferry.full(filled) && emptied == null && pay.canPickup(filled)){
                 return new Object[]{filled, new Vec2(ferry.dropX * tilesize + offset, ferry.dropY * tilesize + offset)};
             }
+            if(why != null) why.append(filledBox ? "box filling, " + Strings.fixed(ferry.in(filled), 0) : droppedBox ? "box by it, " + Strings.fixed(ferry.in(emptied), 0) : "no box").append("; ");
         }
+        if(why != null) notes.put("ferryjobs", why.toString());
         return null;
     }
 
@@ -6171,11 +6664,21 @@ public class Brain{
         //ninth wave by the thirty-fifth minute, tungsten drills put up for their own sake cost half its games; on the fifth, won
         //only by taking its cores, the need for tungsten found the ore in five games of eight, this in all of them)
         boolean waves = state.rules.waves && state.rules.winWave > 0 && state.rules.waveTeam != team();
-        boolean higher = System.getProperty("xp.nohigher") == null && (!waves || System.getProperty("xp.higher") != null) && fill >= 0.25f && !powerShort();
+        //(or once the first tier is turning out units from the yards of the opening, however full its cores: what the first tier is
+        //made of is spent as it comes in, and its cores never stood a quarter full against a player who raided it, so it never once
+        //went for tungsten and never made a unit of the second tier while the player did by the eighteenth minute)
+        boolean opened = System.getProperty("xp.fillhigher") == null && fielded && !openingYard(team().data());
+        boolean higher = System.getProperty("xp.nohigher") == null && (!waves || System.getProperty("xp.higher") != null) && (fill >= 0.25f || opened) && !powerShort();
         Seq<Item> ores = useful().select(item -> builtWith(item) && (hasSource(item) || higher || (System.getProperty("xp.inherited") != null && comesIn(item))) && ((!survey.ore(item).isEmpty() && mineFor(item) != null) || (!survey.floor(item).isEmpty() && drillFor(item) != null))
-            && (!aheadOfRest || stock.have(item) < stock.cap() * 0.5f));
+            && (!aheadOfRest || stock.have(item) < stock.cap() * 0.5f)
+            //nor more of what the cores are nearly full of: what more came in would be burned
+            && (System.getProperty("xp.minefull") != null || stock.have(item) < stock.cap() * 0.8f || wanted.contains(item)));
         //what it mines already and is short of first: a first source of something new comes after the staples are under way
-        ores.sort(item -> stock.have(item) + stock.income(item) * 2f + (hasSource(item) ? 0f : stock.cap() * 0.3f));
+        //and short by the recipes before short in the cores: what lies in a core can never be taken out again, and a furnace short
+        //of graphite stood at a third of its pace with five hundred graphite in the core, the drills going to beryllium meanwhile
+        boolean byFlow = System.getProperty("xp.stockorder") == null;
+        ores.sort(item -> (byFlow && hasSource(item) && demand[item.id] - supply[item.id] > 0.05f ? -100000f * (demand[item.id] - supply[item.id]) / Math.max(demand[item.id], 0.1f) : 0f)
+            + stock.have(item) + stock.income(item) * 2f + (hasSource(item) ? 0f : stock.cap() * 0.3f));
         minesOnly = true;
         try{
             for(Item item : ores){
@@ -6582,6 +7085,10 @@ public class Brain{
             if(thing.kind == Net.Kind.yard && world.build(thing.x, thing.y) instanceof UnitFactory.UnitFactoryBuild yard && yard.team == team()){
                 yards.increment(turnsOut(yard));
                 standing++;
+            }else if(thing.kind == Net.Kind.yard && System.getProperty("xp.oldkinds") == null && ground.look(thing.x, thing.y) && ground.block instanceof UnitFactory planned && planned.plans.size > 0){
+                //one laid out and not yet up counts as well: else the next round lays out another of the same, and three tank
+                //yards went up within a minute of each other
+                yards.increment(planned.plans.first().unit);
             }
         }
         //where some kinds of unit can get to the other side's cores and some can't, as across water, only the ones that can.
@@ -6606,9 +7113,18 @@ public class Brain{
         for(Building build : data.buildings){
             if(build instanceof UnitFactory.UnitFactoryBuild) families.increment(build.block);
         }
+        boolean old = System.getProperty("xp.oldkinds") != null;
+        if(!old){
+            for(BlockPlan plan : data.plans){
+                Tile tile = world.tile(plan.x, plan.y);
+                if(plan.block instanceof UnitFactory && tile != null && !standing(tile, plan)) families.increment(plan.block);
+            }
+        }
         boolean diverse = System.getProperty("xp.samekind") == null;
+        //(and a kind it has no yard of before another of a kind it has, from the second yard on: what it may have is counted
+        //kind by kind, so a second kind doubles the army it can stand where a second yard of the first only fills it sooner)
         out.sort(blueprint -> -1000f * blueprint.parts.count(part -> part.block instanceof UnitBlock) + Math.min(scarceCost(blueprint) / 20f, 900f) + data.countType(finalUnit(blueprint))
-            + (diverse && data.countType(finalUnit(blueprint)) >= cap * 0.5f ? 1500f * families.get(blueprint.parts.find(part -> part.block instanceof UnitFactory) == null ? blueprint.main() : blueprint.parts.find(part -> part.block instanceof UnitFactory).block, 0) : 0f));
+            + (diverse && (!old || data.countType(finalUnit(blueprint)) >= cap * 0.5f) ? 1500f * families.get(blueprint.parts.find(part -> part.block instanceof UnitFactory) == null ? blueprint.main() : blueprint.parts.find(part -> part.block instanceof UnitFactory).block, 0) : 0f));
         return out;
     }
 
@@ -7627,6 +8143,25 @@ public class Brain{
             keepFront(plan.block, plan.x, plan.y, plan.rotation);
         }
         for(Building build : data.buildings) keepFront(build.block, build.tileX(), build.tileY(), build.rotation);
+        //the vent kept for the works of better units, and the ground round it
+        if(t2Vent >= 0 && !t2Release){
+            for(int i = 0; i < t2Tiles.size; i++) ground.kept.add(t2Tiles.get(i));
+            ground.kept.add(t2Vent);
+        }
+        //one side of a furnace of what units are made of is kept for a yard to stand against it, until one does
+        for(BlockPlan plan : data.plans){
+            Tile tile = world.tile(plan.x, plan.y);
+            if(tile != null && !standing(tile, plan) && plan.block instanceof GenericCrafter) keepYardSide(plan.block, plan.x, plan.y);
+        }
+        for(Building build : data.buildings){
+            if(build.block instanceof GenericCrafter && build.pos() != yardSideFor && !build.proximity.contains(other -> other instanceof UnitFactory.UnitFactoryBuild)) keepYardSide(build.block, build.tileX(), build.tileY());
+        }
+        //what is being made way for keeps its ground free through a resync: else the first place tried and given up undid it for the
+        //rest, and the works on a kept vent, tried in its fourth way, always found the ducts it was to replace standing
+        for(IntSet.IntSetIterator it = planner.clearing.iterator(); it.hasNext; ){
+            Building away = world.build(it.next());
+            if(away != null && away.team == team()) away.tile.getLinkedTiles(tile -> ground.relaid.add(tile.pos()));
+        }
         //round a yard that is going short, the ground is kept for what will feed it. (kept round every yard, it took the ground
         //by the core that the seventh sector's first turrets and lines needed, and every opening there was lost)
         for(Net.Thing thing : net.things){
@@ -8025,7 +8560,10 @@ public class Brain{
         lostWorth += total(tile.block().requirements);
         int cell = Point2.pack(tile.x / 8, tile.y / 8);
         cellLost.put(cell, lostIn(cell) + total(tile.block().requirements));
+        cellLostSlow.put(cell, lostSlowIn(cell) + total(tile.block().requirements));
         cellLostAt.put(cell, clock);
+        Item mined = tile.build instanceof Drill.DrillBuild drill ? drill.dominantItem : tile.build instanceof BeamDrill.BeamDrillBuild beam ? beam.lastItem : null;
+        if(mined != null) cellMined.put(cell, mined.id);
         //what stood and was destroyed counts against the task it was built for; a site still going up does not
         Long key = tileTask.get(tile.pos());
         if(key != null && !(tile.build instanceof ConstructBuild)){
@@ -8056,13 +8594,48 @@ public class Brain{
      */
     private boolean safeForWorks(int x, int y){
         if(System.getProperty("xp.anywhereworks") != null) return true;
-        return guarded(x * tilesize, y * tilesize) && lostIn(Point2.pack(x / 8, y / 8)) < 20f;
+        if(lostIn(Point2.pack(x / 8, y / 8)) >= 20f) return false;
+        //or near home, where its units stand: with its units first and turrets few, hardly a turbine stood under a turret's guns, and
+        //the one that did had no room by it for a works, round after round with the cores full
+        if(System.getProperty("xp.guardedworks") == null){
+            for(CoreBuild core : team().cores()) if(Math.abs(core.tileX() - x) + Math.abs(core.tileY() - y) <= 40) return true;
+        }
+        return guarded(x * tilesize, y * tilesize);
     }
 
     /** Whether a place keeps losing what stands there, lately more than three times so much, with no turret of its own over it. */
     private boolean hot(int x, int y, float worth){
         int cell = Point2.pack(x / 8, y / 8);
-        return lostIn(cell) > Math.max(worth, 20f) * 3f && !guarded(x * tilesize, y * tilesize);
+        if(guarded(x * tilesize, y * tilesize)){
+            leftAlone.remove(cell);
+            return false;
+        }
+        float floor = Math.max(worth, 20f);
+        if(lostIn(cell) > floor * 3f) return true;
+        if(System.getProperty("xp.shorthot") != null) return false;
+        //and where raids come back every few minutes, each taking what was put back since the last: it is left till they have
+        //stopped a good while. (on the fifth sector six hundred plasma bores were destroyed in a game, forty to seventy every
+        //five minutes from the fortieth, each put back at once, and with them all the beryllium it mined)
+        //unless what was mined there is what it has not plenty of: that is held on to, raids or not. (left alone, the fifth
+        //sector's tungsten, all of it out where the raids came, never came in, and not one better unit was made)
+        Item mined = cellMined.containsKey(cell) ? content.item(cellMined.get(cell)) : null;
+        if(mined != null && !plenty(mined) && System.getProperty("xp.leaveany") == null) return false;
+        float slow = lostSlowIn(cell);
+        if(slow > floor * 3f) leftAlone.add(cell);
+        else if(slow < floor) leftAlone.remove(cell);
+        return leftAlone.contains(cell);
+    }
+
+    /** Stretches of ground where what it lost kept coming back to more than it would put back, and nothing guards them. */
+    private final IntSet leftAlone = new IntSet();
+    /** What the drills last destroyed on each stretch of ground mined, by item id. */
+    private final IntIntMap cellMined = new IntIntMap();
+    /** What it has lost on each stretch of ground eight tiles across, halving every ten minutes. */
+    private final IntFloatMap cellLostSlow = new IntFloatMap();
+
+    private float lostSlowIn(int cell){
+        float worth = cellLostSlow.get(cell, 0f);
+        return worth <= 0f ? 0f : worth * (float)Math.pow(0.5, (clock - cellLostAt.get(cell, clock)) / (60f * 60f * Integer.getInteger("xp.slowhalf", 10)));
     }
 
 
@@ -8348,6 +8921,49 @@ public class Brain{
         return stock.have(item) >= stock.cap() * 0.4f && comesIn(item);
     }
 
+    /** Whether a liquid is kept for what turns out better units and is not to be led to drills and turrets to make them faster. */
+    boolean reservedForUnits(Liquid liquid){
+        if(System.getProperty("xp.boostany") != null) return false;
+        boolean used = false;
+        for(Block block : content.blocks()){
+            if(block instanceof Reconstructor && may(block) && block.consumers != null){
+                for(var consume : block.consumers) if(consume instanceof mindustry.world.consumers.ConsumeLiquid needs && needs.liquid == liquid) used = true;
+            }
+        }
+        return used && (!survey.ore(Items.tungsten).isEmpty() || !survey.floor(Items.tungsten).isEmpty());
+    }
+
+    /**
+     * Whether the other side fields units of a better kind than any it has: what comes out of a refabricator. Upgrading is for when
+     * what it has can't beat what the other side has.
+     */
+    private boolean foeOutclasses(){
+        if(betterKinds == null){
+            betterKinds = new ObjectSet<>();
+            for(Block block : content.blocks()) if(block instanceof Reconstructor rebuilder) for(UnitType[] up : rebuilder.upgrades) betterKinds.add(up[1]);
+        }
+        boolean theirs = false, ours = false;
+        for(Unit unit : foe().data().units) if(betterKinds.contains(unit.type)) theirs = true;
+        for(Unit unit : team().data().units) if(betterKinds.contains(unit.type)) ours = true;
+        return theirs && !ours;
+    }
+
+    private @Nullable ObjectSet<UnitType> betterKinds;
+
+    /**
+     * Whether it is time for better units: the tungsten they are built of comes in, and a kind of the first tier stands near its
+     * number or the other side fields better ones. (people who play it keep to the first tier until it is massed, or until the
+     * other side's units outclass it)
+     */
+    private boolean upgradeDue(TeamData data){
+        //(and not while its home is being hit: what holds it comes first. saving for the works while raided all game, the sector raided from
+        //the first minutes lost half its games where it had lost a fifth)
+        boolean hit = System.getProperty("xp.upgradehit") == null && (director.posture == Director.Posture.pressed || attacked());
+        boolean due = !hit && hasSource(Items.tungsten) && stock.have(Items.tungsten) >= 160 && (mostOfAKind(data) >= unitCap(data) * 0.6f || foeOutclasses());
+        if(System.getProperty("xp.notes") != null) notes.put("upgrade", due + ": tungsten source " + hasSource(Items.tungsten) + ", " + stock.have(Items.tungsten) + " in the cores, most of a kind " + mostOfAKind(data) + " of " + unitCap(data) + ", outclassed " + foeOutclasses());
+        return due;
+    }
+
     /** Whether a box of an item could be ferried: boxes and unloaders may be built, and something of its own makes it. */
     public boolean ferryable(Item item){
         if(System.getProperty("xp.noferry") != null || !may(Blocks.reinforcedContainer) || !may(Blocks.ductUnloader)) return false;
@@ -8374,9 +8990,18 @@ public class Brain{
      */
     private @Nullable Project worksAtVent(TeamData data){
         if(System.getProperty("xp.noventworks") != null || !ready("ventworks")) return null;
-        if(data.buildings.contains(build -> build instanceof Reconstructor.ReconstructorBuild)) return null;
+        //(only by one that runs: a refabricator laid where nothing can be led to it, standing dry, kept every works from going up)
+        if(data.buildings.contains(build -> build instanceof Reconstructor.ReconstructorBuild && (System.getProperty("xp.anyrefab") != null || refitRan.contains(build.pos())))) return null;
+        //on the vent kept for it first, where there is one: the ground round it was kept open for its lines
+        if(t2Vent >= 0){
+            Project kept = ventWorks(data);
+            if(kept != null || saving) return kept;
+        }
         //against a turbine that stands near home first: what it gives off besides its power is the water, and the lines of its
         //base are near. (on a vent of its own far out, the one that went up stood unfed, with no line within reach)
+        //every way of laying it by a turbine, for each turbine in turn: it may stand on any side of one. (laid one way only, to one
+        //side, the turbines that had a little in the way there had no room for it, and no works ever went up)
+        Seq<Blueprint> ways = new Seq<>();
         for(Blueprint blueprint : blueprints){
             if(!blueprint.addon() || !blueprint.parts.contains(part -> part.block instanceof Reconstructor)
                 || !(blueprint.main() instanceof mindustry.world.blocks.power.ThermalGenerator)) continue;
@@ -8385,7 +9010,7 @@ public class Brain{
                 continue;
             }
             UnitType unit = finalUnit(blueprint);
-            if(unit == null || !may(unit)){
+            if(unit == null || !may(unit) || data.countType(unit) >= unitCap(data)){
                 notes.put("turbineworks", blueprint.name + ": no unit it may have (" + unit + ")");
                 continue;
             }
@@ -8396,65 +9021,93 @@ public class Brain{
                     notes.put("turbineworks", blueprint.name + ": no " + port.item.name + " to be had");
                 }
             }
-            if(!fed) continue;
+            if(fed) ways.add(blueprint);
+        }
+        //the kind it has fewest of first, as with yards
+        ways.sort(way -> data.countType(finalUnit(way)));
+        if(!ways.isEmpty()){
+            Blueprint cheapest = ways.min(way -> total(way.cost()));
             //saved up for once its cores are full of what it would turn into better units, and not before
-            if(!pays(blueprint.cost())){
+            if(!pays(cheapest.cost())){
                 //(saved up for only out of plenty in its cores: that boxes could bring what it lacks says nothing of whether it can be
                 //paid for, and saving for it whenever they could held up everything else, and half the games of the fifth sector)
-                if(plenty(Items.silicon) && plenty(Items.tungsten)){
-                    saveFor(blueprint.parts.find(part -> part.block instanceof Reconstructor).block, blueprint.cost());
-                    notes.put("turbineworks", "saving for " + blueprint.name);
+                //(or once better units are due: out of plenty only, with the first tier's yards spending the silicon as it came, it was never
+                //saved for, and no unit of the second tier was made on thirty-two maps in twenty-five minutes)
+                if((plenty(Items.silicon) && plenty(Items.tungsten)) || (System.getProperty("xp.plentyworks") == null && upgradeDue(data))){
+                    saveFor(cheapest.parts.find(part -> part.block instanceof Reconstructor).block, cheapest.cost());
+                    notes.put("turbineworks", "saving for " + cheapest.name);
                     return null;
                 }
-                notes.put("turbineworks", "not enough to spare for " + blueprint.name);
-                continue;
-            }
-            CoreBuild home = data.core();
-            if(home == null) return null;
-            Seq<Building> turbines = data.buildings.select(build -> build.block == blueprint.main() && world.isInMapArea(build.tileX(), build.tileY()) && safeForWorks(build.tileX(), build.tileY()));
-            //the ones with most open ground beside them first: the works takes a square twice a turbine's width at one of its sides,
-            //and the turbines nearest home stand in among the lines (on the fifth sector, with tungsten coming in, the four nearest
-            //home were tried round after round and none had room)
-            IntIntMap room = new IntIntMap();
-            int reachOut = blueprint.main().size * 2 + 1;
-            for(Building turbine : turbines){
-                int free = 0;
-                for(int dx = -reachOut; dx <= reachOut; dx++){
-                    for(int dy = -reachOut; dy <= reachOut; dy++){
-                        if(ground.open(turbine.tileX() + dx, turbine.tileY() + dy)) free++;
+                notes.put("turbineworks", "not enough to spare for " + cheapest.name);
+            }else{
+                CoreBuild home = data.core();
+                if(home == null) return null;
+                Block turbineBlock = cheapest.main();
+                Seq<Building> turbines = data.buildings.select(build -> build.block == turbineBlock && world.isInMapArea(build.tileX(), build.tileY()) && safeForWorks(build.tileX(), build.tileY()));
+                //the ones with most open ground beside them first: the works takes a square twice a turbine's width at one of its sides,
+                //and the turbines nearest home stand in among the lines (on the fifth sector, with tungsten coming in, the four nearest
+                //home were tried round after round and none had room)
+                IntIntMap room = new IntIntMap();
+                int reachOut = turbineBlock.size * 2 + 1;
+                for(Building turbine : turbines){
+                    int free = 0;
+                    for(int dx = -reachOut; dx <= reachOut; dx++){
+                        for(int dy = -reachOut; dy <= reachOut; dy++){
+                            if(ground.open(turbine.tileX() + dx, turbine.tileY() + dy)) free++;
+                        }
+                    }
+                    room.put(turbine.pos(), free);
+                }
+                turbines.sort(build -> -room.get(build.pos(), 0) + build.dst(home) / tilesize * 0.1f);
+                int tried = 0;
+                StringBuilder why = new StringBuilder();
+                for(Building turbine : turbines){
+                    if(++tried > Integer.getInteger("xp.turbinetries", 12) || planner.late()) break;
+                    for(Blueprint blueprint : ways){
+                        if(planner.late() || !pays(blueprint.cost())) continue;
+                        //walls, ducts and nodes of its own round the turbine make way: the turbines stand in among the lines
+                        if(System.getProperty("xp.keepturbine") == null) makeWayBy(turbine);
+                        Project project;
+                        try{
+                            project = planner.addon(blueprint, turbine);
+                        }finally{
+                            ground.relaid.clear();
+                            planner.clearing.clear();
+                            ground.intoBody = null;
+                        }
+                        if(project != null){
+                            notes.put("turbineworks", "laid out " + blueprint.name + " by the turbine at " + turbine.tileX() + "," + turbine.tileY());
+                            for(Part part : project.parts){
+                                if(part.block instanceof UnitFactory || part.block instanceof Reconstructor) project.things.add(new Net.Thing(Net.Kind.yard, part.x, part.y, (Item)null, 0f));
+                            }
+                            return done("ventworks", project);
+                        }
+                        if(why.length() < 400) why.append(planner.note).append("; ");
                     }
                 }
-                room.put(turbine.pos(), free);
-            }
-            turbines.sort(build -> -room.get(build.pos(), 0) + build.dst(home) / tilesize * 0.1f);
-            int tried = 0;
-            for(Building turbine : turbines){
-                if(++tried > Integer.getInteger("xp.turbinetries", 12) || planner.late()) break;
-                //walls, ducts and nodes of its own round the turbine make way: the turbines stand in among the lines
-                if(System.getProperty("xp.keepturbine") == null) makeWayBy(turbine);
-                Project project;
-                try{
-                    project = planner.addon(blueprint, turbine);
-                }finally{
-                    ground.relaid.clear();
-                    planner.clearing.clear();
-                    ground.intoBody = null;
-                }
-                notes.put("turbineworks", planner.note);
-                if(project != null){
-                    for(Part part : project.parts){
-                        if(part.block instanceof UnitFactory || part.block instanceof Reconstructor) project.things.add(new Net.Thing(Net.Kind.yard, part.x, part.y, (Item)null, 0f));
-                    }
-                    return done("ventworks", project);
-                }
+                notes.put("turbineworks", why.length() == 0 ? "no turbine safe for it" : why.toString());
             }
         }
         //then on a free vent of its own, not far from home
-        for(Blueprint blueprint : blueprints){
-            if(blueprint.kind() != Kind.yard || !blueprint.allowed(this::may) || !blueprint.parts.contains(part -> part.block instanceof Reconstructor)
-                || !blueprint.parts.contains(part -> Ground.usesVent(part.block))) continue;
+        return ventWorks(data);
+    }
+
+    /** A works on a vent of its own: the vent kept for it when there is one, else any free one near home. */
+    private @Nullable Project ventWorks(TeamData data){
+        //the one led its lines first, with every line laid as it goes up; then the one fed by boxes, where no line reaches. (led
+        //its lines later, where none reached it when it went up, the works stood on the vent with its hydrogen and nothing to use it on)
+        Seq<Blueprint> order = blueprints.select(blueprint -> blueprint.kind() == Kind.yard && blueprint.parts.contains(part -> part.block instanceof Reconstructor)
+            && blueprint.parts.contains(part -> Ground.usesVent(part.block)));
+        //(the one fed by boxes first: what it was saved up for has to be what goes up. saved up for led its lines, which then found no line
+        //to lead off, and the one fed by boxes, dearer by its boxes, not to be paid for after all, it saved up round after round for
+        //nothing; and of each the one that takes least tungsten first)
+        order.sort(blueprint -> (blueprint.ports.contains(port -> port.role == Role.in) ? 100000f : 0f) + scarceTungsten(blueprint));
+        for(Blueprint blueprint : order){
+            if(!blueprint.allowed(this::may)) continue;
+            boolean boxed = !blueprint.ports.contains(port -> port.role == Role.in);
+            if(boxed && (System.getProperty("xp.noventbox") != null || !blueprint.parts.contains(part -> part.block == Blocks.reinforcedContainer) || !ferryable(Items.silicon))) continue;
             UnitType unit = finalUnit(blueprint);
-            if(unit == null || !may(unit)) continue;
+            if(unit == null || !may(unit) || data.countType(unit) >= unitCap(data)) continue;
             boolean fed = true;
             for(Port port : blueprint.ports){
                 if(port.role == Role.in && port.item != null && !hasSource(port.item) && !leadLater(port.item)) fed = false;
@@ -8464,18 +9117,159 @@ public class Brain{
                 continue;
             }
             //not saved up for: what its yards and turrets are waiting for comes first, and this goes up out of what is to spare
+            //(but saved up for once better units are due, as the works by a turbine is)
             if(!pays(blueprint.cost())){
+                if(t2Vent >= 0 && System.getProperty("xp.plentyworks") == null && upgradeDue(data)){
+                    saveFor(blueprint.parts.find(part -> part.block instanceof Reconstructor).block, blueprint.cost());
+                    notes.put("ventworks", "saving for " + blueprint.name + " on the vent kept for it at " + Point2.x(t2Vent) + "," + Point2.y(t2Vent));
+                    return null;
+                }
                 notes.put("ventworks", "not enough to spare for " + blueprint.name);
                 continue;
             }
             CoreBuild home = data.core();
             if(home == null) return null;
-            Project project = planner.worksAtVent(blueprint, home.tileX(), home.tileY());
-            if(project != null) return done("ventworks", project);
+            //the ground kept for it is let go while it is fitted there; and what was given up there meanwhile is given up no more
+            if(t2Vent >= 0){
+                for(int i = 0; i < t2Tiles.size; i++) shunned.remove(t2Tiles.get(i), 0f);
+                for(int dx = -6; dx <= 6; dx++) for(int dy = -6; dy <= 6; dy++) unshun(Point2.x(t2Vent) + dx, Point2.y(t2Vent) + dy);
+            }
+            t2Release = true;
+            planner.preferVent = t2Vent;
+            planner.mustFeed = !boxed && System.getProperty("xp.ventlater") == null;
+            Project project;
+            try{
+                syncGround();
+                //lines, nodes and walls of its own that came onto the kept ground meanwhile make way: they are led round again
+                if(t2Vent >= 0 && System.getProperty("xp.keepventlines") == null) makeWayIn(t2Tiles);
+                project = planner.worksAtVent(blueprint, home.tileX(), home.tileY());
+            }finally{
+                t2Release = false;
+                planner.preferVent = -1;
+                planner.mustFeed = false;
+                ground.relaid.clear();
+                planner.clearing.clear();
+            }
+            if(project != null){
+                if(t2Vent >= 0 && project.parts.contains(part -> Ground.usesVent(part.block) && Point2.pack(part.x, part.y) == t2Vent)){
+                    t2Vent = -2;
+                    t2Tiles.clear();
+                }
+                return done("ventworks", project);
+            }
+            syncGround();
             notes.put("ventworks", planner.note);
-            retry.put("ventworks", clock + retryPeriod * 3f);
         }
+        retry.put("ventworks", clock + retryPeriod * (t2Vent >= 0 ? 1f : 3f));
         return null;
+    }
+
+    private static float scarceTungsten(Blueprint blueprint){
+        float w = 0f;
+        for(ItemStack stack : blueprint.cost()) if(stack.item == Items.tungsten) w += stack.amount;
+        return w;
+    }
+
+    /** The vent kept for the works that turns out better units, by its place: -1 while none is, -2 once the works stands on it. */
+    private int t2Vent = -1;
+    /** The ground kept clear round that vent for the works, its lines' ends and the way its units leave. */
+    private final IntSeq t2Tiles = new IntSeq();
+    private boolean t2Release;
+    private float t2LookedAt = -1e9f;
+
+    /**
+     * Keeps a vent near home free of generators, and the ground round it clear, for the works that turns out better units: a
+     * condenser on it hands its water by touch to an electrolyzer, and that its hydrogen to the refabricator, and only the items
+     * are led in, to ground left open for their lines. Only on a map with tungsten to build them of, and with more vents near home
+     * than the one its first power is taken from. (with a generator on every vent, as it had, there was never a vent for the works,
+     * the turbines had their every side taken by the conduits leading their water off, and no unit of the second tier was ever made)
+     */
+    private void reserveT2Vent(TeamData data){
+        if(t2Vent != -1 || System.getProperty("xp.nokeepvent") != null || !Options.refit.on() || clock - t2LookedAt < 60f * 20f) return;
+        t2LookedAt = clock;
+        if(survey.ore(Items.tungsten).isEmpty() && survey.floor(Items.tungsten).isEmpty()) return;
+        CoreBuild home = data.core();
+        if(home == null) return;
+        //by the layout fed by boxes, the one that takes most ground: the one led its lines then fits within it as well
+        Seq<Blueprint> ways = blueprints.select(way -> way.kind() == Kind.yard && way.allowed(this::may) && way.parts.contains(part -> part.block instanceof Reconstructor)
+            && way.parts.contains(part -> Ground.usesVent(part.block)));
+        ways.sort(way -> way.ports.contains(port -> port.role == Role.in) ? 1 : 0);
+        for(Blueprint way : ways){
+            int ventIndex = way.parts.indexOf(part -> Ground.usesVent(part.block));
+            if(ventIndex == -1) continue;
+            Block onVent = way.parts.get(ventIndex).block;
+            IntSeq vents = terrain.vents(onVent, team());
+            Seq<int[]> near = new Seq<>();
+            for(int i = 0; i < vents.size; i++){
+                int x = Point2.x(vents.get(i)), y = Point2.y(vents.get(i));
+                if(territory.ours(x, y) && Math.abs(x - home.tileX()) + Math.abs(y - home.tileY()) <= Integer.getInteger("xp.ventreach", 80) && world.isInMapArea(x, y)) near.add(new int[]{x, y});
+            }
+            if(near.isEmpty()){
+                notes.put("keepvent", "no vent of its own within fifty tiles of home");
+                return;
+            }
+            near.sort(at -> Math.abs(at[0] - home.tileX()) + Math.abs(at[1] - home.tileY()));
+            notes.put("keepvent", near.size + " places on vents near home, none with room for a " + way.name);
+            //the vent nearest home is left for power
+            int[] first = near.first();
+            int tried = 0;
+            for(int[] vent : near){
+                if(Math.max(Math.abs(vent[0] - first[0]), Math.abs(vent[1] - first[1])) <= 4 || !ground.clear(onVent, vent[0], vent[1])) continue;
+                if(++tried > 24) break;
+                for(int turn = 0; turn < 4; turn++){
+                    Layout probe = way.at(0, 0, turn, false, 1);
+                    Part anchor = probe.parts.get(ventIndex);
+                    Layout layout = way.at(vent[0] - anchor.x, vent[1] - anchor.y, turn, false, 1);
+                    boolean free = true;
+                    for(Part part : layout.parts){
+                        //the condenser goes on the vent, which is kept for what stands on vents
+                        //(as the game and its own rules will have it when it goes up: what is solid keeps off the ways its units take and the
+                        //ground by its cores, and a vent was once kept where the refabricator would have stood on the way out)
+                        if(!(part.optional || (ground.clear(part.block, part.x, part.y) && sideFree(part)) || (Ground.usesVent(part.block) && ground.clear(part.block, part.x, part.y)))) free = false;
+                    }
+                    for(Port port : layout.ports){
+                        if(!sideOpen(Point2.pack(port.x, port.y)) || !sideOpen(Point2.pack(port.x - Geometry.d4x(port.rotation), port.y - Geometry.d4y(port.rotation)))) free = false;
+                    }
+                    //and the ground its units leave over is ground they can cross, and open now: rock there, and the works could never go up
+                    for(Part part : layout.parts){
+                        if(!free || !(part.block instanceof Reconstructor)) continue;
+                        fronts.clear();
+                        frontOf(part.block, part.x, part.y, part.rotation, fronts);
+                        for(int i = 0; i < fronts.size && free; i++) if(!sideOpen(fronts.get(i)) || !ground.passable(Point2.x(fronts.get(i)), Point2.y(fronts.get(i)))) free = false;
+                    }
+                    if(!free) continue;
+                    t2Tiles.clear();
+                    IntSet tiles = new IntSet();
+                    for(Part part : layout.parts) Shape.tiles(part, tiles);
+                    for(Port port : layout.ports){
+                        tiles.add(Point2.pack(port.x, port.y));
+                        tiles.add(Point2.pack(port.x - Geometry.d4x(port.rotation), port.y - Geometry.d4y(port.rotation)));
+                    }
+                    for(Part part : layout.parts){
+                        if(!(part.block instanceof Reconstructor)) continue;
+                        fronts.clear();
+                        frontOf(part.block, part.x, part.y, part.rotation, fronts);
+                        for(int i = 0; i < fronts.size; i++) tiles.add(fronts.get(i));
+                    }
+                    for(IntSet.IntSetIterator it = tiles.iterator(); it.hasNext; ) t2Tiles.add(it.next());
+                    t2Vent = Point2.pack(vent[0], vent[1]);
+                    Log.info("[EnemyExpansion] The vent at @,@ is kept for a @ (@ tiles kept clear).", vent[0], vent[1], way.name, t2Tiles.size);
+                    return;
+                }
+            }
+        }
+    }
+
+    /** Whether every tile a part would stand on is open ground now, what was only shunned counting as open, ground kept for vents not. */
+    private boolean sideFree(Part part){
+        int off = -(part.block.size - 1) / 2;
+        for(int dx = 0; dx < part.block.size; dx++){
+            for(int dy = 0; dy < part.block.size; dy++){
+                int pos = Point2.pack(part.x + off + dx, part.y + off + dy);
+                if(!sideOpen(pos)) return false;
+            }
+        }
+        return true;
     }
 
     /** What is kept back and why, for looking into it. */
