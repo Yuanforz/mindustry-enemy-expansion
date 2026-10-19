@@ -548,6 +548,8 @@ final class Router{
                     next = m;
                 }
             }
+            //(nothing of the line laid yet to be near: the first in the list)
+            if(next == null) next = rest.get(0);
             rest.remove(next);
             if(c != null && touchFeeds(n, next, c)) continue;
             //on a bus, a maker against a taker hands it straight over (and what it can't take waits)
@@ -579,6 +581,7 @@ final class Router{
     boolean touches(Net n, Machine m){
         if(ports.containsKey(m)) return false;
         Part p = at.get(m);
+        if(p == null) return false;
         for(int[] t : Grid.around(p)){
             Part q = join.get(grid.pos(t[0], t[1]));
             if(q != null && accepts(q.block, q.rotation, (t[2] + 2) % 4, p.block) && pushesOn(n, m, t[2])) return true;

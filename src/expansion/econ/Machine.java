@@ -36,6 +36,11 @@ public final class Machine{
      */
     public boolean hauled;
     public float haulRate;
+    /**
+     * For a design whose place is given, not chosen by the layout (a defence module the defence planner put at a choke):
+     * its corner and turn {x, y, o}. Null for the rest.
+     */
+    public int[] pinned;
 
     public Machine(Recipe recipe, int item, float factor, int x, int y, float distance, int[] cost, boolean boosted, boolean existing){
         this.recipe = recipe;

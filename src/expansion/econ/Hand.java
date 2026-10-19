@@ -47,6 +47,9 @@ public final class Hand extends mindustry.entities.units.AIController{
         Arrays.fill(finished, Float.NaN);
     }
 
+    /** Whether its own jobs come before putting back what went missing (a defence's). */
+    public boolean urgent;
+
     /** Whether everything of the order is up (nothing begun and nothing put off is left). */
     public boolean done(){
         return next >= order.size() && job == null && skipped.isEmpty() && pending == null;
@@ -82,8 +85,10 @@ public final class Hand extends mindustry.entities.units.AIController{
             cut();
             return;
         }
-        //something built that went missing is put back before anything new
-        if(job == null && !watch.repairs.isEmpty()){
+        //something built that went missing is put back before anything new (unless what is new is urgent: a defence going
+        //up while raiders break lines faster than they can be put back; what they broke waits till it is up)
+        boolean first = urgent && job == null && next < order.size();
+        if(job == null && !watch.repairs.isEmpty() && !first){
             //paid for first, like any job (building waits on the core for what it lacks, and the hand would wait with it)
             int[] need = cost(watch.repairs);
             if(affordable(need)){
