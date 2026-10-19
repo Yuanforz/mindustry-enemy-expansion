@@ -128,12 +128,14 @@ public class Bait{
         //the core unit lost with a wall in its hold
         Unit worker = null;
         for(int i = 0; i < army.team.data().units.size; i++) if(army.team.data().units.get(i).controller() instanceof BaitAI) worker = army.team.data().units.get(i);
-        if(lastWorker != null && lastWorker != worker && lastWorker.dead && lastLoaded) decoysLost++;
-        lastWorker = worker;
+        //(by its number: the game reuses the objects of units gone for new ones)
+        int id = worker == null ? -1 : worker.id;
+        if(lastWorker != -1 && lastWorker != id && lastLoaded) decoysLost++;
+        lastWorker = id;
         lastLoaded = worker instanceof Payloadc pay && pay.hasPayload();
     }
 
-    @Nullable Unit lastWorker;
+    int lastWorker = -1;
     boolean lastLoaded;
 
     static boolean isBait(Building build){
@@ -165,7 +167,8 @@ public class Bait{
         if(unit == null) return;
         Building core = army.team.core();
         if(core == null) return;
-        spots.removeAll(s -> !s.turret.isValid());
+        //(and spots that can no longer be built on: something of the other side's or a unit stands there)
+        spots.removeAll(s -> !s.turret.isValid() || !standing(s) && !(Vars.world.build(s.x, s.y) instanceof ConstructBuild) && !Build.validPlace(Blocks.berylliumWall, army.team, s.x, s.y, 0));
         if(army.flags.bait && spots.size < most && army.clock - lastPlan > 120f){
             lastPlan = army.clock;
             choose(core);
@@ -261,8 +264,18 @@ public class Bait{
             bait.build(unit, spot);
         }
 
+        /** Whether a tile will do to keep a wall on: free to build on, or holding a wall of its own, built or being built. */
+        boolean stockUsable(int x, int y){
+            Tile tile = Vars.world.tile(x, y);
+            if(tile == null) return false;
+            if(tile.build != null) return tile.build.team == unit.team && isBait(tile.build);
+            return Build.validPlace(Blocks.berylliumWall, unit.team, x, y, 0);
+        }
+
         /** Where it keeps the wall it picks up, by its core. */
         int stockX = -1, stockY = -1;
+        /** What it is doing, for looking into it. */
+        public String state = "";
         int side = 1;
         float turnAt;
 
@@ -270,34 +283,38 @@ public class Bait{
          * The fly-by: with a wall in its hold (a core unit carrying something can be shot at, and is not otherwise), round
          * the edge of a turret's reach at full speed, stepping out of the way of each shot as the army's quick units do.
          * Every shot that misses is ammunition gone, and this works on turrets by the other side's cores too, where no wall
-         * may be put down. It goes home when hurt.
+         * may be put down. It keeps on until it is shot down: nothing mends it, and the core makes a new one for nothing.
          * @return whether it is doing this
          */
         boolean decoy(){
             Building core = unit.closestCore();
             if(core == null || !(unit instanceof Payloadc pay)) return false;
-            if(unit.health < unit.maxHealth * 0.5f){
-                moveTo(core, Vars.tilesize * 3f);
-                return true;
-            }
+            //(it keeps on until it is shot down: nothing on this planet mends it, and the core gives a new one for nothing)
             if(!pay.hasPayload()){
                 //a wall by the core, put down and picked up
-                if(stockX < 0){
+                //a place for it behind the core, the first of a few that is free or holds a wall of its own
+                if(stockX < 0 || !stockUsable(stockX, stockY)){
+                    stockX = -1;
                     Building enemyCore = unit.closestEnemyCore();
                     float away = enemyCore == null ? 0f : Angles.angle(enemyCore.x, enemyCore.y, core.x, core.y);
-                    stockX = mindustry.core.World.toTile(core.x + Angles.trnsx(away, Vars.tilesize * 5f));
-                    stockY = mindustry.core.World.toTile(core.y + Angles.trnsy(away, Vars.tilesize * 5f));
+                    for(int i = 0; i < 9 && stockX < 0; i++){
+                        float angle = away + (i % 2 == 0 ? 1 : -1) * ((i + 1) / 2) * 35f;
+                        int x = mindustry.core.World.toTile(core.x + Angles.trnsx(angle, Vars.tilesize * 5f)), y = mindustry.core.World.toTile(core.y + Angles.trnsy(angle, Vars.tilesize * 5f));
+                        if(stockUsable(x, y)){
+                            stockX = x;
+                            stockY = y;
+                        }
+                    }
+                    if(stockX < 0) return false;
                 }
                 Tile tile = Vars.world.tile(stockX, stockY);
-                if(tile == null) return false;
-                if(tile.build != null && tile.build.block == Blocks.berylliumWall && tile.build.team == unit.team){
+                if(tile.build != null && tile.build.block == Blocks.berylliumWall){
                     moveTo(tile.build, 2f);
                     if(unit.within(tile.build, Vars.tilesize * 1.5f)) Call.pickedBuildPayload(unit, tile.build, true);
-                }else if(tile.build == null && core.items.get(Items.beryllium) >= reserve){
+                }else if(core.items.get(Items.beryllium) >= reserve){
                     moveTo(tile, Vars.tilesize * 3f);
-                    if(unit.plans().size == 0 && Build.validPlace(Blocks.berylliumWall, unit.team, stockX, stockY, 0)) unit.addBuild(new BuildPlan(stockX, stockY, 0, Blocks.berylliumWall));
+                    if(unit.plans().size == 0) unit.addBuild(new BuildPlan(stockX, stockY, 0, Blocks.berylliumWall));
                 }else{
-                    stockX = -1;
                     return false;
                 }
                 return true;
@@ -313,7 +330,11 @@ public class Bait{
                     aim = gun;
                 }
             }
-            if(aim == null) return false;
+            if(aim == null){
+                state = "no turret";
+                return false;
+            }
+            state = "decoy at " + aim.build.tileX() + "," + aim.build.tileY() + " " + (int)(unit.dst(aim.x, aim.y) / 8) + "t of " + (int)(aim.range / 8);
             float radius = aim.range - Vars.tilesize * 1.5f;
             float now = Angles.angle(aim.x, aim.y, unit.x, unit.y), dist = unit.dst(aim.x, aim.y);
             if(dist > aim.range + Vars.tilesize * 6f){

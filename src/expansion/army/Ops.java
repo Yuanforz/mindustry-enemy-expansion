@@ -37,6 +37,7 @@ public class Ops{
 
     final Army army;
     final IntMap<Job> jobs = new IntMap<>();
+    final IntSet gone = new IntSet();
     /** What it has done, for the report: jobs begun of each kind, and targets destroyed. */
     public final int[] begun = new int[3];
     public int destroyed, lost, routes;
@@ -74,13 +75,15 @@ public class Ops{
                 continue;
             }
             boolean done = job.target == null || !job.target.isValid();
-            if(done && job.target != null) destroyed++;
+            //(counted once a target, though several went for it)
+            if(done && job.target != null && gone.add(job.target.id)) destroyed++;
             if(done || unit.health < unit.maxHealth / 3f || now - job.began > 60f * 90f || ai.targetPos == null && ai.attackTarget == null && ai.commandQueue.isEmpty() && !ai.isAttacking()){
                 //its job done or given up, or itself worn down: home, and what it took set against what was expected
                 army.review.add(unit.type, job.expected, (job.health - unit.health) / Math.max((now - job.began) / 60f, 1f));
                 job.kind = home;
                 job.began = now;
                 job.target = null;
+                ai.clearCommands();
                 ai.commandPosition(Tmp.v1.set(core.x, core.y));
             }
         }

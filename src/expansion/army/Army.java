@@ -6,9 +6,10 @@ import mindustry.game.*;
 import mindustry.gen.*;
 
 /**
- * The army module (控兵模块, docs/PLAN.md §22 and §23): a layer over the game's own squad AI for one team. By default
- * every unit is the squad AI's. The layers below take some of them over for a while by giving them orders (the squad
- * AI passes over any unit that has one), give them back by letting the order end, and set the squad AI's own knobs.
+ * The army module (控兵模块, docs/PLAN.md §22; what was built and measured from §22.6 on): a layer over the game's own
+ * squad AI for one team. By default every unit is the squad AI's. The layers below take some of them over for a while
+ * by giving them orders (the squad AI passes over any unit that has one), give them back by letting the order end, and
+ * set the squad AI's own knobs.
  *
  * - A0 {@link Threat}: the other side's turrets, how hard they hit each kind of unit where, and what feeds them.
  * - A1 {@link Allot}: when to wait and when to go, by Lanchester's square law; sets the squad AI's knobs.
@@ -27,7 +28,7 @@ public class Army{
     public static class Flags{
         public boolean allot, harass, cut, bait, decoy, micro, review;
 
-        /** The parts on by default: those that won more games than they lost in the duels (docs/PLAN.md §23). */
+        /** The parts on by default: those that won more games than they lost in the duels (docs/PLAN.md §22.8). */
         public static Flags defaults(){
             Flags flags = new Flags();
             flags.micro = true;
@@ -180,7 +181,7 @@ public class Army{
         if(flags.bait || flags.decoy){
             Unit worker = null;
             for(int i = 0; i < team.data().units.size; i++) if(team.data().units.get(i).controller() instanceof Bait.BaitAI) worker = team.data().units.get(i);
-            out.append(" worker ").append(worker == null ? "none" : worker.tileX() + "," + worker.tileY() + " plans " + worker.plans().size + (worker.buildPlan() != null ? " building " + worker.buildPlan().x + "," + worker.buildPlan().y : ""));
+            out.append(" worker ").append(worker == null ? "none" : worker.tileX() + "," + worker.tileY() + " plans " + worker.plans().size + (worker.buildPlan() != null ? " building " + worker.buildPlan().x + "," + worker.buildPlan().y : "") + " " + ((Bait.BaitAI)worker.controller()).state + (worker instanceof Payloadc pay && pay.hasPayload() ? " loaded" : ""));
             for(Bait.Spot spot : bait.spots) out.append(" spot ").append(spot.x).append(",").append(spot.y).append(" by ").append(spot.turret.tileX()).append(",").append(spot.turret.tileY())
                 .append(bait.standing(spot) ? " up" : " down").append(" stand ").append((int)(spot.stand.x / 8)).append(",").append((int)(spot.stand.y / 8));
         }
