@@ -152,8 +152,8 @@ public class EconRun{
         String pruned = Sites.prune(cat, field, income, me);
         if(!pruned.isEmpty()) System.out.println("  the map's own: " + pruned);
         Planner planner = new Planner(cat, field);
-        //the modules of the library that may be built here
-        Recipes.modules(cat, Design.load(new Fi("blueprints/modules")), allowed);
+        //the modules of the library that may be built here (-Dxp.modules=blueprints/own for our own)
+        Recipes.modules(cat, Design.load(new Fi(System.getProperty("xp.modules", "blueprints/modules"))), allowed);
         Recipe making = null;
         int unit = cat.id(unitName);
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
