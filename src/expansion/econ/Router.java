@@ -718,10 +718,23 @@ final class Router{
             if(port[0] != 1 || port[5] != n.res) continue;
             mine.add(port);
             sample.add(grid.pos(port[2], port[3]));
+            if(DEBUG && port[4] >= 0){
+                int bx = port[2] - Geometry.d4x(port[4] % 4), by = port[3] - Geometry.d4y(port[4] % 4);
+                Block piece = n.liquid ? conduit : duct;
+                StringBuilder cl = new StringBuilder();
+                for(int r = 0; r < 4; r++) cl.append(clean(grid.pos(bx, by), piece, r, n) ? "c" : "-");
+                for(int d = 0; d < 4; d++){
+                    int nx = bx + Geometry.d4x(d), ny = by + Geometry.d4y(d);
+                    cl.append(" n").append(d).append(':').append(open(grid.pos(nx, ny), piece, n) ? "o" : "x");
+                    for(int r = 0; r < 4; r++) cl.append(clean(grid.pos(nx, ny), piece, r, n) ? "c" : "-");
+                }
+                log.append(String.format("router: %s into %s at %d,%d from %d,%d: open %b clean %s%s\n", cat.get(n.res).name, m.recipe.name, port[2], port[3], bx, by, open(grid.pos(bx, by), piece, n), cl, why(grid.pos(bx, by), piece, n)));
+            }
         }
         return new Goal(){
             public boolean hit(int q, int d){
-                for(int[] port : mine) if(q == grid.pos(port[2], port[3]) && (port[1] == 1 || port[4] < 0 || d == port[4])) return true;
+                //a router takes only from behind; a plain duct from behind or either side
+                for(int[] port : mine) if(q == grid.pos(port[2], port[3]) && (port[1] == 1 || port[4] < 0 || (port[4] >= 4 ? d != (port[4] + 2) % 4 : d == port[4]))) return true;
                 return false;
             }
 
@@ -839,7 +852,7 @@ final class Router{
         if(ports.containsKey(m)){
             for(int[] port : ports.get(m)){
                 if(port[0] != 0 || port[5] != n.res || port[4] < 0) continue;
-                out.add(new Start(port[2] - Geometry.d4x(port[4]), port[3] - Geometry.d4y(port[4]), port[4], null));
+                out.add(new Start(port[2] - Geometry.d4x(port[4] % 4), port[3] - Geometry.d4y(port[4] % 4), port[4] % 4, null));
             }
             return out;
         }
@@ -908,8 +921,13 @@ final class Router{
     }
 
     /** Whether a piece may go on a tile at all for this net. */
+    /** The lanes before designs' ports: tile -> the thing whose line alone may use it. */
+    final IntIntMap lanes = new IntIntMap();
+
     boolean open(int q, Block piece, Net n){
         int x = q % grid.w, y = q / grid.w;
+        int lane = lanes.get(q, -1);
+        if(lane >= 0 && lane != n.res) return false;
         //(a dead line piece of the map's own, one leading nowhere, is built over by an item line)
         boolean over = !n.liquid && grid.deadLine(x, y) && grid.ground[q];
         if((!grid.free(x, y) && !over) || grid.quiet[q] || ownQuiet.contains(q) || own.containsKey(q) || blocked.contains(q)) return false;
@@ -924,6 +942,10 @@ final class Router{
         int x = q % grid.w, y = q / grid.w;
         if(!grid.free(x, y)) b.append("; not free (" + (grid.block(x, y) == null ? "?" : grid.block(x, y).name) + ")");
         if(grid.quiet[q]) b.append("; quiet");
+        if(ownQuiet.contains(q)) b.append("; own quiet");
+        if(own.containsKey(q)) b.append("; own piece " + own.get(q).block.name);
+        if(blocked.contains(q)) b.append("; blocked");
+        if(piece.solid && grid.noSolid[q]) b.append("; no solid");
         for(int rot = 0; rot < 4; rot++){
             for(int j = 0; j < 4; j++){
                 int mx = x + Geometry.d4x(j), my = y + Geometry.d4y(j);

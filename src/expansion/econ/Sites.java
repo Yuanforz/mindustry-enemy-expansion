@@ -69,6 +69,11 @@ public final class Sites{
                 }
             }
         }
+        if(DEBUG){
+            Map<String, Integer> before = new TreeMap<>();
+            for(Field.Site st : all) before.merge(st.ground + "/" + (st.item >= 0 ? cat.get(st.item).name : "-"), 1, Integer::sum);
+            System.out.println("  sites before reach/danger: " + before);
+        }
         //only places a line can get to from the core: over ground that can be built on, or by bridge over up to three
         //tiles of anything else
         boolean[] reach = reach(field, team), shot = danger(team);
@@ -85,6 +90,9 @@ public final class Sites{
             return true;
         });
         if(DEBUG){
+            Map<String, Integer> before = new TreeMap<>();
+            for(Field.Site st : all) before.merge(st.ground + "/" + (st.item >= 0 ? cat.get(st.item).name : "-"), 1, Integer::sum);
+            System.out.println("  sites after reach/danger: " + before);
             int left = 0;
             for(Field.Site st : all) if(st.ground == Recipe.Ground.liquidFloor) left++;
             System.out.println("  sites: liquid floor tiles " + dbg[0] + ", placeable " + dbg[1] + ", sites " + dbg[2] + ", left after reach/danger " + left);

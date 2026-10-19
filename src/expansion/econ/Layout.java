@@ -171,6 +171,17 @@ public final class Layout{
         Router router = new Router(g, cat, a.at, allowed, log);
         router.order = order;
         router.ports.putAll(a.ports);
+        //each port's lane is for its own thing's line only
+        for(var e : a.ports.entrySet()){
+            for(int[] port : e.getValue()){
+                if(port[4] < 0) continue;
+                int dx = Geometry.d4x(port[4] % 4), dy = Geometry.d4y(port[4] % 4);
+                for(int i = 1; i <= Design.LANE; i++){
+                    int x = port[0] == 1 ? port[2] - dx * i : port[2] + dx * i, y = port[0] == 1 ? port[3] - dy * i : port[3] + dy * i;
+                    if(g.in(x, y)) router.lanes.put(g.pos(x, y), port[5]);
+                }
+            }
+        }
         a.nets = nets(router, a.at);
         a.failed = router.routeAll(a.nets);
         int pieces = 0;
@@ -213,11 +224,12 @@ public final class Layout{
             int wx = p[0] + at[i][2], wy = p[1] + at[i][3], turn = at[i][4];
             int res = cat.id(port.what);
             if(port.in){
-                Part router = new Part(port.liquid ? liquidRouter : itemRouter, wx, wy, port.liquid || turn < 0 ? 0 : turn, null);
+                Block piece = port.liquid ? liquidRouter : turn >= 4 ? Vars.content.block("duct") : itemRouter;
+                Part router = new Part(piece, wx, wy, port.liquid || turn < 0 ? 0 : turn % 4, null);
                 body.add(router);
                 carries.put(g.pos(wx, wy), res);
             }else if(turn >= 0){
-                carries.put(g.pos(wx - Geometry.d4x(turn), wy - Geometry.d4y(turn)), res);
+                carries.put(g.pos(wx - Geometry.d4x(turn % 4), wy - Geometry.d4y(turn % 4)), res);
             }
             world.add(new int[]{port.in ? 1 : 0, port.liquid ? 1 : 0, wx, wy, turn, res});
         }
@@ -286,8 +298,13 @@ public final class Layout{
             carry = carries.get(g.pos(part.x, part.y), carry);
             g.plan(part, -1, carry, dumpOf(part.block, part.config));
         }
-        //an output's first tile stays free of anything solid: the line starts there
+        //an output's first tile stays free of anything solid: the line starts there; the lanes before the ports are dear
+        //for other lines, so they go round
         for(int[] w : world) if(w[0] == 0) g.noSolid[g.pos(w[2], w[3])] = true;
+        for(int[] t : d.lanes(o)){
+            int q = g.pos(p[0] + t[0], p[1] + t[1]);
+            if(g.in(p[0] + t[0], p[1] + t[1])) g.kept[q] = Math.max(g.kept[q], 6);
+        }
         a.at.put(m, main);
         a.bodies.put(m, body);
         a.ports.put(m, world);
@@ -951,7 +968,7 @@ public final class Layout{
                 for(int[] port : ports.get(m)){
                     String what = cat.get(port[5]).name;
                     if(port[0] == 1){
-                        int bx = port[2] - (port[4] < 0 ? 0 : Geometry.d4x(port[4])), by = port[3] - (port[4] < 0 ? 0 : Geometry.d4y(port[4]));
+                        int bx = port[2] - (port[4] < 0 ? 0 : Geometry.d4x(port[4] % 4)), by = port[3] - (port[4] < 0 ? 0 : Geometry.d4y(port[4] % 4));
                         in.arrow(Intent.Layer.cells, bx, by, port[2], port[3], Intent.white, "in " + what);
                     }else{
                         in.arrow(Intent.Layer.cells, port[2], port[3], port[2] + (port[4] < 0 ? 0 : Geometry.d4x(port[4])), port[3] + (port[4] < 0 ? 0 : Geometry.d4y(port[4])), Intent.yellow, "out " + what);

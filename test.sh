@@ -204,6 +204,24 @@ LIST
     out="$1"; shift
     java $RUN_OPTS -cp "$CP" xtest.ModLab build/test-data "$out" "$@" 2>build/test-err.log
     ;;
+  owngen)
+    # ./test.sh owngen [write]   our own module designs (xtest.DesignGen) drawn into build/own/gen, measured by the lab as they
+    # stand on a map at all four turns (two at a time), and judged (tools/own-modules.py); with write, the kept ones become
+    # blueprints/own, the library the mod ships, and are read back the way the planner reads them
+    rm -rf build/own/gen; mkdir -p build/own
+    java $RUN_OPTS -cp "$CP" xtest.DesignGen build/test-data build/own/gen 2>build/test-err.log
+    for t in 0 1 2 3; do
+      java $RUN_OPTS -Dlab.deploy=true -Dlab.portturn=true -Dlab.turn=$t -cp "$CP" xtest.ModLab build/test-data build/own/lab-$t.tsv build/own/gen/*.msch > build/own/lab-$t.txt 2>>build/test-err.log &
+      if [ $t = 1 ] || [ $t = 3 ]; then wait; fi
+    done
+    # set against the community designs' lab table, where there is one (COMMUNITY=<table> for another)
+    community="${COMMUNITY:-reference/schematics/lab-deployed.tsv}"
+    judge="--community $community"
+    [ -f "$community" ] || judge=""
+    if [ "$1" = write ]; then judge="$judge --write blueprints/own"; fi
+    python3 -I tools/own-modules.py build/own/gen build/own/lab-0.tsv build/own/lab-1.tsv build/own/lab-2.tsv build/own/lab-3.tsv $judge
+    if [ "$1" = write ]; then java $RUN_OPTS -cp "$CP" xtest.DesignGen build/test-data --check blueprints/own 2>>build/test-err.log; fi
+    ;;
   econwhy)
     # ./test.sh econwhy <map> <sector> <unit> <machines> [recipe]   the balanced plant solved, and with one more of a recipe
     java -cp "$CP" xtest.EconWhy build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "$3" "$4" "$5" 2>build/test-err.log
@@ -215,6 +233,46 @@ LIST
   mind)
     # ./test.sh mind   the posture machine, what it holds it can't do without, what it spares for walls
     java -cp "$CP" xtest.Mind build/test-data blueprints 2>build/test-err.log
+    ;;
+  turretlab)
+    # ./test.sh turretlab <run>... | suite:roles | cap:<run>:<unit>   a defence laid out on an empty lane, fed by sources,
+    # waves sent at it; see test/src/xtest/TurretLab.java for how a run is written
+    java $RUN_OPTS -Dxp.syncpath=true -cp "$CP" xtest.TurretLab build/test-data "$@" 2>build/test-err.log
+    ;;
+  defense)
+    # ./test.sh defense <map> [first wave] [last wave]   the defence planner on a real map: planned, put down with sources for
+    # its supply, and the map's waves played at it (see test/src/xtest/DefenseRun.java for the -Ddef.* options, given in RUN_OPTS)
+    mkdir -p build/test-maps
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    map="$1"; shift
+    java $RUN_OPTS -Dxp.syncpath=true -cp "$CP" xtest.DefenseRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$@" 2>build/test-err.log
+    ;;
+  defbench)
+    # ./test.sh defbench [jobs]   the defence planner on the wave maps, and on attack maps with waves sent from their cores;
+    # two at a time by default (JOBS beyond 2 crowd a shared machine); logs in build/defbench/<map>.log, a line each at the end
+    mkdir -p build/test-maps build/defbench
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    jobs="${1:-2}"
+    snap=build/defbench/snap; rm -rf $snap; mkdir -p $snap; cp -r build/classes $snap/classes; cp -r build/test-classes $snap/test-classes
+    CP="$GAME_JAR:$snap/classes:$snap/test-classes"
+    # map first-wave last-wave [units sent from the enemy cores on a map without waves]
+    cat > build/defbench/list <<LIST
+onset 1 8 stell*2
+aegis 1 8 stell*3
+intersect 1 9
+ravine 1 24
+crevice 1 45
+LIST
+    : > build/defbench/runs
+    while read map first last units; do
+      while [ $(ps ax | grep -c "[x]test.DefenseRun") -ge $jobs ]; do sleep 1; done
+      echo "$map" >> build/defbench/runs
+      extra=""; [ -n "$units" ] && extra="-Ddef.units=$units"
+      ( java $RUN_OPTS -Dxp.syncpath=true $extra -cp "$CP" xtest.DefenseRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$first" "$last" > build/defbench/$map.log 2> build/defbench/$map.err ) &
+      sleep 1
+    done < build/defbench/list
+    wait
+    for map in $(cat build/defbench/runs); do grep -h "^DEFENSE" build/defbench/$map.log || echo "DEFENSE $map: failed, see build/defbench/$map.err"; done | tee build/defbench/table.txt
     ;;
   pieces)
     java -cp "$CP" xtest.Pieces build/test-data "$@" blueprints/*.txt 2>build/test-err.log

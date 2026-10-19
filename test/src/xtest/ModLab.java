@@ -94,6 +94,8 @@ public class ModLab{
         Building at;
         /** Deployed: the way the router at an input faces (the line comes from behind), or the first piece of an output. */
         int turn = -1;
+        /** The rotation the source or void was drawn with: with -Dlab.portturn the way it is tried first. */
+        int drawn;
     }
 
     static final class Result{
@@ -105,6 +107,11 @@ public class ModLab{
         float powerUse, powerMade, seconds;
         final List<String> machines = new ArrayList<>();
         boolean stable = true;
+        /**
+         * Power grids the design's own blocks make (its beam nodes and what touches them): with more than one, the layout,
+         * which powers a design through one of its blocks, leaves the others dark.
+         */
+        int grids;
         final ObjectFloatMap<String> liquidUse = new ObjectFloatMap<>();
         final List<String> spills = new ArrayList<>();
     }
@@ -113,7 +120,7 @@ public class ModLab{
         Boot.boot(args[0], null, ModLab::content);
         Events.on(UnitCreateEvent.class, e -> units.increment(e.unit.type.name));
         float warm = Float.parseFloat(System.getProperty("lab.warm", "60")), measure = Float.parseFloat(System.getProperty("lab.measure", "120"));
-        StringBuilder tsv = new StringBuilder("file\tname\tsize\tblocks\tcost\tpower\tinputs\toutputs\tunits_per_min\tmachines\tstable\n");
+        StringBuilder tsv = new StringBuilder("file\tname\tsize\tblocks\tcost\tpower\tinputs\toutputs\tunits_per_min\tmachines\tstable\tpower_made\tgrids\n");
         for(int a = 2; a < args.length; a++){
             Result r = run(new Fi(args[a]), warm, measure);
             print(r);
@@ -133,6 +140,9 @@ public class ModLab{
             r.error = "unreadable: " + t;
             return r;
         }
+        //what an older game version's numbering got wrong (a constructor told to build a crucible) put right
+        int repaired = expansion.econ.Design.repair(s);
+        if(repaired > 0) System.out.println("  (" + repaired + " constructors set to the wall their assembler needs)");
         //turned, if asked (-Dlab.turn=1..3): a design must do the same whichever way it faces
         for(int o = 0; o < Integer.getInteger("lab.turn", 0); o++) s = expansion.econ.Design.turn(s);
         r.name = s.name();
@@ -170,6 +180,7 @@ public class ModLab{
                 p.x = st.x;
                 p.y = st.y;
                 p.what = st.config instanceof mindustry.ctype.UnlockableContent c ? c.name : "any";
+                p.drawn = st.rotation;
                 p.at = tile.build;
                 r.ports.add(p);
             }
@@ -186,7 +197,38 @@ public class ModLab{
             for(Port p : r.ports){
                 int px = p.x + ox, py = p.y + oy;
                 boolean done = false;
-                for(int d = 0; d < 4 && !done; d++){
+                //an item input that fed one neighbour only: a plain duct into it, which a line can come into from behind
+                //or either side (its turn is written as 4 + the way the duct faces)
+                if(p.in && !p.liquid && Boolean.parseBoolean(System.getProperty("lab.ducts", "true"))){
+                    Item item = Vars.content.item(p.what);
+                    int only = -1, count = 0;
+                    for(int d = 0; d < 4; d++){
+                        Tile nb = Vars.world.tile(px + Geometry.d4x(d), py + Geometry.d4y(d));
+                        if(nb == null || nb.build == null || !foot.contains(Point2.pack(nb.x, nb.y)) || item == null) continue;
+                        if(nb.build.acceptItem(p.at, item)){
+                            only = d;
+                            count++;
+                        }
+                    }
+                    if(count == 1){
+                        for(int d = 0; d < 4 && !done; d++){
+                                    if(d == only) continue;
+                            int qx = px + Geometry.d4x(d), qy = py + Geometry.d4y(d);
+                            Tile q = Vars.world.tile(qx, qy);
+                            if(q == null || foot.contains(Point2.pack(qx, qy)) || q.build != null) continue;
+                            Object what = p.at == null ? null : p.at.config();
+                            Vars.world.tile(px, py).setBlock(Blocks.duct, team, only);
+                            q.setBlock(srcItem, team, 0);
+                            if(what != null) q.build.configureAny(what);
+                            p.at = q.build;
+                            p.turn = 4 + only;
+                            done = true;
+                        }
+                    }
+                }
+                //a design that says which way each port faces (its source or void drawn turned that way), with -Dlab.portturn: tried first
+                for(int k = 0; k < 4 && !done; k++){
+                    int d = Boolean.getBoolean("lab.portturn") ? (p.drawn + k) % 4 : k;
                     int dx = Geometry.d4x(d), dy = Geometry.d4y(d);
                     if(p.in){
                         //the line comes from behind: the tile behind must be outside the design and free
@@ -227,7 +269,7 @@ public class ModLab{
         //warm up, then measure; the second half against the first says whether it has settled
         for(int f = 0; f < warm * 60; f++){
             Boot.frames(1);
-            if(f % 60 == 0) Groups.unit.each(u -> u.team == team, Unit::kill);
+            if(f % 60 == 0) Groups.unit.each(u -> u.team == team && u.type != UnitTypes.assemblyDrone, Unit::kill);
         }
         float[][] before = snapshot(r);
         ObjectIntMap<String> unitsBefore = new ObjectIntMap<>(units);
@@ -239,7 +281,7 @@ public class ModLab{
         int frames = (int)(measure * 60);
         for(int f = 0; f < frames; f++){
             Boot.frames(1);
-            if(f % 60 == 0) Groups.unit.each(u -> u.team == team, Unit::kill);
+            if(f % 60 == 0) Groups.unit.each(u -> u.team == team && u.type != UnitTypes.assemblyDrone, Unit::kill);
             if(f % 30 == 0){
                 for(int i = 0; i < machines.size; i++) eff[i] += machines.get(i).efficiency;
                 samples++;
@@ -278,6 +320,7 @@ public class ModLab{
                 if(c instanceof mindustry.world.consumers.ConsumeLiquids cls) for(LiquidStack ls : cls.liquids) r.liquidUse.increment(ls.liquid.name, 0f, ls.amount * 60f * e);
             }
         }
+        r.grids = grids();
         for(Port p : r.ports){
             if(!p.in || !p.liquid) continue;
             float use = r.liquidUse.get(p.what, 0f);
@@ -286,6 +329,34 @@ public class ModLab{
         for(var e : count) r.machines.add(String.format("%s x%d %.0f%%", e.key, e.value, byKind.get(e.key, 0f) / e.value * 100f));
         Collections.sort(r.machines);
         return r;
+    }
+
+    /**
+     * How many grids the design's powered blocks make by themselves: joined the way the game joins them (touching, as
+     * BuildingComp.getPowerConnections has it, and the links its beam nodes made), not by the lab's own joining to its
+     * source. A grid counts if something in it uses or makes power other than nodes and powered lines.
+     */
+    static int grids(){
+        ObjectSet<Building> seen = new ObjectSet<>();
+        Seq<Building> near = new Seq<>(), queue = new Seq<>();
+        int n = 0;
+        for(Building b : team.data().buildings){
+            if(b.power == null || b.block instanceof PowerSource || seen.contains(b)) continue;
+            boolean counts = false;
+            queue.clear();
+            queue.add(b);
+            seen.add(b);
+            while(!queue.isEmpty()){
+                Building c = queue.pop();
+                if((c.block.consPower != null && !(c.block instanceof BeamNode) && !c.block.conductivePower) || c.block instanceof PowerGenerator) counts = true;
+                for(Building o : c.getPowerConnections(near)){
+                    if(o.block instanceof PowerSource || !seen.add(o)) continue;
+                    queue.add(o);
+                }
+            }
+            if(counts) n++;
+        }
+        return n;
     }
 
     static int id(Port p){
@@ -329,7 +400,7 @@ public class ModLab{
         System.out.println("  cost " + costText(r) + "; power " + Strings.autoFixed(r.powerUse, 1) + "/s used, " + Strings.autoFixed(r.powerMade, 1) + "/s made; " + (r.stable ? "settled" : "NOT SETTLED"));
         for(Port p : r.ports) System.out.println(String.format("  %s %-12s at %d,%d: %.2f/s", p.in ? "in " : "out", p.in ? p.what : outWhat(p), p.x, p.y, p.in ? p.rate : outRate(p)));
         for(var e : r.made) System.out.println(String.format("  makes %s: %.2f a minute", e.key, e.value));
-        System.out.println("  machines: " + String.join(", ", r.machines));
+        System.out.println("  machines: " + String.join(", ", r.machines) + (r.grids > 1 ? "; " + r.grids + " POWER GRIDS" : ""));
         if(!r.spills.isEmpty()) System.out.println("  SPILLS: " + String.join("; ", r.spills));
     }
 
@@ -366,6 +437,7 @@ public class ModLab{
         StringBuilder made = new StringBuilder();
         for(var e : r.made) made.append(e.key).append('=').append(Strings.autoFixed(e.value, 3)).append(';');
         return String.join("\t", r.file, r.name == null ? "" : r.name.replace('\t', ' '), r.w + "x" + r.h, String.valueOf(r.blocks), costText(r),
-            Strings.autoFixed(r.powerUse, 1), in.toString(), out.toString(), made.toString(), String.join(";", r.machines), (r.error != null ? "error: " + r.error : r.stable ? "settled" : "not settled") + (r.spills.isEmpty() ? "" : "; spills " + String.join(",", r.spills)));
+            Strings.autoFixed(r.powerUse, 1), in.toString(), out.toString(), made.toString(), String.join(";", r.machines), (r.error != null ? "error: " + r.error : r.stable ? "settled" : "not settled") + (r.spills.isEmpty() ? "" : "; spills " + String.join(",", r.spills)),
+            Strings.autoFixed(r.powerMade, 1), String.valueOf(r.grids));
     }
 }

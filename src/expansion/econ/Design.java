@@ -30,6 +30,8 @@ public final class Design{
     public final List<Port> ports = new ArrayList<>();
     public final ObjectFloatMap<String> units = new ObjectFloatMap<>();
     public final float power;
+    /** Power it makes a second (a power plant), as measured; 0 if none. */
+    public float powerMade;
     /** Built of, by item name (without its sources and voids). */
     public final ObjectIntMap<String> cost = new ObjectIntMap<>();
     public float buildTicks;
@@ -95,6 +97,43 @@ public final class Design{
         return new Schematic(tiles, new arc.struct.StringMap(), s.height, s.width);
     }
 
+    /**
+     * Puts right what a design made in an older version of the game says a constructor builds: configurations of blocks
+     * are kept by number, and the numbers have moved since, so an old design may tell its constructor to build a
+     * crucible. A constructor whose block is not one it may build is set to the wall the design's assembler needs (the
+     * assembler's plan of the tier its modules give it). Returns how many were put right.
+     */
+    public static int repair(Schematic s){
+        int modules = 0;
+        mindustry.world.blocks.units.UnitAssembler asm = null;
+        for(Stile t : s.tiles){
+            if(t.block instanceof mindustry.world.blocks.units.UnitAssemblerModule) modules++;
+            if(t.block instanceof mindustry.world.blocks.units.UnitAssembler a) asm = a;
+        }
+        Block wanted = null;
+        if(asm != null && !asm.plans.isEmpty()){
+            var plan = asm.plans.get(Math.min(modules, asm.plans.size - 1));
+            int most = 0;
+            if(plan.requirements != null) for(mindustry.type.PayloadStack stack : plan.requirements){
+                if(stack.item instanceof Block b && stack.amount > most){
+                    most = stack.amount;
+                    wanted = b;
+                }
+            }
+        }
+        int fixed = 0;
+        for(Stile t : s.tiles){
+            if(!(t.block instanceof mindustry.world.blocks.payloads.Constructor c)) continue;
+            boolean ok = t.config instanceof Block b && (c.filter.isEmpty() || c.filter.contains(b)) && b.size >= c.minBlockSize && b.size <= c.maxBlockSize;
+            if(ok) continue;
+            Block fix = wanted != null && (c.filter.isEmpty() || c.filter.contains(wanted)) && wanted.size <= c.maxBlockSize ? wanted : null;
+            if(fix == null) continue;
+            t.config = fix;
+            fixed++;
+        }
+        return fixed;
+    }
+
     static boolean sandbox(Block b){
         return b.buildVisibility == BuildVisibility.sandboxOnly;
     }
@@ -128,14 +167,49 @@ public final class Design{
                 }
             }
         }
-        //and the tile a line comes into an input from (behind its router), and the one an output's line goes on to
+        //and where units come out: two rows in front of a factory or refabricator that hands to nothing of the design's
+        //own, and the whole square an assembler builds its unit on
+        for(Stile t : turned[o].tiles){
+            Block b = t.block;
+            int size = b.size, off = (size - 1) / 2;
+            int dx = arc.math.geom.Geometry.d4x(t.rotation), dy = arc.math.geom.Geometry.d4y(t.rotation);
+            if(b instanceof mindustry.world.blocks.units.UnitAssembler ua){
+                //(its centre (area + size) / 2 tiles ahead, the area wide)
+                int cx = t.x + dx * (ua.areaSize + size) / 2, cy = t.y + dy * (ua.areaSize + size) / 2, h = ua.areaSize / 2;
+                for(int x = cx - h; x <= cx + h; x++) for(int y = cy - h; y <= cy + h; y++) if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+            }else if(b instanceof mindustry.world.blocks.units.UnitFactory || b instanceof mindustry.world.blocks.units.Reconstructor){
+                //the first row ahead: if part of the design (the next machine of the chain) the unit goes into it
+                int ax = t.x + dx * (size - off), ay = t.y + dy * (size - off);
+                if(seen.contains(ax * 4096 + ay)) continue;
+                for(int row = 0; row < 2; row++){
+                    for(int i = -off; i < size - off; i++){
+                        int x = ax + dx * row + (dy != 0 ? i : 0), y = ay + dy * row + (dx != 0 ? i : 0);
+                        if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+                    }
+                }
+            }
+        }
+        //and a lane straight out from each port, LANE tiles long: the way a line comes into an input (behind its router)
+        //and the way an output's line goes off; kept clear, or ports side by side by a cliff can be shut in
+        for(int[] t : lanes(o)) if(seen.add(t[0] * 4096 + t[1])) out.add(t);
+        return foot[o] = out.toArray(new int[0][]);
+    }
+
+    /** How long the lane kept clear before each port is. */
+    public static final int LANE = 3;
+
+    /** The lane tiles before every port, turned o times, from the design's corner. */
+    public List<int[]> lanes(int o){
+        List<int[]> out = new ArrayList<>();
         for(int[] port : portsAt(o)){
             if(port[4] < 0) continue;
-            int dx = arc.math.geom.Geometry.d4x(port[4]), dy = arc.math.geom.Geometry.d4y(port[4]);
-            int x = port[0] == 1 ? port[2] - dx : port[2] + dx, y = port[0] == 1 ? port[3] - dy : port[3] + dy;
-            if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+            int dx = arc.math.geom.Geometry.d4x(port[4] % 4), dy = arc.math.geom.Geometry.d4y(port[4] % 4);
+            for(int i = 1; i <= LANE; i++){
+                int x = port[0] == 1 ? port[2] - dx * i : port[2] + dx * i, y = port[0] == 1 ? port[3] - dy * i : port[3] + dy * i;
+                out.add(new int[]{x, y});
+            }
         }
-        return foot[o] = out.toArray(new int[0][]);
+        return out;
     }
 
     /** The block that stands for the whole design where only one can (the biggest that uses power, else the biggest), turned o times. */
@@ -157,18 +231,27 @@ public final class Design{
      * The ports turned o times: {in (1/0), liquid (1/0), x, y} in the turned design, in the order of {@link #ports}. Found
      * again in the turned design by the source or void that marks each (the game turns them with the rest).
      */
+    private final int[][][] portCache = new int[4][][];
+
     public int[][] portsAt(int o){
-        int[][] out = new int[ports.size()][];
+        if(portCache[o] != null) return portCache[o];
+        int[][] out = portCache[o] = new int[ports.size()][];
         for(int i = 0; i < ports.size(); i++){
             Port p = ports.get(i);
             Stile t = turned[o].tiles.get(p.index);
-            out[i] = new int[]{p.in ? 1 : 0, p.liquid ? 1 : 0, t.x, t.y, p.turn < 0 ? -1 : (p.turn + o) % 4};
+            //(a turn of 4 and up is a plain duct into the design facing turn - 4: it turns the same way, and stays 4 and up)
+            out[i] = new int[]{p.in ? 1 : 0, p.liquid ? 1 : 0, t.x, t.y, p.turn < 0 ? -1 : p.turn >= 4 ? 4 + (p.turn - 4 + o) % 4 : (p.turn + o) % 4};
         }
         return out;
     }
 
     /** The modules of a library: the lab's table and the schematic files beside it. Those that can't be read are left out. */
     public static List<Design> load(Fi dir){
+        return load(dir, "");
+    }
+
+    /** The same, each id with a prefix in front (to keep two libraries' ids apart). */
+    public static List<Design> load(Fi dir, String prefix){
         List<Design> out = new ArrayList<>();
         Fi table = dir.child("modules.tsv");
         if(!table.exists()) return out;
@@ -186,7 +269,9 @@ public final class Design{
             }catch(Throwable t){
                 continue;
             }
-            Design m = new Design(id, f[col.get("name")], s, Float.parseFloat(f[col.get("power")]));
+            repair(s);
+            Design m = new Design(prefix + id, f[col.get("name")], s, Float.parseFloat(f[col.get("power")]));
+            if(col.containsKey("power_made") && !f[col.get("power_made")].isEmpty()) m.powerMade = Float.parseFloat(f[col.get("power_made")]);
             ports(m, f[col.get("inputs")], true);
             ports(m, f[col.get("outputs")], false);
             boolean found = true;
@@ -217,6 +302,7 @@ public final class Design{
             int turn = -1;
             if(place.contains(":")){
                 turn = Integer.parseInt(place.substring(place.indexOf(':') + 1));
+                //(0..3: a router facing that way; 4..7: a plain duct facing turn - 4)
                 place = place.substring(0, place.indexOf(':'));
             }
             String[] xy = place.split(",");

@@ -152,8 +152,11 @@ public class EconRun{
         String pruned = Sites.prune(cat, field, income, me);
         if(!pruned.isEmpty()) System.out.println("  the map's own: " + pruned);
         Planner planner = new Planner(cat, field);
-        //the modules of the library that may be built here
-        Recipes.modules(cat, Design.load(new Fi("blueprints/modules")), allowed);
+        //the modules of the library that may be built here (-Dxp.modules=blueprints/own for our own)
+        //(our own designs first; the community's, where they are here locally, after)
+        List<Design> library = new ArrayList<>();
+        for(String dir : System.getProperty("xp.modules", "blueprints/own,blueprints/modules").split(",")) library.addAll(Design.load(new Fi(dir), dir.endsWith("own") ? "" : "c-"));
+        Recipes.modules(cat, library, allowed);
         Recipe making = null;
         int unit = cat.id(unitName);
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
@@ -229,7 +232,7 @@ public class EconRun{
                 //what the map's own make of it can't be got to: the plan may not count on them, and is made again
                 List<Machine> theirs = new ArrayList<>();
                 for(Machine m : field.existing) if(m.out(res) > 1e-4f) theirs.add(m);
-                if(!theirs.isEmpty() && cat.get(res).kind == Res.Kind.item){
+                if(!theirs.isEmpty() && cat.get(res).kind == Res.Kind.item && String.valueOf(u[2]).startsWith("tap")){
                     field.existing.removeAll(theirs);
                     replan = true;
                     System.out.println("  " + c.recipe.name + " can't be fed " + cat.get(res).name + " off the map's lines: its " + theirs.size() + " makers are left out of the plan");
