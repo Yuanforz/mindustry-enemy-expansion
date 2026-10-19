@@ -28,12 +28,16 @@ public class Army{
     public static class Flags{
         public boolean allot, harass, cut, bait, decoy, creep, micro, review;
 
-        /** The parts on by default: those that won more games than they lost in the duels (docs/PLAN.md §22.8). */
+        /**
+         * The parts on by default: those that, together, won more games against the squad AI alone in the duels
+         * (docs/PLAN.md §22.8). Raids, supply cuts and the turret creep are there to switch on, but did not win more.
+         */
         public static Flags defaults(){
             Flags flags = new Flags();
+            flags.allot = true;
             flags.micro = true;
             flags.bait = true;
-            flags.review = true;
+            flags.decoy = true;
             return flags;
         }
 
@@ -93,7 +97,8 @@ public class Army{
 
     static void tick(){
         if(mindustry.Vars.state.isPaused()) return;
-        boolean on = expansion.Options.army.on() && expansion.ExpansionMod.brain.active() && expansion.Brain.side == null;
+        //(-Dxp.noarmy=true: off for a test run, whatever the setting says)
+        boolean on = expansion.Options.army.on() && !Boolean.getBoolean("xp.noarmy") && expansion.ExpansionMod.brain.active() && expansion.Brain.side == null;
         Team team = expansion.Brain.team();
         if(!on || !team.rules().rtsAi){
             if(current != null){
@@ -102,7 +107,10 @@ public class Army{
             }
             return;
         }
-        if(current == null || current.team != team) current = new Army(team, Flags.defaults());
+        if(current == null || current.team != team){
+            current = new Army(team, Flags.defaults());
+            Log.info("[EnemyExpansion] The army layer leads @'s units over the game's squad AI: @.", team.name, current.flags.toString().trim());
+        }
         current.update();
     }
 

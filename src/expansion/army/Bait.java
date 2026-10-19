@@ -70,25 +70,31 @@ public class Bait{
     float restUntil;
 
     /**
-     * The unit that does it: the team's core unit, if it has one and it is not busy building something else. One that the
-     * mod's economy leads is only borrowed while it has nothing to do, and for at most {@link #lendTime} at a time: its
-     * building comes first.
+     * The unit that does it: the team's core unit, if it has one, there is work for it and it is not busy building
+     * something else. One that the mod's economy leads is only borrowed while it has nothing to do, while the core holds
+     * a good stock of beryllium ({@link #lendStock}), and for at most {@link #lendTime} at a time: its building comes
+     * first. (Borrowed whenever it stood idle for a moment, it was gone from the economy just when a new base needed it,
+     * and two new maps of two did not get going.)
      */
-    public @Nullable Unit worker(){
+    public @Nullable Unit worker(boolean wanted){
+        Building core = army.team.core();
         for(int i = 0; i < army.team.data().units.size; i++){
             Unit unit = army.team.data().units.get(i);
             if(!coreUnit(unit)) continue;
             if(unit.controller() instanceof BaitAI bait){
-                if(bait.previous instanceof expansion.ExpansionAI && army.clock - bait.since > lendTime){
+                boolean lent = bait.previous instanceof expansion.ExpansionAI;
+                if(lent && (!wanted || army.clock - bait.since > lendTime || core == null || core.items.get(Items.beryllium) < lendStock / 2)){
                     unit.controller(bait.previous);
                     restUntil = army.clock + restTime;
                     continue;
                 }
                 return unit;
             }
-            if(unit.isPlayer()) continue;
+            if(!wanted || unit.isPlayer()) continue;
             //busy with something of its own side's: let be
-            if(unit.controller() instanceof expansion.ExpansionAI ai ? !ai.idle() || army.clock < restUntil : unit.plans().size > 0) continue;
+            if(unit.controller() instanceof expansion.ExpansionAI ai){
+                if(!ai.idle() || army.clock < restUntil || core == null || core.items.get(Items.beryllium) < lendStock) continue;
+            }else if(unit.plans().size > 0) continue;
             BaitAI bait = new BaitAI(this);
             bait.previous = unit.controller();
             bait.since = army.clock;
@@ -96,6 +102,17 @@ public class Bait{
             return unit;
         }
         return null;
+    }
+
+    /** How much beryllium the core must hold before the economy's builder is borrowed. */
+    public static int lendStock = Integer.getInteger("army.lendstock", 1000);
+
+    /** Whether there is anything for the core unit to do: a wall down, a turret to fly round, a post to put up. */
+    boolean wanted(){
+        if(army.flags.creep && army.creep.building != null) return true;
+        if(army.flags.bait) for(Spot spot : spots) if(!standing(spot)) return true;
+        if(army.flags.decoy) for(Threat.Gun gun : army.threat.guns) if(gun.items && gun.air && gun.loaded) return true;
+        return false;
     }
 
     /** Gives the core unit back to what led it before, when baiting is over. */
@@ -163,8 +180,6 @@ public class Bait{
 
     /** Twice a second: spots by turrets gone are dropped, and a new one found now and then. */
     public void plan(){
-        Unit unit = worker();
-        if(unit == null) return;
         Building core = army.team.core();
         if(core == null) return;
         //(and spots that can no longer be built on: something of the other side's or a unit stands there)
@@ -173,6 +188,7 @@ public class Bait{
             lastPlan = army.clock;
             choose(core);
         }
+        worker(wanted());
     }
 
     boolean standing(Spot spot){
