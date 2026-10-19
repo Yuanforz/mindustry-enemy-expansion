@@ -195,6 +195,19 @@ LIST
     # ./test.sh mind   the posture machine, what it holds it can't do without, what it spares for walls
     java -cp "$CP" xtest.Mind build/test-data blueprints 2>build/test-err.log
     ;;
+  turretlab)
+    # ./test.sh turretlab <run>... | suite:roles | cap:<run>:<unit>   a defence laid out on an empty lane, fed by sources,
+    # waves sent at it; see test/src/xtest/TurretLab.java for how a run is written
+    java $RUN_OPTS -Dxp.syncpath=true -cp "$CP" xtest.TurretLab build/test-data "$@" 2>build/test-err.log
+    ;;
+  defense)
+    # ./test.sh defense <map> [first wave] [last wave]   the defence planner on a real map: planned, put down with sources for
+    # its supply, and the map's waves played at it (see test/src/xtest/DefenseRun.java for the -Ddef.* options, given in RUN_OPTS)
+    mkdir -p build/test-maps
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    map="$1"; shift
+    java $RUN_OPTS -Dxp.syncpath=true -cp "$CP" xtest.DefenseRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$@" 2>build/test-err.log
+    ;;
   pieces)
     java -cp "$CP" xtest.Pieces build/test-data "$@" blueprints/*.txt 2>build/test-err.log
     ;;
