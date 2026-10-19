@@ -34,6 +34,8 @@ public final class Planner{
         public final EnumSet<Foe.Move> moves = EnumSet.noneOf(Foe.Move.class);
         /** The largest wave that comes from here, by unit; if empty, the ask's units of the ways of moving above. */
         public final Map<String, Integer> units = new TreeMap<>();
+        /** Every wave that comes from here, in order, by unit (the same waves for every source); if empty, one wave of the units above. */
+        public final List<Map<String, Integer>> waves = new ArrayList<>();
 
         public Source(int x, int y, String label){
             this.x = x;
@@ -105,9 +107,15 @@ public final class Planner{
         public final int x, y, dir;
         public final String why;
         public final Map<String, Integer> units;
+        /** Every wave that comes here, in order: from all the ways it holds at once. */
+        public final List<Map<String, Integer>> waves = new ArrayList<>();
         public final boolean air;
         /** Whether the wall line closes the way from rock to rock here, so tanks must break through (the lab's closed lane). */
         public boolean closed = true;
+        /** Whether the wall line is left open in the middle, because closed it would send the enemy round another way. */
+        public boolean notched;
+        /** The ways in it holds: source and way of moving. */
+        public final List<int[]> ways = new ArrayList<>();
         public float arrives;
         public final List<Post.Laid> laid = new ArrayList<>();
         public final List<Placement> walls = new ArrayList<>();
@@ -175,6 +183,8 @@ public final class Planner{
     final Ask ask;
     final Lanes lanes;
     final Set<Long> taken = new HashSet<>();
+    /** What the walls planned so far add to the game's path cost, a tile. */
+    float[] walled;
     final Plan plan = new Plan();
     int modules;
 
@@ -199,6 +209,41 @@ public final class Planner{
     }
 
     /** A source's units of one way of moving. */
+    /** A source's waves, each as its units of one way of moving. */
+    List<Map<String, Integer>> wavesOf(Source s, Foe.Move move){
+        List<Map<String, Integer>> out = new ArrayList<>();
+        if(s.waves.isEmpty()){
+            out.add(unitsOf(s, move));
+            return out;
+        }
+        for(Map<String, Integer> wave : s.waves){
+            Map<String, Integer> w = new TreeMap<>();
+            for(var e : wave.entrySet()) if(Foe.get(e.getKey()) != null && Foe.get(e.getKey()).move == move && e.getValue() > 0) w.put(e.getKey(), e.getValue());
+            out.add(w);
+        }
+        return out;
+    }
+
+    /** Adds waves into a list of waves, one by one in order. */
+    static void addWaves(List<Map<String, Integer>> into, List<Map<String, Integer>> waves){
+        while(into.size() < waves.size()) into.add(new TreeMap<>());
+        for(int i = 0; i < waves.size(); i++) for(var e : waves.get(i).entrySet()) into.get(i).merge(e.getKey(), e.getValue(), Integer::sum);
+    }
+
+    /** The waves the place being chosen for gets: modules are sized for the worst of them. */
+    List<Map<String, Integer>> sizing = new ArrayList<>();
+
+    /** How much of a module the worst wave takes up, counting only the given units: 1 is all it holds. */
+    float load(Capacity.Config c, Set<String> units, boolean closed){
+        float worst = 0f;
+        for(Map<String, Integer> wave : sizing){
+            Map<String, Integer> part = new TreeMap<>();
+            for(var e : wave.entrySet()) if(units.contains(e.getKey())) part.put(e.getKey(), e.getValue());
+            worst = Math.max(worst, c.load(part, closed));
+        }
+        return worst;
+    }
+
     Map<String, Integer> unitsOf(Source s, Foe.Move move){
         Map<String, Integer> from = s.units.isEmpty() ? ask.units : s.units, out = new TreeMap<>();
         for(var e : from.entrySet()){
@@ -215,6 +260,7 @@ public final class Planner{
         //the ways in: one for each source and way of moving that comes from it
         List<Lanes.Lane> ground = new ArrayList<>();
         List<Map<String, Integer>> groundUnits = new ArrayList<>();
+        List<List<Map<String, Integer>>> groundWaves = new ArrayList<>();
         float range = 0f;
         for(int s = 0; s < ask.sources.size(); s++){
             Source src = ask.sources.get(s);
@@ -229,15 +275,23 @@ public final class Planner{
                 }
                 ground.add(lane);
                 groundUnits.add(units);
+                groundWaves.add(wavesOf(src, move));
                 for(String u : units.keySet()) range = Math.max(range, Foe.get(u).range);
             }
         }
-        List<Site> sites = new ArrayList<>(groundSites(ground, groundUnits, range));
+        List<Site> sites = new ArrayList<>(groundSites(ground, groundUnits, groundWaves, range));
         sites.addAll(airSites());
         sites.sort(Comparator.comparingDouble(s -> s.arrives));
         //what to put at each, then lay it out, in order, while the budget lasts
         Map<String, Integer> left = new TreeMap<>(ask.budget);
         for(Site site : sites){
+            //a closed wall line that would only send them round another way is left with a notch, and sized as open ground
+            if(!site.air && site.closed && diverts(site)){
+                site.notched = true;
+                site.closed = false;
+            }
+            sizing = site.waves.isEmpty() ? List.of(site.units) : site.waves;
+            sizingAir = site.air;
             List<Choice> choices = choose(site.units, site.closed);
             if(choices.isEmpty()){
                 plan.notes.add("nothing we can build holds " + site.units + " at " + site.x + "," + site.y);
@@ -250,7 +304,7 @@ public final class Planner{
     }
 
     /** Places to hold the ground ways: the narrowest place far enough out, taking first those on the most ways at once. */
-    List<Site> groundSites(List<Lanes.Lane> ground, List<Map<String, Integer>> groundUnits, float range){
+    List<Site> groundSites(List<Lanes.Lane> ground, List<Map<String, Integer>> groundUnits, List<List<Map<String, Integer>>> groundWaves, float range){
         List<Site> out = new ArrayList<>();
         Terrain t = ask.terrain;
         //held at the wall line, the enemy must be out of range of the core: so the wall line is at least its range away
@@ -264,7 +318,8 @@ public final class Planner{
                 Lanes.Lane lane = ground.get(l);
                 for(int i = 0; i < lane.tiles.length; i++){
                     float d = lane.toTarget[i];
-                    if(d < near || d > far) continue;
+                    //and not on top of the source: its units need room to come out, and a spawn wipes out what is near it
+                    if(d < near || d > far || lane.length() - d < 25f) continue;
                     int tile = lane.tiles[i];
                     if(!roomy(tile)) continue;
                     int x = tile % t.w, y = tile / t.w;
@@ -292,14 +347,18 @@ public final class Planner{
             Lanes.Lane lane = ground.get(bestLane);
             int tile = lane.tiles[bestIndex], x = tile % t.w, y = tile / t.w;
             Map<String, Integer> units = new TreeMap<>();
+            List<int[]> site_ways = new ArrayList<>();
+            List<Map<String, Integer>> site_waves = new ArrayList<>();
             float arrives = Float.MAX_VALUE;
             StringBuilder why = new StringBuilder();
             for(int o = 0; o < ground.size(); o++){
                 if(covered[o] || !near(ground.get(o), x, y, 6)) continue;
                 covered[o] = true;
+                site_ways.add(new int[]{ground.get(o).source, ground.get(o).move.ordinal()});
                 Lanes.Lane other = ground.get(o);
                 //waves from different sources come at once: they add up
                 groundUnits.get(o).forEach((k, v) -> units.merge(k, v, Integer::sum));
+                addWaves(site_waves, groundWaves.get(o));
                 float fastest = 1f;
                 for(String u : groundUnits.get(o).keySet()) fastest = Math.max(fastest, Foe.get(u).speed);
                 int at = Math.min(bestIndex, other.tiles.length - 1);
@@ -309,12 +368,55 @@ public final class Planner{
             }
             int mid = lanes.middle(tile), facing = Lanes.facing(t, lane, bestIndex);
             int[] cross = cross(mid, facing);
+            //where the walls cannot close the way, the turrets stand on the way itself, not in the middle of open ground
+            if(cross[1] == 0){
+                mid = nearestFree(tile);
+                cross = cross(mid, facing);
+            }
             Site site = new Site(mid % t.w, mid / t.w, facing, why + ", " + cross[0] + " wide at the wall line" + (cross[1] == 1 ? ", closed" : ", too wide to close") + ", " + Math.round(lane.toTarget[bestIndex]) + " out", units, false);
             site.closed = cross[1] == 1;
+            site.ways.addAll(site_ways);
+            site.waves.addAll(site_waves);
             site.arrives = arrives == Float.MAX_VALUE ? 0f : arrives;
             out.add(site);
         }
         return out;
+    }
+
+    void wall(int x, int y){
+        Terrain t = ask.terrain;
+        if(walled == null) walled = new float[t.w * t.h];
+        //a large tungsten wall: 720 health a tile, 2880 for the block, which is what the game counts for each of its tiles
+        if(t.in(x, y)) walled[x + y * t.w] = Lanes.wallCost(2880f);
+    }
+
+    /**
+     * Whether closing the way at a place sends what comes along it round another way: the walls it would have (two thick,
+     * rock to rock) priced as the game prices them, and the way from each source it holds found again.
+     */
+    boolean diverts(Site site){
+        Terrain t = ask.terrain;
+        Lanes test = new Lanes(t, ask.coreX, ask.coreY);
+        test.extra = walled == null ? new float[t.w * t.h] : walled.clone();
+        int dir = site.dir, sx = Post.dx[(dir + 1) % 4], sy = Post.dy[(dir + 1) % 4];
+        for(int u = 3; u <= 4; u++){
+            int cx = site.x + Post.dx[dir] * u, cy = site.y + Post.dy[dir] * u;
+            for(int sign = -1; sign <= 1; sign += 2){
+                for(int n = sign > 0 ? 0 : 1; n <= ask.wallReach + 1; n++){
+                    int x = cx + sx * sign * n, y = cy + sy * sign * n;
+                    if(!t.passable(Foe.Move.ground, x, y)) break;
+                    test.extra[x + y * t.w] = Lanes.wallCost(2880f);
+                }
+            }
+        }
+        for(int[] way : site.ways){
+            Foe.Move move = Foe.Move.values()[way[1]];
+            if(move == Foe.Move.legs) continue;
+            Source src = ask.sources.get(way[0]);
+            Lanes.Lane lane = test.lane(way[0], move, src.x, src.y);
+            if(lane == null || !near(lane, site.x, site.y, 10)) return true;
+        }
+        return false;
     }
 
     /**
@@ -333,7 +435,17 @@ public final class Planner{
             side[k] = n;
             if(n > ask.wallReach) closed = false;
         }
-        return new int[]{side[0] + side[1] + 1, closed ? 1 : 0};
+        return new int[]{side[0] + side[1] + 1, closed ? 1 : 0, side[0], side[1]};
+    }
+
+    /** The free tile nearest to a tile (itself if it is free). */
+    int nearestFree(int tile){
+        Terrain t = ask.terrain;
+        int x = tile % t.w, y = tile / t.w;
+        for(int r = 0; r <= 6; r++) for(int dx = -r; dx <= r; dx++) for(int dy = -r; dy <= r; dy++){
+            if(Math.max(Math.abs(dx), Math.abs(dy)) == r && t.free(x + dx, y + dy)) return x + dx + (y + dy) * t.w;
+        }
+        return tile;
     }
 
     /** Whether there is free ground near a tile to build on (a way through deep liquid or a drop zone is no place to hold). */
@@ -372,14 +484,18 @@ public final class Planner{
             float arrives = (float)Math.hypot(s.x - ask.coreX, s.y - ask.coreY) / speed;
             if(shared != null){
                 for(var e : air.entrySet()) shared.units.merge(e.getKey(), e.getValue(), Integer::sum);
+                addWaves(shared.waves, wavesOf(s, Foe.Move.air));
                 shared.arrives = Math.min(shared.arrives, arrives);
                 continue;
             }
             angles.add(a);
-            int dist = ask.coreSize + 8;
+            //far enough out that flyers coming at the core pass over the turrets and are under fire a while before they reach it,
+            //near enough that the turrets still cover the core
+            int dist = ask.coreSize + 16;
             int x = ask.coreX + (int)Math.round(Math.cos(a) * dist), y = ask.coreY + (int)Math.round(Math.sin(a) * dist);
             int dir = Math.abs(Math.cos(a)) >= Math.abs(Math.sin(a)) ? (Math.cos(a) >= 0 ? 0 : 2) : (Math.sin(a) >= 0 ? 1 : 3);
             Site site = new Site(x, y, dir, "air from " + s.label + ", by the core", air, true);
+            addWaves(site.waves, wavesOf(s, Foe.Move.air));
             site.arrives = arrives;
             out.add(site);
         }
@@ -437,7 +553,7 @@ public final class Planner{
 
     /** How many of a module a set of units needs, and the cost of that many. */
     float price(Choice o, Map<String, Integer> units, boolean closed){
-        float load = o.config.load(units, closed);
+        float load = load(o.config, units.keySet(), closed);
         if(Float.isInfinite(load)) return Float.POSITIVE_INFINITY;
         return Math.max(1, (int)Math.ceil(load * ask.safety - 0.001f)) * o.cost;
     }
@@ -446,6 +562,24 @@ public final class Planner{
      * Gives every unit to the module that holds it at the least cost, then folds a module's units into the others (or
      * gives them all to one module that holds the lot) while that is cheaper. Units nothing can hold are noted.
      */
+    /** Whether the place being chosen for is anti-air by the core. */
+    boolean sizingAir;
+
+    /**
+     * Whether a module is the kind of answer people use for a unit (reference/turrets-drills-human.md §4.1), besides
+     * what the lab saw it hold: flyers coming at the core are met by anti-air turrets (Disperse, Afflict, Breach), never
+     * by a Lustre, which kills one big unit at a time and lags behind swarms; and a turret that is only a heavy-killer is
+     * given tier 3 and up only, so it never stands alone against massed small units.
+     */
+    boolean suits(Choice o, String unit){
+        Gun gun = o.module.gun();
+        Foe foe = Foe.get(unit);
+        if(gun == null || foe == null) return false;
+        if(sizingAir && !gun.roles.contains(Gun.Role.antiAir)) return false;
+        boolean heavyOnly = gun.roles.contains(Gun.Role.heavy) && !gun.roles.contains(Gun.Role.line) && !gun.roles.contains(Gun.Role.antiAir);
+        return !heavyOnly || foe.tier >= 3;
+    }
+
     List<Choice> choose(Map<String, Integer> units, boolean closed){
         List<Choice> options = options();
         Map<String, Choice> owner = new TreeMap<>();
@@ -453,7 +587,7 @@ public final class Planner{
             Choice best = null;
             float bestCost = Float.POSITIVE_INFINITY;
             for(Choice o : options){
-                int cap = o.config.holds(e.getKey(), closed);
+                int cap = suits(o, e.getKey()) ? o.config.holds(e.getKey(), closed) : 0;
                 if(cap <= 0) continue;
                 float c = o.cost * e.getValue() / (float)cap;
                 if(c < bestCost){
@@ -479,7 +613,7 @@ public final class Planner{
                     float cheapest = Float.POSITIVE_INFINITY;
                     for(Choice o : used){
                         if(o == gone) continue;
-                        int cap = o.config.holds(e.getKey(), closed);
+                        int cap = suits(o, e.getKey()) ? o.config.holds(e.getKey(), closed) : 0;
                         if(cap <= 0) continue;
                         if(o.cost / cap < cheapest){
                             cheapest = o.cost / cap;
@@ -504,6 +638,7 @@ public final class Planner{
         for(String u : owner.keySet()) held.put(u, units.get(u));
         float now = total(owner, units, closed);
         for(Choice o : options){
+            if(!held.keySet().stream().allMatch(u -> suits(o, u))) continue;
             if(price(o, held, closed) < now - 0.5f){
                 now = price(o, held, closed);
                 Map<String, Choice> all = new TreeMap<>();
@@ -524,7 +659,7 @@ public final class Planner{
             c.units.put(e.getKey(), units.get(e.getKey()));
         }
         List<Choice> out = new ArrayList<>(made.values());
-        for(Choice c : out) c.count = Math.max(1, (int)Math.ceil(c.config.load(c.units, closed) * ask.safety - 0.001f));
+        for(Choice c : out) c.count = Math.max(1, (int)Math.ceil(load(c.config, c.units.keySet(), closed) * ask.safety - 0.001f));
         return out;
     }
 
@@ -541,7 +676,7 @@ public final class Planner{
         Post post = new Post(ask.terrain, taken, modules);
         Post.Ask pa = new Post.Ask();
         //the one that holds the most of the wave first
-        choices.sort(Comparator.comparingDouble((Choice c) -> -c.config.load(c.units, site.closed) * 1000f - c.units.size()));
+        choices.sort(Comparator.comparingDouble((Choice c) -> -load(c.config, c.units.keySet(), site.closed) * 1000f - c.units.size()));
         pa.wallReach = ask.wallReach;
         boolean ground = false;
         for(Choice c : choices){
@@ -561,8 +696,8 @@ public final class Planner{
                 if(gun != null && !c.config.ammo.equals("-")) pa.ammo.put(gun.name, c.config.ammo);
                 if(c.config.wet) pa.wet = true;
             }
-            site.chosen.add(String.format("%d x %s (%s) for %s: %.0f%% of what the lab measured it holds%s", c.count, c.module.name, c.config.key(), c.units,
-                100f * c.config.load(c.units, site.closed) / c.count, bought < c.count ? ", " + bought + " within the budget" : ""));
+            site.chosen.add(String.format((site.notched ? "[walls notched: closed, they would go round] " : "") + "%d x %s (%s) for %s: the worst wave is %.0f%% of what the lab measured they hold%s", c.count, c.module.name, c.config.key(), c.units,
+                100f * load(c.config, c.units.keySet(), site.closed) / c.count, bought < c.count ? ", " + bought + " within the budget" : ""));
         }
         //walls in front of a ground line, of the best wall we can build and feed
         if(ground && !site.air){
@@ -581,7 +716,19 @@ public final class Planner{
                 pa.back.add(regen);
             }
         }
+        if(site.notched) pa.notch = 3;
+        //at a place the walls close, the modules stay inside the way they close (not across a spur of rock into the next one)
+        if(!site.air && (site.closed || site.notched)){
+            int[] cross = cross(site.x + site.y * ask.terrain.w, site.dir);
+            pa.vMax = cross[2];
+            pa.vMin = -cross[3];
+        }
         post.lay(site.x, site.y, site.dir, pa);
+        //what these walls add to the way the enemy paths, for the places after this one
+        for(Placement w : post.walls){
+            int size = Battery.shape(w.block)[0];
+            for(int i = 0; i < size; i++) for(int j = 0; j < size; j++) wall(Battery.low(w.x, size) + i, Battery.low(w.y, size) + j);
+        }
         //what found no room: nearer the core along the way, or round the core for anti-air
         for(Battery m : post.missed){
             boolean placed = false;

@@ -208,6 +208,33 @@ LIST
     map="$1"; shift
     java $RUN_OPTS -Dxp.syncpath=true -cp "$CP" xtest.DefenseRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$@" 2>build/test-err.log
     ;;
+  defbench)
+    # ./test.sh defbench [jobs]   the defence planner on the wave maps, and on attack maps with waves sent from their cores;
+    # two at a time by default (JOBS beyond 2 crowd a shared machine); logs in build/defbench/<map>.log, a line each at the end
+    mkdir -p build/test-maps build/defbench
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    jobs="${1:-2}"
+    snap=build/defbench/snap; rm -rf $snap; mkdir -p $snap; cp -r build/classes $snap/classes; cp -r build/test-classes $snap/test-classes
+    CP="$GAME_JAR:$snap/classes:$snap/test-classes"
+    # map first-wave last-wave [units sent from the enemy cores on a map without waves]
+    cat > build/defbench/list <<LIST
+onset 1 8 stell*2
+aegis 1 8 stell*3
+intersect 1 9
+ravine 1 24
+crevice 1 45
+LIST
+    : > build/defbench/runs
+    while read map first last units; do
+      while [ $(ps ax | grep -c "[x]test.DefenseRun") -ge $jobs ]; do sleep 1; done
+      echo "$map" >> build/defbench/runs
+      extra=""; [ -n "$units" ] && extra="-Ddef.units=$units"
+      ( java $RUN_OPTS -Dxp.syncpath=true $extra -cp "$CP" xtest.DefenseRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$first" "$last" > build/defbench/$map.log 2> build/defbench/$map.err ) &
+      sleep 1
+    done < build/defbench/list
+    wait
+    for map in $(cat build/defbench/runs); do grep -h "^DEFENSE" build/defbench/$map.log || echo "DEFENSE $map: failed, see build/defbench/$map.err"; done | tee build/defbench/table.txt
+    ;;
   pieces)
     java -cp "$CP" xtest.Pieces build/test-data "$@" blueprints/*.txt 2>build/test-err.log
     ;;

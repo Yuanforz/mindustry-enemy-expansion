@@ -206,7 +206,7 @@ public class TurretLab{
     static List<String> suite(String name){
         List<String> out = new ArrayList<>();
         switch(name){
-            case "caps", "caps1", "caps2" -> {
+            case "caps", "caps1", "caps2", "air1", "air2" -> {
                 //every module, in each way it is fed, against every unit it can hit: the planner's table
                 String[] configs = {
                     "front=breach-pair-direct;ammo=breach:beryllium;wall=beryllium",
@@ -226,10 +226,13 @@ public class TurretLab{
                     "front=smite-post;ammo=smite:surge-alloy;wall=tungsten",
                     "front=smite-post;ammo=smite:surge-alloy;wet;wall=tungsten"};
                 for(int i = 0; i < configs.length; i++){
-                    if(name.equals("caps1") && i % 2 == 1 || name.equals("caps2") && i % 2 == 0) continue;
-                    Run base = Run.parse(configs[i]);
+                    if((name.endsWith("1") && i % 2 == 1) || (name.endsWith("2") && i % 2 == 0)) continue;
+                    //air1, air2: against flyers with no walls, as anti-air stands by the core (flyers waste time on walls in front)
+                    boolean air = name.startsWith("air");
+                    String config = air ? configs[i].replaceAll("wall=[a-z]+", "wall=none") : configs[i];
+                    Run base = Run.parse(config);
                     Gun gun = module(base.front.get(0)).gun();
-                    for(Foe foe : Foe.all.values()) if(gun.hits(foe.move)) out.add("cap:" + configs[i] + ":" + foe.name);
+                    for(Foe foe : Foe.all.values()) if(gun.hits(foe.move) && (!air || foe.move == Foe.Move.air)) out.add("cap:" + config + ":" + foe.name);
                 }
             }
             case "roles" -> {

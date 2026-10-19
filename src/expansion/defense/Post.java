@@ -49,6 +49,10 @@ public final class Post{
         public int wallReach = 12;
         /** Tiles between the first row and the second. */
         public int rowGap = 3;
+        /** Tiles left open in the middle of the wall line (0: closed). A notch keeps the enemy coming through the turrets when a closed line would send it round. */
+        public int notch;
+        /** How far across (v) the modules may reach, each way: the sides of the way the walls close. */
+        public int vMin = Integer.MIN_VALUE / 2, vMax = Integer.MAX_VALUE / 2;
     }
 
     public final Terrain terrain;
@@ -164,6 +168,7 @@ public final class Post{
                 }else{
                     vLow = row.lo - 1 - width - shift;
                 }
+                if(vLow < ask.vMin || vLow + width - 1 > ask.vMax) continue;
                 int vMain = vLow - box[1];
                 int uMain = row.front - back - box[2];
                 int mx = wx(ax, dir, uMain, vMain), my = wy(ay, dir, uMain, vMain);
@@ -256,6 +261,7 @@ public final class Post{
         if(!closedL || !closedR) notes.add("the way at " + ax + "," + ay + " is too wide to close: walls only in front of the turrets");
         Set<Long> cells = new LinkedHashSet<>();
         for(int u = u0; u < u0 + ask.wallDepth; u++) for(int v = vLow; v <= vHigh; v++){
+            if(ask.notch > 0 && Math.abs(v) <= ask.notch / 2) continue;
             int x = wx(ax, dir, u, v), y = wy(ay, dir, u, v);
             long k = Battery.key(x, y);
             if(terrain.free(x, y) && !taken.contains(k)) cells.add(k);

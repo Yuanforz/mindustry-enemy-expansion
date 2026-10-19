@@ -64,8 +64,8 @@ public class DefenseRun{
         if(spec != null){
             rules.spawns.clear();
             for(String u : spec.split("\\+")){
-                SpawnGroup g = new SpawnGroup(Vars.content.unit(u.split("\\*")[0]));
-                g.unitAmount = Integer.parseInt(u.split("\\*")[1]);
+                SpawnGroup g = new SpawnGroup(Vars.content.unit(u.split("[*:]")[0]));
+                g.unitAmount = Integer.parseInt(u.split("[*:]")[1]);
                 g.unitScaling = 2f;
                 rules.spawns.add(g);
             }
@@ -84,6 +84,11 @@ public class DefenseRun{
         //what the planner is told
         Planner.Ask ask = new Planner.Ask();
         ask.terrain = GameData.terrain(us);
+        if(System.getProperty("def.probe") != null){
+            String[] at = System.getProperty("def.probe").split(",");
+            int px = Integer.parseInt(at[0]), py = Integer.parseInt(at[1]);
+            System.out.println("  probe " + px + "," + py + ": flags " + ask.terrain.at(px, py) + ", waves " + rules.waves + ", has spawns " + Vars.state.hasSpawns() + ", spawns " + Vars.spawner.getSpawns().size + ", drop zone " + rules.dropZoneRadius);
+        }
         ask.coreX = core.tileX();
         ask.coreY = core.tileY();
         ask.coreSize = core.block.size;
@@ -123,11 +128,32 @@ public class DefenseRun{
         Boot.frames(30 * 60);
 
         //the waves, one after another: the next comes when this one is dead or its time is up
-        float coreMax = core.maxHealth;
+        float coreMax = core.maxHealth, coreLow = 1f;
         boolean lost = false;
+        //-Ddef.repair=false: nothing is rebuilt or mended between waves (by default it is, as the economy's watch and the core unit do)
+        boolean repair = !"false".equals(System.getProperty("def.repair"));
+        int rebuilt = 0;
+        Map<String, Integer> rebuildCost = new TreeMap<>();
         int lastWave = first - 1;
         Vars.state.wave = first;
         for(int w = first; w <= last && !lost; w++){
+            //between waves: what the plan put down and is gone goes up again, and everything is mended
+            if(repair && w > first){
+                List<Placement> gone = new ArrayList<>();
+                for(Placement p : plan.placements){
+                    Tile t = Vars.world.tile(p.x, p.y);
+                    if(t != null && t.build == null) gone.add(p);
+                }
+                rebuilt += gone.size();
+                for(Placement p : gone){
+                    Map<String, Integer> c = p.kind == Placement.Kind.port ? null : ask.costs.get(p.block);
+                    if(c != null) c.forEach((k, v) -> rebuildCost.merge(k, v, Integer::sum));
+                }
+                GameData.place(gone, us, GameData.sources);
+                if(power != null && power.build != null) for(Building b : us.data().buildings) if(b.power != null && b.power.graph != power.build.power.graph) power.build.power.graph.addGraph(b.power.graph);
+                for(Building b : us.data().buildings) b.heal();
+                Boot.frames(10 * 60);
+            }
             int before = count(us), turretsBefore = turretCount(us);
             Vars.logic.runWave();
             int spawned = enemyCount(enemy);
@@ -141,13 +167,15 @@ public class DefenseRun{
                 }
             }
             lost = !core.isValid();
+            if(core.isValid()) coreLow = Math.min(coreLow, core.health / coreMax);
             lastWave = w;
             System.out.println(String.format("  wave %2d: %3d units %s; %s after %3.0f s; core %s; lost %d blocks, %d turrets (%d left)",
                 w, spawned, waves.size() > w - first ? waves.get(w - first) : "", enemyCount(enemy) == 0 ? "all dead" : enemyCount(enemy) + " still alive", frames / 60f,
                 core.isValid() ? Math.round(core.health / coreMax * 100) + "%" : "DESTROYED", before - count(us), turretsBefore - turretCount(us), turretCount(us)));
         }
         System.out.println("DEFENSE " + map.nameWithoutExtension() + " waves " + first + "-" + last + ": " + (lost ? "FAILS at wave " + lastWave : "HOLDS") + "; core at "
-            + (core.isValid() ? Math.round(core.health / coreMax * 100) : 0) + "%; turrets " + turretCount(us) + " of " + turrets + " planned and placed");
+            + (core.isValid() ? Math.round(core.health / coreMax * 100) : 0) + "%, lowest " + Math.round(coreLow * 100) + "%; turrets " + turretCount(us) + " of " + turrets + " planned and placed"
+            + (repair ? "; " + rebuilt + " blocks rebuilt between waves " + rebuildCost : "; nothing rebuilt"));
         System.exit(0);
     }
 
@@ -189,9 +217,12 @@ public class DefenseRun{
                     for(SpawnGroup g : rules.spawns){
                         if(g.type == null || g.type.flying != (k == 1) || (g.spawn != -1 && g.spawn != pos.get(i))) continue;
                         int n = g.getSpawned(w - 1);
+                        //a guardian has half as much health again and hits 1.3 times as hard: it counts as two
+                        if(g.effect == StatusEffects.boss) n *= 2;
                         if(n > 0 && Foe.get(g.type.name) != null) wave.merge(g.type.name, n, Integer::sum);
                     }
                     for(var e : wave.entrySet()) src.units.merge(e.getKey(), e.getValue(), Math::max);
+                    src.waves.add(wave);
                 }
                 for(String u : src.units.keySet()) src.moves.add(Foe.get(u).move);
                 if(!src.units.isEmpty()) ask.sources.add(src);

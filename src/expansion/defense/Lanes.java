@@ -45,9 +45,22 @@ public final class Lanes{
 
     static final int[] d8x = {1, 0, -1, 0, 1, -1, -1, 1}, d8y = {0, 1, 0, -1, 1, 1, -1, -1};
 
+    /**
+     * Extra cost to step on a tile, for walls that are planned but not built yet; null for none. The game charges a unit
+     * the health of a solid building over 40 (at most 80), five times, to path through it (Pathfinder.costGround): a large
+     * tungsten wall is about 360 a tile, so a line of them two thick sends units round by any way less than ~700 longer.
+     */
+    public float[] extra;
+
     /** Steps on what is already built (ours) cost more, as the game's own path costs make units go round where they can. */
     float stepCost(Foe.Move move, int i){
-        return (t.flags[i] & Terrain.built) != 0 && move != Foe.Move.air ? 6f : 0f;
+        if(move == Foe.Move.air || move == Foe.Move.legs) return 0f;
+        return ((t.flags[i] & Terrain.built) != 0 ? 6f : 0f) + (extra != null ? extra[i] : 0f);
+    }
+
+    /** Path cost the game gives one tile of a wall of this much health. */
+    public static float wallCost(float health){
+        return Math.min(health / 40f, 80f) * 5f;
     }
 
     /** Shortest paths to the target over what this way of moving can cross, from every tile. */
@@ -160,12 +173,13 @@ public final class Lanes{
 
     /** The middle of the way near a tile: the open tile within 8 tiles with the most room round it, the nearest of those. */
     public int middle(int i){
-        int x = i % t.w, y = i / t.w, best = i, room = clear[i];
+        int x = i % t.w, y = i / t.w, best = i, room = t.free(x, y) ? clear[i] : -1;
         float near = 0f;
         for(int dx = -8; dx <= 8; dx++) for(int dy = -8; dy <= 8; dy++){
             if(dx * dx + dy * dy > 64 || !t.in(x + dx, y + dy)) continue;
             int j = x + dx + (y + dy) * t.w;
             float d = dx * dx + dy * dy;
+            if(!t.free(x + dx, y + dy)) continue;
             if(clear[j] > room || (clear[j] == room && d < near)){
                 room = clear[j];
                 best = j;
@@ -177,7 +191,8 @@ public final class Lanes{
 
     /** The direction (0 = +x .. 3 = -y) the enemy comes from at a tile of a lane: the way back along it, a few tiles out. */
     public static int facing(Terrain t, Lane lane, int index){
-        int back = lane.tiles[Math.max(0, index - 8)], here = lane.tiles[Math.min(lane.tiles.length - 1, index + 4)];
+        //from far enough back that a bend just before the place does not turn it the wrong way
+        int back = lane.tiles[Math.max(0, index - 20)], here = lane.tiles[Math.min(lane.tiles.length - 1, index + 2)];
         int dx = back % t.w - here % t.w, dy = back / t.w - here / t.w;
         if(Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 0 : 2;
         return dy >= 0 ? 1 : 3;
