@@ -65,7 +65,9 @@ public class Match{
         boolean generated = args[1].startsWith("gen:");
         Fi map = generated ? new Fi("gen-" + args[1].substring(4)) : new Fi(args[1]);
         float minutes = Float.parseFloat(args[2]);
-        String mode = generated ? "gen" : args.length > 3 ? args[3] : "sector";
+        String mode = args.length > 3 ? args[3] : generated ? "gen" : "sector";
+        //sandbox: no other side at all; our stages climb the tech from the landing stock, and what got made is told at the end
+        boolean sandbox = mode.equals("sandbox");
 
         Vars.logic.reset();
         if(generated){
@@ -88,12 +90,21 @@ public class Match{
         rules.infiniteResources = false;
         rules.attackMode = true;
         //a sector of waves has no base of the Brain's to play against
-        if(them.cores().isEmpty() || us.cores().isEmpty()){
+        //every kind of ground in reach of our core (-Dmatch.allground=true): what the map lacks is put down near the core, a
+        //patch of each (a fixture for climbing the whole tech; no generated map of 200 has them all)
+        if(Boolean.getBoolean("match.allground")) allGround(us.core());
+        if(sandbox){
+            for(Tile tile : Vars.world.tiles) if(tile.build != null && tile.team() == them) tile.setBlock(Blocks.air);
+            for(Unit u : Groups.unit.copy(new Seq<>())) if(u.team == them) u.remove();
+            rules.attackMode = false;
+            rules.winWave = 0;
+        }
+        if(!sandbox && (them.cores().isEmpty() || us.cores().isEmpty())){
             System.out.println("RESULT " + map.nameWithoutExtension() + " " + mode + " winner=none: " + (them.cores().isEmpty() ? "the Brain has no core on this map (a sector of waves)" : "we have no core"));
             System.exit(0);
         }
         if(mode.equals("even")) even();
-        else if(!generated){
+        else if(!generated && !sandbox){
             //the rules the campaign lays on the enemy of a sector (the mod keeps its own count of what it has)
             Planet planet = Planets.erekir;
             if(planet.enemyInfiniteItems){
@@ -287,13 +298,29 @@ public class Match{
                 winner = "Brain";
                 break;
             }
-            if(them.cores().isEmpty()){
+            if(!sandbox && them.cores().isEmpty()){
                 winner = "us";
                 break;
             }
         }
         float t = (float)(Vars.state.tick / 60.0);
         System.out.println(report(t, hand, stage));
+        if(sandbox){
+            StringBuilder made = new StringBuilder("  made, by kind:");
+            for(var e : Match.made) if(e.key.startsWith("us ")) made.append(' ').append(e.key.substring(3)).append('=').append(e.value);
+            System.out.println(made);
+            ObjectIntMap<String> turrets = new ObjectIntMap<>(), ready = new ObjectIntMap<>();
+            for(Building b : us.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild tb){
+                turrets.increment(b.block.name);
+                if(tb.hasAmmo() && tb.efficiency > 0f) ready.increment(b.block.name);
+            }
+            StringBuilder tb = new StringBuilder("  turrets standing (ready to fire):");
+            for(var e : turrets) tb.append(' ').append(e.key).append('=').append(e.value).append(" (").append(ready.get(e.key, 0)).append(')');
+            System.out.println(tb);
+            StringBuilder held = new StringBuilder("  the core holds:");
+            if(us.core() != null) for(Item item : Vars.content.items()) if(us.core().items.get(item) > 0) held.append(' ').append(item.name).append('=').append(us.core().items.get(item));
+            System.out.println(held);
+        }
         if(hand != null) for(String tr : hand.trouble) System.out.println("  could not put down: " + tr);
         if(hand != null && hand.job != null) for(var p : hand.job){
             Tile tile = Vars.world.tile(p.x, p.y);
@@ -458,6 +485,51 @@ public class Match{
         }
         if(hand != null) b.append(String.format("our stage %d: %d of %d begun, %s", stage + 1, hand.next, hand.order.size(), hand.doing));
         return b.toString();
+    }
+
+    /** Puts a patch of each kind of ground Erekir's tech needs that is not in reach of the core, on open ground near it. */
+    static void allGround(CoreBlock.CoreBuild core){
+        int cx = core.tileX(), cy = core.tileY();
+        ObjectIntMap<String> found = ResourceScan.census(cx, cy, 110);
+        Object[][] kinds = {
+            {"floor:thorium", Blocks.oreThorium, false},
+            {"floor:tungsten", Vars.content.block("ore-tungsten"), false},
+            {"liquid:slag", Blocks.slag, true},
+            {"liquid:arkycite", Blocks.arkyciteFloor, true},
+        };
+        int placed = 0;
+        for(Object[] k : kinds){
+            if(found.get((String)k[0], 0) >= 30 || k[1] == null) continue;
+            Tile at = openSquare(cx, cy, 9, placed);
+            if(at == null){
+                System.out.println("  no room near the core for " + k[0]);
+                continue;
+            }
+            for(int dx = 0; dx < 9; dx++) for(int dy = 0; dy < 9; dy++){
+                Tile t = Vars.world.tile(at.x + dx, at.y + dy);
+                if((Boolean)k[2]) t.setFloor(((Block)k[1]).asFloor());
+                else t.setOverlay((Block)k[1]);
+            }
+            placed++;
+            System.out.println("  put down " + k[0] + " at " + at.x + "," + at.y + " (the map had " + found.get((String)k[0], 0) + " tiles of it in reach)");
+        }
+    }
+
+    /** The corner of a square of open ground of this size some way out from (cx, cy), the n-th such going round. */
+    static Tile openSquare(int cx, int cy, int size, int n){
+        int seen = 0;
+        for(int r = 18; r <= 45; r += 3){
+            for(int a = 0; a < 360; a += 20){
+                int x = cx + (int)(Math.cos(Math.toRadians(a + n * 97)) * r), y = cy + (int)(Math.sin(Math.toRadians(a + n * 97)) * r);
+                boolean ok = true;
+                for(int dx = -1; dx <= size && ok; dx++) for(int dy = -1; dy <= size && ok; dy++){
+                    Tile t = Vars.world.tile(x + dx, y + dy);
+                    if(t == null || t.solid() || t.build != null || t.floor().isDeep() || t.floor().isLiquid || t.overlay() != Blocks.air) ok = false;
+                }
+                if(ok) return Vars.world.tile(x, y);
+            }
+        }
+        return null;
     }
 
     /** Everything taken off but one core a side, the same core and the same items for both. */
