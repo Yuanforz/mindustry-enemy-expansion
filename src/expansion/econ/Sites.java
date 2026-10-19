@@ -63,16 +63,29 @@ public final class Sites{
             }
         }
         Vars.state.rules.fog = fog;
+        //what the side has seen so far: the game works its fog out on a thread of its own, which this makes it do now
+        if(fog && Vars.state.rules.staticFog){
+            try{
+                Vars.fogControl.update();
+            }catch(Throwable ignored){
+            }
+            for(Field.Site s : all){
+                for(int t : s.tiles) if(!Vars.fogControl.isDiscovered(team, t % Vars.world.width(), t / Vars.world.width())){ s.seen = false; break; }
+            }
+        }
         all.sort((a, b) -> Float.compare(score(b), score(a)));
-        IntSet taken = new IntSet();
+        //no two overlap, nothing stands across a drill's beam, and no beam crosses something that stands
+        IntSet taken = new IntSet(), lanes = new IntSet();
         Map<String, Integer> count = new HashMap<>();
         for(Field.Site site : all){
             String key = site.ground + "/" + site.item;
             if(count.getOrDefault(key, 0) >= keep) continue;
             boolean free = true;
-            for(int t : site.tiles) if(taken.contains(t)){ free = false; break; }
+            for(int t : site.tiles) if(taken.contains(t) || lanes.contains(t)){ free = false; break; }
+            for(int t : site.lane) if(taken.contains(t)){ free = false; break; }
             if(!free) continue;
             for(int t : site.tiles) taken.add(t);
+            for(int t : site.lane) lanes.add(t);
             field.sites.add(site);
             count.merge(key, 1, Integer::sum);
         }
@@ -90,7 +103,9 @@ public final class Sites{
                 item = site.item;
                 factor = site.factor;
             }
-            field.existing.add(new Machine(r, item, factor, build.tileX(), build.tileY(), dst(field, build.tileX(), build.tileY()), new int[cat.size()], false, true));
+            Machine m = new Machine(r, item, factor, build.tileX(), build.tileY(), dst(field, build.tileX(), build.tileY()), new int[cat.size()], false, true);
+            m.rotation = build.rotation;
+            field.existing.add(m);
         }
         return field;
     }
@@ -114,6 +129,7 @@ public final class Sites{
     static Field.Site site(Catalog cat, Field field, Recipe.Ground ground, Block block, int x, int y, int rot){
         int item = -1;
         float factor = 0f;
+        IntSeq beam = new IntSeq();
         switch(ground){
             case vent -> {
                 //on Erekir the vent machines need all nine tiles
@@ -129,7 +145,11 @@ public final class Sites{
                     block.nearbySide(x, y, rot, lane, p);
                     for(int i = 0; i < drill.range; i++){
                         Tile other = Vars.world.tile(p.x + dx * i, p.y + dy * i);
-                        if(other == null || !other.solid()) continue;
+                        if(other == null) break;
+                        if(!other.solid()){
+                            beam.add(other.x + other.y * Vars.world.width());
+                            continue;
+                        }
                         Item drop = other.wallDrop();
                         if(drop != null && drop.hardness <= drill.tier && (drill.blockedItems == null || !drill.blockedItems.contains(drop))){
                             //two items in one bore makes it slow on both; such places are left out
@@ -172,7 +192,9 @@ public final class Sites{
         }
         IntSeq tiles = new IntSeq();
         Vars.world.tile(x, y).getLinkedTilesAs(block, t -> tiles.add(t.x + t.y * Vars.world.width()));
-        return new Field.Site(ground, x, y, rot, item, factor, dst(field, x, y), tiles.toArray());
+        Field.Site site = new Field.Site(ground, x, y, rot, item, factor, dst(field, x, y), tiles.toArray());
+        site.lane = beam.toArray();
+        return site;
     }
 
     /** The recipe a standing building works by, if it is one the catalog has. */

@@ -21,7 +21,7 @@ import java.util.*;
  */
 public class EconLab{
     /** The machines of the economy each sector adds, in campaign order (from the tech tree; see reference/research-2026-10-18/maps-and-tech.md). */
-    static final String[][] tech = {
+    public static final String[][] tech = {
         {"onset", "plasma-bore", "turbine-condenser", "cliff-crusher", "silicon-arc-furnace", "tank-fabricator"},
         {"aegis", "impact-drill", "vent-condenser"},
         {"lake", "ship-fabricator"},
@@ -136,7 +136,7 @@ public class EconLab{
             what, cat.get(unit).name, time(line.first[unit]), time(all), line.done() && line.made[unit] >= 1 ? time(line.t) : "never", line.order.size(), firsts));
     }
 
-    static String time(float s){
+    public static String time(float s){
         if(Float.isNaN(s) || Float.isInfinite(s)) return "never";
         return String.format("%d:%02d", (int)s / 60, (int)s % 60);
     }

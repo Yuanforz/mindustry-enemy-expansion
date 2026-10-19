@@ -16,6 +16,10 @@ public final class Machine{
     public final boolean boosted;
     /** Whether it stood there before anything was planned (part of the base the map comes with). */
     public final boolean existing;
+    /** Which way it faces, for machines that face something (drills face their wall). */
+    public int rotation;
+    /** Whether its place is on ground not yet seen: it can only be begun once a unit has been there. */
+    public boolean unseen;
 
     public Machine(Recipe recipe, int item, float factor, int x, int y, float distance, int[] cost, boolean boosted, boolean existing){
         this.recipe = recipe;

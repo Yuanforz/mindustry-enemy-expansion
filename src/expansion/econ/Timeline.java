@@ -133,9 +133,11 @@ public final class Timeline{
     public boolean step(float limit){
         if(dirty) settle();
         //what the core unit does
+        float seenAt = 0f;
+        if(building < 0 && next < order.size()) seenAt = seenAt(order.get(next));
         if(building < 0 && next < order.size()){
             Machine m = order.get(next);
-            if(affordable(m)){
+            if(affordable(m) && seenAt <= t){
                 for(int k = 0; k < m.cost.length; k++) stock[k] -= m.cost[k];
                 float fly = Math.max(0f, (float)Math.hypot(m.x - bx, m.y - by) - cat.buildRange) / cat.flySpeed;
                 building = next;
@@ -159,7 +161,7 @@ public final class Timeline{
         float dt = limit - t;
         if(building >= 0) dt = Math.min(dt, buildLeft);
         else if(next < order.size()){
-            float wait = untilAffordable(order.get(next), income);
+            float wait = Math.max(untilAffordable(order.get(next), income), seenAt - t);
             dt = Math.min(dt, wait);
             //the item being dug may be met before the rest: then it is time to dig something else
             if(digging >= 0){
@@ -305,6 +307,20 @@ public final class Timeline{
                 }
             }
         }
+    }
+
+    /**
+     * When a machine's place will have been seen: now, if it was seen from the start; else once the first unit made has
+     * gone there from the core (the core unit sees nothing). Infinite while there is no unit yet.
+     */
+    float seenAt(Machine m){
+        if(!m.unseen) return 0f;
+        float best = Float.POSITIVE_INFINITY;
+        for(var e : cat.unitSpeed.entrySet()){
+            float at = first[e.getKey()];
+            if(!Float.isInfinite(at) && e.getValue() > 0f) best = Math.min(best, at + m.distance / e.getValue());
+        }
+        return best;
     }
 
     boolean affordable(Machine m){

@@ -157,6 +157,8 @@ public final class Recipes{
 
     static int unit(Catalog cat, UnitType type){
         Res r = cat.byName.get(type.name);
-        return r != null ? r.id : cat.add(type.name, Res.Kind.unit, false, false).id;
+        int id = r != null ? r.id : cat.add(type.name, Res.Kind.unit, false, false).id;
+        cat.unitSpeed.put(id, type.speed * 60f / Vars.tilesize);
+        return id;
     }
 }

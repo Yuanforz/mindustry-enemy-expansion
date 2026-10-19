@@ -20,6 +20,8 @@ public final class Catalog{
     public float handOverRange = 27.5f, mineRange = 8.75f, buildRange = 27.5f;
     /** The rule that scales building speed for this side. */
     public float buildRule = 1f;
+    /** How fast each kind of unit goes over the ground, tiles a second, by {@link Res#id} (0 for what is not a unit). */
+    public final Map<Integer, Float> unitSpeed = new HashMap<>();
 
     public Res add(String name, Res.Kind kind, boolean storable, boolean handMined){
         Res r = new Res(res.size(), name, kind, storable, handMined);

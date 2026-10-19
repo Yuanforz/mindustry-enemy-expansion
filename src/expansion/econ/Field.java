@@ -11,6 +11,13 @@ public final class Field{
         public final float factor, distance;
         /** The tiles it covers, as x + y * width, so that two sites that overlap are not both taken. */
         public final int[] tiles;
+        /**
+         * Whether the side can see it at the start. Ground not yet seen can't be built on, and the core unit sees nothing
+         * (its fog radius is 0): it is seen once a unit has been there. (A side the game runs as an AI has no fog.)
+         */
+        public boolean seen = true;
+        /** For drills that reach across the ground to a wall: the open tiles their beams cross, on which nothing solid may stand. */
+        public int[] lane = new int[0];
 
         public Site(Recipe.Ground ground, int x, int y, int rotation, int item, float factor, float distance, int[] tiles){
             this.ground = ground;

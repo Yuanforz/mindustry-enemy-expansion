@@ -194,7 +194,12 @@ public final class Planner{
         if(liquids) cost[be] += Math.round(d);
         if(r.powerUse > 0f || r.powerOut > 0f) cost[be] += (int)Math.ceil(d / 10f) * 8;
         int x = site == null ? field.coreX + (int)baseDistance : site.x, y = site == null ? field.coreY : site.y;
-        return new Machine(r, site == null ? -1 : site.item, site == null ? 1f : site.factor, x, y, d, cost, false, false);
+        Machine m = new Machine(r, site == null ? -1 : site.item, site == null ? 1f : site.factor, x, y, d, cost, false, false);
+        if(site != null){
+            m.rotation = site.rotation;
+            m.unseen = !site.seen;
+        }
+        return m;
     }
 
     // ---------------------------------------------------------------- the order
@@ -588,7 +593,10 @@ public final class Planner{
     Machine boosted(Machine m){
         int[] cost = m.cost.clone();
         cost[cat.id("beryllium")] += Math.round(m.distance);
-        return new Machine(m.recipe, m.item, m.factor, m.x, m.y, m.distance, cost, true, false);
+        Machine b = new Machine(m.recipe, m.item, m.factor, m.x, m.y, m.distance, cost, true, false);
+        b.rotation = m.rotation;
+        b.unseen = m.unseen;
+        return b;
     }
 
     boolean[] madeSomewhere(Node n){

@@ -11,7 +11,7 @@ if [ -n "$SNAP" ]; then
 else
   ./build.sh "$GAME_JAR" > /dev/null
   mkdir -p build/test-classes build/test-data
-  javac --release 17 -proc:none -cp "$GAME_JAR:build/classes" -d build/test-classes test/src/xtest/*.java
+  javac --release 17 -proc:none -cp "$GAME_JAR:build/classes" -d build/test-classes test/src/xtest/*.java tools/src/tools/Ascii.java
   CP="$GAME_JAR:build/classes:build/test-classes"
 fi
 # what a run without a window is started with: see docs/PLAN.md, "how fast the tests go"
