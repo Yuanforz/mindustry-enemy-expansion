@@ -7,3 +7,6 @@ reference/schematics/
 
 # third-party designs picked for the module library: used locally, not shipped (see blueprints/modules/README.md)
 blueprints/modules/*.msch
+
+# agents' worktrees and local tool state
+.claude/
