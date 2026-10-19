@@ -504,10 +504,10 @@ public class DesignGen{
     /**
      * Electrolyzers: water in, ozone out of each one's left side (north here), hydrogen out of its right (south), each
      * collected by a liquid router against the middle of that side and a conduit along it. Pairs share a gap that water
-     * comes down into through a liquid junction in the ozone line.
+     * comes down into by a liquid bridge over the ozone line, to a router that hands it to both.
      */
     static Plan electrolyzers(int n){
-        Plan p = new Plan("electrolyzer-" + n, "ozone", "electrolyzer row: " + n + " electrolyzers, water into the pair gaps by junctions, ozone line above, hydrogen line below");
+        Plan p = new Plan("electrolyzer-" + n, "ozone", "electrolyzer row: " + n + " electrolyzers, water bridged into the pair gaps, ozone line above, hydrogen line below");
         Block z = Blocks.electrolyzer;
         if(n == 1){
             p.put(z, 1, 1, E);
@@ -528,7 +528,7 @@ public class DesignGen{
         for(int x = r[0][0] + 1; x < w; x++){
             //ozone above (y 4), hydrogen below (y 0): a router against each electrolyzer's middle, conduits between
             if(gap.contains(x)){
-                p.put(Blocks.reinforcedLiquidJunction, x, 4);
+                p.put(Blocks.reinforcedConduit, x, 4, E);
                 p.put(Blocks.reinforcedConduit, x, 0, E);
             }else if(middle.contains(x)){
                 p.put(Blocks.reinforcedLiquidRouter, x, 4);
@@ -540,14 +540,18 @@ public class DesignGen{
         }
         p.out(true, w, 4, E);
         p.out(true, w, 0, E);
-        //water: into each gap's top through the junction, from a line of conduits along y 5 with a router over each gap
-        for(int g : r[1]) p.put(Blocks.reinforcedLiquidRouter, g, 3);
+        //water: down into each gap by a bridge over the ozone line, from a line of conduits along y 6 with a router over each gap
+        for(int g : r[1]){
+            p.put(Blocks.reinforcedLiquidRouter, g, 2);
+            p.put(Blocks.reinforcedBridgeConduit, g, 3, S);
+            p.put(Blocks.reinforcedBridgeConduit, g, 5, S);
+        }
         int first = r[1][0];
-        p.in(Liquids.water, first, 5, S);
+        p.in(Liquids.water, first, 6, S);
         for(int i = 1; i < r[1].length; i++){
             int g = r[1][i];
-            for(int x = r[1][i - 1] + 1; x < g; x++) p.put(Blocks.reinforcedConduit, x, 5, E);
-            p.put(Blocks.reinforcedLiquidRouter, g, 5);
+            for(int x = r[1][i - 1] + 1; x < g; x++) p.put(Blocks.reinforcedConduit, x, 6, E);
+            p.put(Blocks.reinforcedLiquidRouter, g, 6);
         }
         power(p);
         return p;
