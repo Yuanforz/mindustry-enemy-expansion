@@ -247,6 +247,11 @@ public final class Design{
 
     /** The modules of a library: the lab's table and the schematic files beside it. Those that can't be read are left out. */
     public static List<Design> load(Fi dir){
+        return load(dir, "");
+    }
+
+    /** The same, each id with a prefix in front (to keep two libraries' ids apart). */
+    public static List<Design> load(Fi dir, String prefix){
         List<Design> out = new ArrayList<>();
         Fi table = dir.child("modules.tsv");
         if(!table.exists()) return out;
@@ -265,7 +270,7 @@ public final class Design{
                 continue;
             }
             repair(s);
-            Design m = new Design(id, f[col.get("name")], s, Float.parseFloat(f[col.get("power")]));
+            Design m = new Design(prefix + id, f[col.get("name")], s, Float.parseFloat(f[col.get("power")]));
             if(col.containsKey("power_made") && !f[col.get("power_made")].isEmpty()) m.powerMade = Float.parseFloat(f[col.get("power_made")]);
             ports(m, f[col.get("inputs")], true);
             ports(m, f[col.get("outputs")], false);
