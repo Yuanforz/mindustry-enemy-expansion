@@ -73,22 +73,29 @@ public final class Sites{
                 for(int t : s.tiles) if(!Vars.fogControl.isDiscovered(team, t % Vars.world.width(), t / Vars.world.width())){ s.seen = false; break; }
             }
         }
-        all.sort((a, b) -> Float.compare(score(b), score(a)));
-        //no two overlap, nothing stands across a drill's beam, and no beam crosses something that stands
-        IntSet taken = new IntSet(), lanes = new IntSet();
+        //what the map's own drills reach across stays clear
+        IntSet lit = new IntSet();
+        for(Building build : team.data().buildings){
+            if(build instanceof BeamDrill.BeamDrillBuild && build.tile == Vars.world.tile(build.tileX(), build.tileY())){
+                Field.Site s = site(cat, field, Recipe.Ground.wallOre, build.block, build.tileX(), build.tileY(), build.rotation);
+                if(s != null) for(int t : s.lane) lit.add(t);
+            }
+        }
+        all.removeIf(s -> { for(int t : s.tiles) if(lit.contains(t)) return true; return false; });
+        //the best set of places that are in no one's way: no two overlap, nothing stands across a beam or on the row
+        //behind a bore or crusher (where its duct goes) or right against a floor drill
+        float[] worth = new float[all.size()];
+        for(int i = 0; i < all.size(); i++) worth[i] = Packing.rate(cat, all.get(i)) / (1f + all.get(i).distance / 40f);
+        List<Field.Site> packed = Packing.select(all, worth, Vars.world.width());
+        packed.sort((a, b) -> Float.compare(Packing.rate(cat, b) / (1f + b.distance / 40f), Packing.rate(cat, a) / (1f + a.distance / 40f)));
         Map<String, Integer> count = new HashMap<>();
-        for(Field.Site site : all){
+        for(Field.Site site : packed){
             String key = site.ground + "/" + site.item;
             if(count.getOrDefault(key, 0) >= keep) continue;
-            boolean free = true;
-            for(int t : site.tiles) if(taken.contains(t) || lanes.contains(t)){ free = false; break; }
-            for(int t : site.lane) if(taken.contains(t)){ free = false; break; }
-            if(!free) continue;
-            for(int t : site.tiles) taken.add(t);
-            for(int t : site.lane) lanes.add(t);
             field.sites.add(site);
             count.merge(key, 1, Integer::sum);
         }
+        field.candidates = all.size();
 
         //what already stands: the map's own base for this side
         for(Building build : team.data().buildings){
@@ -166,12 +173,14 @@ public final class Sites{
             case sandWall -> {
                 WallCrafter crusher = (WallCrafter)block;
                 Point2 p = new Point2();
+                //every tile of its face on sand: one with half its face on nothing gives half, and is not worth the room
                 for(int lane = 0; lane < block.size; lane++){
                     block.nearbySide(x, y, rot, lane, p);
                     Tile other = Vars.world.tile(p.x, p.y);
-                    if(other != null && other.solid()) factor += other.block().attributes.get(crusher.attribute);
+                    float a = other != null && other.solid() ? other.block().attributes.get(crusher.attribute) : 0f;
+                    if(a <= 0f) return null;
+                    factor += a;
                 }
-                if(factor <= 0f) return null;
                 item = cat.id(crusher.output.name);
             }
             case floorOre -> {
@@ -194,7 +203,32 @@ public final class Sites{
         Vars.world.tile(x, y).getLinkedTilesAs(block, t -> tiles.add(t.x + t.y * Vars.world.width()));
         Field.Site site = new Field.Site(ground, x, y, rot, item, factor, dst(field, x, y), tiles.toArray());
         site.lane = beam.toArray();
+        site.apron = apron(ground, block, x, y, rot);
         return site;
+    }
+
+    /**
+     * The tiles a machine on the ground needs kept free of other such machines: the row behind a bore or crusher, where
+     * the duct that takes what the row gives runs, and the ring round a floor drill, so every drill touches a corridor.
+     */
+    static int[] apron(Recipe.Ground ground, Block block, int x, int y, int rot){
+        int w = Vars.world.width(), s = block.size, off = -(s - 1) / 2;
+        IntSeq out = new IntSeq();
+        int x0 = x + off, y0 = y + off, x1 = x0 + s - 1, y1 = y0 + s - 1;
+        if(ground == Recipe.Ground.wallOre || ground == Recipe.Ground.sandWall){
+            int back = (rot + 2) % 4;
+            for(int i = 0; i < s; i++){
+                int tx = back == 0 ? x1 + 1 : back == 2 ? x0 - 1 : x0 + i;
+                int ty = back == 1 ? y1 + 1 : back == 3 ? y0 - 1 : y0 + i;
+                if(Vars.world.tile(tx, ty) != null) out.add(tx + ty * w);
+            }
+        }else if(ground == Recipe.Ground.floorOre){
+            for(int i = 0; i < s; i++){
+                int[][] ring = {{x + off + i, y + off - 1}, {x + off + i, y + off + s}, {x + off - 1, y + off + i}, {x + off + s, y + off + i}};
+                for(int[] t : ring) if(Vars.world.tile(t[0], t[1]) != null) out.add(t[0] + t[1] * w);
+            }
+        }
+        return out.toArray();
     }
 
     /** The recipe a standing building works by, if it is one the catalog has. */

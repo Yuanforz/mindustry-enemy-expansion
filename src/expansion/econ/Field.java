@@ -18,6 +18,8 @@ public final class Field{
         public boolean seen = true;
         /** For drills that reach across the ground to a wall: the open tiles their beams cross, on which nothing solid may stand. */
         public int[] lane = new int[0];
+        /** Tiles other such machines must leave free: the row behind it for its duct, or the ring round a floor drill. */
+        public int[] apron = new int[0];
 
         public Site(Recipe.Ground ground, int x, int y, int rotation, int item, float factor, float distance, int[] tiles){
             this.ground = ground;
@@ -40,6 +42,8 @@ public final class Field{
     /** For each item, how far from the core the nearest wall the core unit can dig it from is (tiles); infinite when there is none. */
     public float[] handDistance;
     public final List<Site> sites = new ArrayList<>();
+    /** How many places were looked at before packing. */
+    public int candidates;
     /** Machines already standing on the map at the start. */
     public final List<Machine> existing = new ArrayList<>();
     /** What the core holds at the start. */

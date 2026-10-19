@@ -58,7 +58,7 @@ public class EconLab{
         long t1 = System.nanoTime();
         int unit = cat.id(unitName);
         System.out.println("######## " + new Fi(args[1]).nameWithoutExtension() + ", researched as at " + sector + "; goal: " + unitName + " from " + factories + " machine(s)");
-        System.out.println(String.format("  core at %d,%d holds %s; core unit digs %.2f/s; read in %.1fs", field.coreX, field.coreY, items(cat, field.stock), cat.mineRate, (t1 - t0) / 1e9));
+        System.out.println(String.format("  core at %d,%d holds %s; core unit digs %.2f/s; read in %.1fs (%d places packed down to %d)", field.coreX, field.coreY, items(cat, field.stock), cat.mineRate, (t1 - t0) / 1e9, field.candidates, field.sites.size()));
         System.out.println(String.format("  nearest walls to dig by hand: beryllium %.0f tiles (%.2f/s), graphite %.0f tiles (%.2f/s)",
             field.handDistance[cat.id("beryllium")], field.handRate(cat, cat.id("beryllium")), field.handDistance[cat.id("graphite")], field.handRate(cat, cat.id("graphite"))));
         Map<String, List<Field.Site>> byKind = new TreeMap<>();
