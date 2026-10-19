@@ -373,7 +373,15 @@ public class Match{
     static void even(){
         CoreBlock.CoreBuild ours = us.core();
         CoreBlock.CoreBuild theirs = null;
-        for(CoreBlock.CoreBuild c : them.cores()) if(theirs == null || c.dst(ours) > theirs.dst(ours)) theirs = c;
+        //the farthest of the Brain's cores that ground units can walk to from ours, else one hovering units get to, else any
+        //(some maps have cores behind walls that only open later, or across what nothing but aircraft crosses)
+        for(mindustry.type.UnitType kind : new mindustry.type.UnitType[]{UnitTypes.stell, UnitTypes.elude, null}){
+            for(CoreBlock.CoreBuild c : them.cores()){
+                if(kind != null && !expansion.army.Reach.can(kind, us, ours.tileX(), ours.tileY(), c.tileX(), c.tileY())) continue;
+                if(theirs == null || c.dst(ours) > theirs.dst(ours)) theirs = c;
+            }
+            if(theirs != null) break;
+        }
         int ox = ours.tileX(), oy = ours.tileY(), tx = theirs.tileX(), ty = theirs.tileY();
         Block coreBlock = ours.block;
         Seq<Building> all = new Seq<>();

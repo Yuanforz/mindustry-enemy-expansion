@@ -29,7 +29,12 @@ public class Push{
     final IntSet given = new IntSet();
     /** For the report: how many targets it went for, and destroyed. */
     public int targets, destroyed;
-    static final BlockFlag[] flags = {BlockFlag.factory, BlockFlag.turret, BlockFlag.generator, BlockFlag.core, BlockFlag.battery, BlockFlag.drill};
+    /**
+     * What it goes for: first what fights back or makes what fights back, and the cores (a base ground down drill by drill
+     * holds out for a whole game: on atlas, 626 of the Brain's blocks in 25 minutes and its core untouched); the rest only
+     * once none of those are left.
+     */
+    static final BlockFlag[] first = {BlockFlag.turret, BlockFlag.factory, BlockFlag.core}, then = {BlockFlag.generator, BlockFlag.battery, BlockFlag.drill};
     /** Of the fighting units, the share kept home as the reserve (at least two). */
     public static float reserve = Float.parseFloat(System.getProperty("army.reserve", "0.2"));
     /** How long a target may take before it is given up, in ticks, unless it is being worn down. */
@@ -104,6 +109,11 @@ public class Push{
         }
         x /= fighters.size;
         y /= fighters.size;
+        Building best = nearest(first, x, y);
+        return best != null ? best : nearest(then, x, y);
+    }
+
+    @Nullable Building nearest(BlockFlag[] flags, float x, float y){
         Building best = null;
         float bestDst = Float.MAX_VALUE;
         for(BlockFlag flag : flags){
