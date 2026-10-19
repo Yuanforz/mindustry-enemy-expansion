@@ -39,6 +39,8 @@ public class Match{
     static Team us, them;
     static final ObjectIntMap<String> made = new ObjectIntMap<>(), lostUnits = new ObjectIntMap<>();
     static int blocksLostUs, blocksLostThem;
+    static final ObjectFloatMap<String> hurt = new ObjectFloatMap<>();
+    static final ObjectIntMap<String> died = new ObjectIntMap<>();
     /** Seconds our turrets stood, and of those, with no ammunition. */
     static int turretSeconds, drySeconds;
     /** What the last defence planned could feed turrets with. */
@@ -118,6 +120,19 @@ public class Match{
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == us) made.increment("us " + e.unit.type.name);
             if(e.unit.team == them) made.increment("them " + e.unit.type.name);
+        });
+        //who hurts our units: by the block or unit that fired, damage summed
+        Events.on(UnitDamageEvent.class, e -> {
+            if(e.unit.team != us || e.bullet == null) return;
+            Object owner = e.bullet.owner;
+            String who = owner instanceof Building b ? b.block.name + "@" + b.tileX() + "," + b.tileY() : owner instanceof Unit u ? "unit " + u.type.name : String.valueOf(owner);
+            hurt.put(who, hurt.get(who, 0f) + e.bullet.damage);
+        });
+        Events.on(UnitDestroyEvent.class, e -> {
+            if(e.unit.team != us || e.unit.spawnedByCore) return;
+            var t = e.unit.tileOn();
+            String where = t == null ? "off the map" : t.floor().name + (t.floor().isDeep() ? " (deep)" : "") + (t.floor().damageTaken > 0 ? " (hurts)" : "") + (t.floor().status != null && t.floor().status != StatusEffects.none ? " (" + t.floor().status.name + ")" : "");
+            died.increment(where);
         });
         Events.on(UnitDestroyEvent.class, e -> lostUnits.increment(e.unit.team == us ? "us" : e.unit.team == them ? "them" : "other"));
         Events.on(BlockDestroyEvent.class, e -> {
@@ -253,6 +268,11 @@ public class Match{
         float t = (float)(Vars.state.tick / 60.0);
         System.out.println(report(t, hand, stage));
         if(hand != null) for(String tr : hand.trouble) System.out.println("  could not put down: " + tr);
+        Seq<String> who = hurt.keys().toSeq().sort(k -> -hurt.get(k, 0f));
+        StringBuilder hb = new StringBuilder("  what hurt our units most:");
+        for(int i = 0; i < Math.min(8, who.size); i++) hb.append(String.format(" %s %.0f;", who.get(i), hurt.get(who.get(i), 0f)));
+        System.out.println(hb);
+        System.out.println("  where our units died: " + died);
         if(hand != null && Boolean.getBoolean("match.grids")) for(int i = 0; i < hand.order.size(); i++){
             StringBuilder nodes = new StringBuilder();
             for(var p : hand.works.job(hand.order.get(i))) if(p.block.name.equals("beam-node")) nodes.append(" ").append(p.x).append(",").append(p.y).append(Vars.world.tile(p.x, p.y).block() == p.block ? "" : "(missing)");

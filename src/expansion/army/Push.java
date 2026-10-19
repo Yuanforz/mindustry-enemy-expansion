@@ -1,11 +1,15 @@
 package expansion.army;
 
+import arc.math.*;
+import arc.math.geom.*;
 import arc.struct.*;
 import arc.util.*;
 import mindustry.*;
 import mindustry.ai.types.*;
+import mindustry.entities.*;
 import mindustry.game.*;
 import mindustry.gen.*;
+import mindustry.type.*;
 import mindustry.world.meta.*;
 
 /**
@@ -25,10 +29,26 @@ public class Push{
     float since, lastHealth;
     /** Units sent, by id. */
     final IntSet sent = new IntSet();
-    /** Targets given up on (not reached, or not worn down, in their time), by position. */
-    final IntSet given = new IntSet();
-    /** For the report: how many targets it went for, and destroyed. */
-    public int targets, destroyed;
+    /** Targets given up on (not reached, or not worn down, in their time), by position, and until when. */
+    final IntFloatMap given = new IntFloatMap();
+    /** How long one given up on is left alone: it may be got at another way, or after the turrets round it are gone. */
+    static final float forget = 60f * 180f;
+    /** For the report: how many targets it went for, and destroyed, and how many waves it sent in. */
+    public int targets, destroyed, waves;
+    /**
+     * Gathering: the main body waits at the staging point, out of reach of the target's turrets, till most of it is there,
+     * and then goes in together. (Sent in as each unit came free, it went in by fives and sixes and was shot down by fives
+     * and sixes: on atlas 67 lost to the Brain's breaches for nothing.)
+     */
+    boolean gathering = true;
+    @Nullable boolean[] reachable;
+    float lastGuard, lastNear;
+    @Nullable Vec2 staging;
+    float gatherSince;
+    final IntSet wave = new IntSet();
+    int waveSize;
+    static final int minWave = Integer.getInteger("army.minwave", 6);
+    static final float gatherRadius = 10f * Vars.tilesize, gatherPatience = 60f * 90f;
     /**
      * What it goes for: first what fights back or makes what fights back, and the cores (a base ground down drill by drill
      * holds out for a whole game: on atlas, 626 of the Brain's blocks in 25 minutes and its core untouched); the rest only
@@ -60,10 +80,11 @@ public class Push{
             release(fighters);
             return;
         }
-        //a target that has been gone for a long while and is not being worn down is given up
-        if(target != null && army.clock - since > patience){
+        //a target that has been gone for a long while and is not being worn down is given up for a while (the time to walk
+        //there counted in: a core across the map takes the main body more than a minute to get to)
+        if(target != null && !gathering && army.clock - since > patience + walk(fighters, target)){
             if(target.health >= lastHealth - 1f){
-                given.add(target.pos());
+                given.put(target.pos(), army.clock + forget);
                 target = null;
             }else{
                 since = army.clock;
@@ -79,29 +100,168 @@ public class Push{
             targets++;
             since = army.clock;
             lastHealth = target.health;
+            //a wave still strong goes straight on to the next target; one worn down gathers again first
+            if(waveAlive(team) < Math.max(minWave, waveSize * 0.4f)) gather();
+            else staging = stagingFor(target, team);
         }
         //the reserve: the units nearest home, left to the squad AI
         Building home = team.core();
         int keep = Math.max(2, (int)(fighters.size * reserve));
         if(home != null) fighters.sort(u -> u.dst2(home));
+        Seq<Unit> body = new Seq<>();
         for(int i = 0; i < fighters.size; i++){
             Unit u = fighters.get(i);
             CommandAI ai = (CommandAI)u.controller();
             if(i < keep){
-                if(sent.remove(u.id) && ai.attackTarget == target) ai.clearCommands();
+                if(sent.remove(u.id)) ai.clearCommands();
+                wave.remove(u.id);
                 continue;
             }
             //(one given a job of its own by another part of the layer is left to it)
             if(!sent.contains(u.id) && ai.hasCommand()) continue;
-            if(ai.attackTarget != target){
-                ai.commandTarget(target, false);
-                sent.add(u.id);
+            body.add(u);
+        }
+        if(staging == null) staging = stagingFor(target, team);
+        if(gathering){
+            //all to the staging point, out of the turrets' reach; in together once most are there
+            int there = 0;
+            for(Unit u : body){
+                CommandAI ai = (CommandAI)u.controller();
+                if(u.within(staging, gatherRadius)) there++;
+                if(ai.targetPos == null || !ai.targetPos.epsilonEquals(staging, 1f)){
+                    ai.commandPosition(staging);
+                    sent.add(u.id);
+                }
+            }
+            Seq<Unit> near = body.select(u -> u.within(staging, gatherRadius));
+            lastGuard = guard(target, near.contains(Unit::isFlying));
+            lastNear = strength(near);
+            boolean strong = lastNear >= Allot.edge * lastGuard;
+            boolean ready = there >= minWave && there >= body.size * 0.75f && strong;
+            //(at the unit cap no more are coming: those there go)
+            boolean full = fighters.size >= Units.getCap(team) - 2 && there >= minWave && strong;
+            //(waited long, at the cap, and still not strong enough for it: another target, one it can take)
+            if(!strong && fighters.size >= Units.getCap(team) - 2 && army.clock - gatherSince > gatherPatience){
+                given.put(target.pos(), army.clock + forget);
+                target = null;
+                gather();
+                return;
+            }
+            if(ready || full || army.clock - gatherSince > gatherPatience && there >= minWave && strong){
+                gathering = false;
+                wave.clear();
+                for(Unit u : body) if(u.within(staging, gatherRadius * 1.5f)) wave.add(u.id);
+                waveSize = wave.size;
+                waves++;
+                since = army.clock;
+                lastHealth = target.health;
             }
         }
+        if(!gathering){
+            //the wave at the target; what is made meanwhile waits at the staging point for the next
+            for(Unit u : body){
+                CommandAI ai = (CommandAI)u.controller();
+                if(wave.contains(u.id)){
+                    if(ai.attackTarget != target){
+                        ai.commandTarget(target, false);
+                        sent.add(u.id);
+                    }
+                }else if(ai.targetPos == null || !ai.targetPos.epsilonEquals(staging, 1f)){
+                    ai.commandPosition(staging);
+                    sent.add(u.id);
+                }
+            }
+            //worn down: what is left falls back to gather with the rest
+            if(waveAlive(team) < Math.max(2, waveSize * 0.4f)) gather();
+        }
+    }
+
+    /**
+     * What stands guard over a target, in Lanchester strength (damage a second times health): the other side's loaded
+     * turrets that reach it, and a few tiles round it. (The allotment's estimate is for the whole map; a breach pair over a
+     * furnace kills a wave of six that is "four times stronger" than the other side all over.)
+     */
+    float guard(Building target, boolean air){
+        float dps = 0f, health = 0f;
+        for(Threat.Gun g : army.threat.guns){
+            if(!g.loaded || (air ? !g.air : !g.ground)) continue;
+            if(Mathf.dst(g.x, g.y, target.x, target.y) > g.range + 4f * Vars.tilesize) continue;
+            dps += g.dps;
+            health += g.health;
+        }
+        return dps * health;
+    }
+
+    static float strength(Iterable<Unit> units){
+        float dps = 0f, health = 0f;
+        for(Unit u : units){
+            dps += u.type.dpsEstimate;
+            health += u.health;
+        }
+        return dps * health;
+    }
+
+    /** Back to gathering, at the staging point for the target now. */
+    void gather(){
+        gathering = true;
+        gatherSince = army.clock;
+        wave.clear();
+        staging = target == null ? null : stagingFor(target, army.team);
+    }
+
+    int waveAlive(Team team){
+        int n = 0;
+        for(int i = 0; i < team.data().units.size; i++) if(wave.contains(team.data().units.get(i).id)) n++;
+        return n;
+    }
+
+    /**
+     * Where the main body gathers before going at a target: on the way from home to it, far enough out that the turrets
+     * round it don't reach (the furthest reach of any of the other side's turrets near it, and a few tiles), on open ground.
+     */
+    @Nullable Vec2 stagingFor(Building target, Team team){
+        Building home = team.core();
+        if(home == null) return new Vec2(target.x, target.y);
+        float reach = 0f;
+        for(Building b : Vars.indexer.getEnemy(team, BlockFlag.turret)){
+            if(b instanceof mindustry.world.blocks.defense.turrets.BaseTurret.BaseTurretBuild t && b.within(target, t.range() + 30f * Vars.tilesize)) reach = Math.max(reach, t.range() + b.dst(target));
+        }
+        float back = Math.max(reach, 12f * Vars.tilesize) + 8f * Vars.tilesize;
+        float d = home.dst(target);
+        if(back >= d) return new Vec2(home.x, home.y);
+        Vec2 at = new Vec2();
+        //along the line from the target back home: the first open tile from that far out
+        for(float t = back; t < d; t += Vars.tilesize){
+            at.set(target.x, target.y).lerp(home.x, home.y, t / d);
+            var tile = Vars.world.tileWorld(at.x, at.y);
+            if(tile != null && !tile.solid() && !tile.floor().isDeep()) return at;
+        }
+        return new Vec2(home.x, home.y);
+    }
+
+    /** Where the main body can get to safely, from home, for the kind most of it is; worked out every half minute. */
+    @Nullable boolean[] region;
+    float regionAt = -1e9f;
+    @Nullable UnitType regionKind;
+
+    @Nullable boolean[] region(Seq<Unit> fighters){
+        ObjectIntMap<UnitType> kinds = new ObjectIntMap<>();
+        for(Unit u : fighters) kinds.increment(u.type);
+        UnitType most = null;
+        for(var e : kinds) if(most == null || e.value > kinds.get(most)) most = e.key;
+        Building home = army.team.core();
+        if(most == null || home == null || most.flying) return null;
+        if(region == null || most != regionKind || army.clock - regionAt > 60f * 30f){
+            region = Reach.region(most, army.team, home.tileX(), home.tileY());
+            regionKind = most;
+            regionAt = army.clock;
+        }
+        return region;
     }
 
     /** The other side's building nearest the units (the base taken from its edge in), skipping those given up on. */
     @Nullable Building pick(Seq<Unit> fighters){
+        reachable = region(fighters);
         float x = 0f, y = 0f;
         for(Unit u : fighters){
             x += u.x;
@@ -109,16 +269,23 @@ public class Push{
         }
         x /= fighters.size;
         y /= fighters.size;
-        Building best = nearest(first, x, y);
-        return best != null ? best : nearest(then, x, y);
+        //of what it goes for first, the nearest it is strong enough to take with all it has; else the nearest of the rest
+        //that it can take; else nothing (the squad AI keeps them, to defend)
+        float all = strength(fighters) / Allot.edge;
+        boolean air = fighters.allMatch(Unit::isFlying);
+        Building best = nearest(first, x, y, all, air);
+        return best != null ? best : nearest(then, x, y, all, air);
     }
 
-    @Nullable Building nearest(BlockFlag[] flags, float x, float y){
+    @Nullable Building nearest(BlockFlag[] flags, float x, float y, float can, boolean air){
         Building best = null;
         float bestDst = Float.MAX_VALUE;
         for(BlockFlag flag : flags){
             for(Building b : Vars.indexer.getEnemy(army.team, flag)){
-                if(given.contains(b.pos()) || b.team == Team.derelict) continue;
+                if(given.get(b.pos(), -1f) > army.clock || b.team == Team.derelict) continue;
+                if(guard(b, air) > can) continue;
+                //(only what the main body can walk to without going under in slag or deep water)
+                if(reachable != null && !Reach.near(reachable, b.tileX(), b.tileY(), b.block.size / 2 + 2)) continue;
                 float d = b.dst2(x, y);
                 if(d < bestDst){
                     bestDst = d;
@@ -129,16 +296,29 @@ public class Push{
         return best;
     }
 
+    /** Ticks for the slowest of the units to go the straight way to the target, twice over (the way round is longer). */
+    static float walk(Seq<Unit> fighters, Building target){
+        float slowest = Float.MAX_VALUE, far = 0f;
+        for(Unit u : fighters){
+            slowest = Math.min(slowest, u.speed());
+            far = Math.max(far, u.dst(target));
+        }
+        return slowest <= 0.01f ? 0f : 2f * far / slowest;
+    }
+
     /** Every unit sent goes back to the squad AI. */
     void release(Seq<Unit> fighters){
         for(Unit u : fighters){
             if(!sent.remove(u.id)) continue;
-            if(u.controller() instanceof CommandAI ai && (ai.attackTarget == target || target == null)) ai.clearCommands();
+            if(u.controller() instanceof CommandAI ai) ai.clearCommands();
         }
         sent.clear();
+        wave.clear();
+        gathering = true;
+        gatherSince = army.clock;
     }
 
     public String report(){
-        return "push targets " + targets + " destroyed " + destroyed;
+        return "push targets " + targets + " destroyed " + destroyed + " given up " + given.size + " waves " + waves + (gathering ? " (gathering)" : " (wave of " + waveSize + " in)") + String.format(" [at the staging point %.3g against the guard %.3g; %d guns known, %d loaded]", lastNear, lastGuard, army.threat.guns.size, army.threat.guns.count(g -> g.loaded));
     }
 }
