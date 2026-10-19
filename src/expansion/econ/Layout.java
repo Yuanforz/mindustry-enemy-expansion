@@ -155,6 +155,7 @@ public final class Layout{
         }
         //3. the nets
         Router router = new Router(g, cat, a.at, allowed, log);
+        router.order = order;
         a.nets = nets(router, a.at);
         a.failed = router.routeAll(a.nets);
         int pieces = 0;
@@ -183,6 +184,7 @@ public final class Layout{
 
     List<Router.Net> nets(Router router, Map<Machine, Part> at){
         List<Router.Net> out = new ArrayList<>();
+        shortOf.clear();
         int id = 0;
         for(int k = 0; k < cat.size(); k++){
             Res r = cat.get(k);
@@ -208,7 +210,7 @@ public final class Layout{
                 //run to the core, so each taker of the plan's is fed off them too (as well as by the new makers)
                 if(running && router.dock != null && mapMakes){
                     for(Machine c : takers){
-                        if(c.existing) continue;
+                        if(c.existing || noTap.contains(k + ":" + c.recipe.name)) continue;
                         Router.Net n = new Router.Net(id++, k, false, Router.Kind.tap);
                         n.to.add(c);
                         out.add(n);
@@ -262,7 +264,11 @@ public final class Layout{
                 //that comes later); the others join it as they come
                 n.from.sort(Comparator.comparingInt(m -> order.indexOf(m)));
                 if(!n.from.isEmpty()) out.add(n);
-                if(need > 1e-3f) log.append(String.format("%s short of %s by %.2f/s with nothing left to lead it from\n", c.recipe.name, r.name, need));
+                if(need > 1e-3f){
+                    log.append(String.format("%s short of %s by %.2f/s with nothing left to lead it from\n", c.recipe.name, r.name, need));
+                    //(a machine of the plan's that nothing feeds is as good as unfed: it goes back to the planner)
+                    if(!c.existing && n.from.isEmpty()) shortOf.add(new Object[]{k, c, "nothing makes it within reach"});
+                }
             }
             if(!liquid && r.storable){
                 Router.Net n = new Router.Net(id++, k, false, Router.Kind.direct);
@@ -296,16 +302,99 @@ public final class Layout{
         return false;
     }
 
+    /**
+     * The order with what must come first put first: a liquid trunk's maker before the machine it feeds (a pipe goes up with
+     * the later of its two ends, and a machine waiting for a maker that waits in turn for what the machine makes never runs).
+     * Each such maker is moved to just before its taker. The same list if nothing had to move.
+     */
+    public List<Machine> mustComeFirst(List<Machine> in){
+        List<Machine> out = new ArrayList<>(in);
+        boolean moved = true;
+        for(int guard = 0; guard < 20 && moved; guard++){
+            moved = false;
+            for(Router.Net n : nets){
+                if(!n.liquid || n.first == null || n.to.isEmpty()) continue;
+                Machine c = n.to.get(0);
+                //(every maker on the taker's pipe: the model counts a liquid as there for it once enough is made anywhere,
+                //but on the map it gets only what its own pipe brings)
+                for(Machine m : n.from){
+                    int fi = out.indexOf(m), ci = out.indexOf(c);
+                    if(fi < 0 || ci < 0 || fi < ci) continue;
+                    //a booster can wait; and the maker must be buildable by then: what it costs is made before, or by nothing in the order
+                    if(c.recipe.in[n.res] <= 0f || !buildableBefore(out, m, ci)) continue;
+                    out.remove(fi);
+                    out.add(ci, m);
+                    moved = true;
+                }
+            }
+        }
+        return out;
+    }
+
+    static boolean buildableBefore(List<Machine> order, Machine m, int at){
+        for(int k = 0; k < m.cost.length; k++){
+            if(m.cost[k] <= 0) continue;
+            boolean madeBefore = false, madeAtAll = false;
+            for(int i = 0; i < order.size(); i++){
+                Machine o = order.get(i);
+                if(o == m || o.out(k) <= 0f) continue;
+                madeAtAll = true;
+                if(i < at) madeBefore = true;
+            }
+            if(madeAtAll && !madeBefore) return false;
+        }
+        return true;
+    }
+
     /** The takers no line could be laid to, with what they lack: for the planner to give them makers of their own. */
-    public List<Object[]> unfed(){
+    /** The map's machines on a grid of their own that can't be joined to the plan's: their power is none of the plan's. */
+    public List<Machine> cutOff(){
+        List<Machine> out = new ArrayList<>();
+        if(wiring == null) return out;
+        for(IntSeq island : wiring.unjoined){
+            for(Machine m : field.existing){
+                Part p = at.get(m);
+                if(p != null && island.contains(grid.pos(grid.originX(p.x, p.y), grid.originY(p.x, p.y)))) out.add(m);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * What is not taken off the map's lines, as "item:recipe": a tap found dearer than a maker of the taker's own (the
+     * map's line then goes on giving the core what it did).
+     */
+    public final Set<String> noTap = new HashSet<>();
+
+    /** The taps laid, with what each cost in items: {res, taker, cost}. */
+    public List<Object[]> taps(){
         List<Object[]> out = new ArrayList<>();
         for(Router.Net n : nets){
+            if(n.kind != Router.Kind.tap || !n.ok || n.to.isEmpty()) continue;
+            float c = 0f;
+            for(Part p : n.all()) c += Router.price(p.block);
+            out.add(new Object[]{n.res, n.to.get(0), c});
+        }
+        return out;
+    }
+
+    /** Takers of the plan's that no maker was there for when the nets were drawn up: {res, taker, why}. */
+    final List<Object[]> shortOf = new ArrayList<>();
+
+    public List<Object[]> unfed(){
+        List<Object[]> out = new ArrayList<>(shortOf);
+        for(Router.Net n : nets){
             if(n.ok) continue;
+            //a maker whose line to the core can't be laid, of something building costs: the plan counts on it in the core
+            if(n.toCore && n.to.isEmpty() && n.trunk.isEmpty() && !n.from.isEmpty() && buildsWith(n.res)){
+                Machine m = n.first != null ? n.first : n.from.get(0);
+                if(!m.existing && !m.hauled) out.add(new Object[]{n.res, m, "no line to the core: " + String.join("; ", n.why), true});
+            }
             for(Machine c : n.to){
                 if(c.existing || order.indexOf(c) < 0) continue;
                 String how = n.feeds.get(c);
                 //a taker nothing reaches: the tap or the line to it was not laid
-                if(n.trunk.isEmpty() || how == null || how.startsWith("not")) out.add(new Object[]{n.res, c});
+                if(n.trunk.isEmpty() || how == null || how.startsWith("not")) out.add(new Object[]{n.res, c, n.kind + ": " + (how != null ? how : n.why)});
             }
         }
         return out;
@@ -540,7 +629,8 @@ public final class Layout{
                     for(int side : new int[]{(p.rotation + 1) % 4, (p.rotation + 3) % 4}){
                         int sx = p.x + Geometry.d4x(side), sy = p.y + Geometry.d4y(side);
                         Block o = grid.block(sx, sy);
-                        if(o != null && Grid.isLine(o) && grid.net[grid.pos(sx, sy)] != n.id && Router.accepts(o, grid.rotation(sx, sy), (side + 2) % 4, b)) problems.add(String.format("dock at %d,%d hands %s into another line at %d,%d", p.x, p.y, cat.get(n.res).name, sx, sy));
+                        if(o != null && Grid.isLine(o) && grid.net[grid.pos(sx, sy)] != n.id && Router.accepts(o, grid.rotation(sx, sy), (side + 2) % 4, b)
+                            && !(grid.net[grid.pos(sx, sy)] < 0 && o instanceof Duct && grid.reachesCore(grid.pos(sx, sy)))) problems.add(String.format("dock at %d,%d hands %s into another line at %d,%d", p.x, p.y, cat.get(n.res).name, sx, sy));
                     }
                 }
                 int fx = p.x + Geometry.d4x(p.rotation), fy = p.y + Geometry.d4y(p.rotation);
@@ -674,7 +764,7 @@ public final class Layout{
                 Part f = at.get(n.first);
                 in.text(Intent.Layer.lines, f.x, f.y - 2, color, String.format("%s %s from here", n.kind, r.name));
             }
-            StringBuilder b = new StringBuilder(String.format("%s of %s: %d makers -> ", n.kind, r.name, n.from.size()));
+            StringBuilder b = new StringBuilder(String.format("%s of %s: %d makers%s -> ", n.kind, r.name, n.from.size(), n.first != null && at.get(n.first) != null ? " (trunk from " + n.first.recipe.name + " at " + at.get(n.first).x + "," + at.get(n.first).y + ", job #" + (order.indexOf(n.first) + 1) + ")" : ""));
             for(var e : n.feeds.entrySet()) b.append(e.getKey().recipe.name).append(" (").append(e.getValue()).append("), ");
             b.append(n.toCore ? "the rest to the core" : "no further");
             b.append(String.format("; %d pieces, %d quiet tiles%s", n.all().size, n.quiet.size, n.ok ? "" : "; NOT LAID: " + String.join("; ", n.why)));

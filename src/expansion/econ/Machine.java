@@ -30,6 +30,12 @@ public final class Machine{
     public float draw = 0.5f;
     /** Whether it is a machine of the map's that stood idle, taken up by the plan: it stands already, only its lines are built. */
     public boolean revived;
+    /**
+     * Whether no line could be laid from it to the core, so the core unit carries what it makes there by hand; then it
+     * gives no more than {@link #haulRate} a second (a stack a round trip).
+     */
+    public boolean hauled;
+    public float haulRate;
 
     public Machine(Recipe recipe, int item, float factor, int x, int y, float distance, int[] cost, boolean boosted, boolean existing){
         this.recipe = recipe;
@@ -47,7 +53,7 @@ public final class Machine{
     public float out(int res){
         float o = recipe.out[res];
         if(res == item) o += recipe.perFactor[res] * factor;
-        return o;
+        return hauled ? Math.min(o, haulRate) : o;
     }
 
     public float powerOut(){

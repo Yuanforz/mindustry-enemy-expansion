@@ -57,6 +57,9 @@ final class Wiring{
     final List<IntSeq> islands = new ArrayList<>();
 
     /** Joins every island to the tree: the nodes it took. */
+    /** The map's grids that could not be joined to the rest: what they make and use is no part of the plan's grid. */
+    final List<IntSeq> unjoined = new ArrayList<>();
+
     Seq<Part> joinIslands(){
         Seq<Part> out = new Seq<>();
         for(IntSeq island : islands){
@@ -73,6 +76,7 @@ final class Wiring{
                 }
             }
             if(best == null){
+                unjoined.add(island);
                 log.append("a grid of the map's own could not be joined to the rest\n");
                 continue;
             }

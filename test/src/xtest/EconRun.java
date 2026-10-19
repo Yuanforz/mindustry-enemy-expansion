@@ -44,6 +44,29 @@ public class EconRun{
         return out;
     }
 
+    /**
+     * How fast the core unit can carry what a machine makes to the core: what one trip takes (the unit's stack, or what
+     * the machine holds) over the trip there and back, with a few seconds for taking and handing over; 0 if the way is
+     * shot over or the machine holds nothing.
+     */
+    static float haulRate(Machine m, Catalog cat, Team team){
+        Block b = Vars.content.block(m.recipe.name);
+        var core = team.core();
+        if(b == null || !b.hasItems || core == null) return 0f;
+        UnitType u = ((CoreBlock)core.block).unitType;
+        float cx = core.tileX(), cy = core.tileY(), d = (float)Math.hypot(m.x - cx, m.y - cy);
+        //the straight way there must keep out of the other side's turrets
+        boolean[] shot = expansion.econ.Sites.danger(team);
+        int w = Vars.world.width();
+        for(int i = 0; i <= (int)d; i++){
+            int x = Math.round(cx + (m.x - cx) * i / Math.max(1f, d)), y = Math.round(cy + (m.y - cy) * i / Math.max(1f, d));
+            if(shot[x + y * w]) return 0f;
+        }
+        float tilesPerSecond = u.speed * 60f / Vars.tilesize;
+        float stack = Math.min(u.itemCapacity, b.itemCapacity);
+        return stack / (2f * d / tilesPerSecond + 4f);
+    }
+
     public static void main(String[] args){
         Boot.boot(args[0]);
         String sector = args[2], unitName = args[3];
@@ -120,17 +143,56 @@ public class EconRun{
         long l0 = System.nanoTime();
         Layout works = new Layout(cat, field, me, allowed);
         works.prepare(model.order);
+        Set<String> noTap = new HashSet<>();
         //takers the layout could not feed get makers of their own, and it is all done again
-        for(int round = 0; round < 2; round++){
+        for(int round = 0; round < 3; round++){
             List<Object[]> unfed = works.unfed();
-            if(unfed.isEmpty()) break;
+            List<Machine> cut = works.cutOff();
+            //a tap dearer than a maker of the taker's own near it: the maker instead (the map's line goes on to the core)
+            List<Machine> instead = new ArrayList<>();
+            //(off unless asked, -Dxp.deartap: the maker is often built late, and the line from it ends up slower than the tap)
+            if(Boolean.getBoolean("xp.deartap")) for(Object[] t : works.taps()){
+                int res = (Integer)t[0];
+                Machine c = (Machine)t[1];
+                float tapCost = (Float)t[2];
+                Part cp = works.at.get(c);
+                if(cp == null || noTap.contains(res + ":" + c.recipe.name)) continue;
+                Machine m = planner.makerNear(res, c, cp.x, cp.y, false);
+                if(m == null) continue;
+                int makerCost = 0;
+                for(int x : m.cost) makerCost += x;
+                if(tapCost <= makerCost) continue;
+                noTap.add(res + ":" + c.recipe.name);
+                instead.add(planner.makerNear(res, c, cp.x, cp.y, true));
+                System.out.println(String.format("  the tap of %s for %s costs %.0f, a %s of its own %d: that instead", cat.get(res).name, c.recipe.name, tapCost, m.recipe.name, makerCost));
+            }
+            if(unfed.isEmpty() && cut.isEmpty() && instead.isEmpty()) break;
             List<Machine> more = new ArrayList<>(model.order);
+            more.addAll(instead);
             Set<String> asked = new HashSet<>();
-            boolean replan = false;
+            boolean replan = false, hauled = false;
             for(Object[] u : unfed){
                 int res = (Integer)u[0];
                 Machine c = (Machine)u[1];
                 if(!asked.add(res + "@" + System.identityHashCode(c))) continue;
+                System.out.println("    unfed: " + c + " of " + cat.get(res).name + ": " + u[2]);
+                //a maker of the plan's with no way to the core: its place is given up, and the plan made again
+                if(u.length > 3){
+                    //what it holds can be carried by hand, if the core unit can get there and back unshot (a stack a trip)
+                    float rate = haulRate(c, cat, me);
+                    if(rate > 0f){
+                        c.hauled = true;
+                        c.haulRate = rate;
+                        hauled = true;
+                        System.out.println(String.format("  %s can't send %s to the core: the core unit carries it, %.2f/s", c, cat.get(res).name, rate));
+                        continue;
+                    }
+                    field.sites.removeIf(st -> st.x == c.x && st.y == c.y && st.ground == c.recipe.ground);
+                    field.revivable.removeIf(o -> o.x == c.x && o.y == c.y);
+                    replan = true;
+                    System.out.println("  " + c + " can't send " + cat.get(res).name + " to the core: its place is given up");
+                    continue;
+                }
                 //what the map's own make of it can't be got to: the plan may not count on them, and is made again
                 List<Machine> theirs = new ArrayList<>();
                 for(Machine m : field.existing) if(m.out(res) > 1e-4f) theirs.add(m);
@@ -143,14 +205,22 @@ public class EconRun{
                 Machine m = planner.makerNear(res, c);
                 if(m != null) more.add(m);
             }
+            //the map's machines on a grid that can't be joined to the plan's give it no power
+            if(!cut.isEmpty()){
+                field.existing.removeAll(cut);
+                replan = true;
+                System.out.println("  " + cut.size() + " machines of the map's on a grid of their own, left out of the plan's power");
+            }
             if(replan){
                 planner = new Planner(cat, field);
                 more = planner.balance(unit, machines / making.unitSeconds);
-            }else if(more.size() == model.order.size()) break;
+            }else if(more.size() == model.order.size() && !hauled) break;
+            if(replan) more.addAll(instead);
             System.out.println("  the layout could not feed " + unfed.size() + " machine(s); makers of their own added: " + planner.notes.toString().trim().replace("\n", "; "));
             planner.extras = 0;
             model = planner.order(more, unit);
             works = new Layout(cat, field, me, allowed);
+            works.noTap.addAll(noTap);
             works.prepare(model.order);
         }
         long l1 = System.nanoTime();
@@ -173,6 +243,13 @@ public class EconRun{
             model = again;
             works.reorder(model.order);
             if(same) break;
+        }
+        //what must come first comes first (a pipe's maker before what it feeds)
+        List<Machine> fixed = works.mustComeFirst(model.order);
+        if(!fixed.equals(model.order)){
+            System.out.println("  moved up in the order: makers of liquids before what they feed");
+            works.reorder(fixed);
+            model.order = fixed;
         }
         //and the model's times for the order as it now is, with what each job now really costs
         for(Machine m : model.order){
@@ -210,6 +287,8 @@ public class EconRun{
             if(e.unit.team == me && !firstMade.containsKey(e.unit.type.name)) firstMade.put(e.unit.type.name, (float)(Vars.state.tick / 60.0));
         });
         Unit builder = null;
+        String wa = System.getProperty("xp.watchat");
+        int[] watchAt = wa == null ? null : new int[]{Integer.parseInt(wa.split(",")[0]), Integer.parseInt(wa.split(",")[1])};
         int frames = (int)(minutes * 3600);
         for(int f = 0; f < frames; f++){
             if(builder == null || builder.dead()){
@@ -221,6 +300,11 @@ public class EconRun{
             if(f % (60 * 30) == 0 && f > 0){
                 System.out.println(String.format("  %s: %d of %d begun; core %s; %s", EconLab.time(f / 60f), hand.next, model.order.size(), holds(core),
                     hand.machine != null ? "building " + hand.machine.recipe.name : "digging " + (builder.mineTile == null ? "nothing" : builder.mineTile.wallDrop().name)));
+            }
+            //one building watched closely, asked for: -Dxp.watchat=x,y
+            if(watchAt != null && f % 300 == 0){
+                Building wb = Vars.world.build(watchAt[0], watchAt[1]);
+                if(wb != null) System.out.println(String.format("    watch %s %s: efficiency %.2f, items %s, liquids %s, core %s", EconLab.time(f / 60f), wb.block.name, wb.efficiency, wb.items, wb.liquids == null ? "-" : wb.liquids.currentAmount(), holds(core)));
             }
             if(firstMade.containsKey(unitName) && f % 600 == 0) break;
             //no job begun or finished for three minutes, and no unit: it is stuck, and says where
@@ -267,6 +351,21 @@ public class EconRun{
         boolean[] on = new boolean[all.size()];
         Arrays.fill(on, true);
         steady.solve(all, on, true);
+        //where things sit that are not in the core: what holds the most of each (a sink the plan does not know of shows here)
+        {
+            Map<String, List<String>> held = new TreeMap<>();
+            for(Building b : me.data().buildings){
+                if(b.items == null || b instanceof CoreBlock.CoreBuild) continue;
+                for(Item item : Vars.content.items()){
+                    int a = b.items.get(item);
+                    if(a >= 10) held.computeIfAbsent(item.name, x -> new ArrayList<>()).add(String.format("%s@%d,%d:%d", b.block.name, b.tileX(), b.tileY(), a));
+                }
+            }
+            for(var e : held.entrySet()){
+                List<String> l = e.getValue();
+                System.out.println("  held outside the core: " + e.getKey() + ": " + l.size() + " buildings; " + String.join(" ", l.subList(0, Math.min(6, l.size()))));
+            }
+        }
         System.out.println("  calibration: machine, what it makes, model at full speed / model in the plant / game on average / game in the last minute / game at best");
         for(var e : hand.watch.rates.entrySet()){
             Machine m = e.getKey();

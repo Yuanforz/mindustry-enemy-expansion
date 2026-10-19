@@ -1,0 +1,29 @@
+BENCH [onset-0] onset onset stell 2 | model 3:36 game 4:06 | 88% | built 14/15 model 3:58 game - | nets unlaid 0 checker 0 | layout 1.1s
+BENCH [aegis-0] aegis aegis stell 3 | model 2:48 game 2:17 | 122% | built 12/13 model 3:29 game - | nets unlaid 0 checker 0 | layout 3.0s
+BENCH [lake-0] lake lake stell 2 | model 3:19 game 2:41 | 123% | built 10/10 model 3:31 game 3:08 | nets unlaid 0 checker 0 | layout 13.3s
+BENCH [intersect-0] intersect intersect stell 2 | model 2:53 game 2:51 | 101% | built 11/11 model 2:55 game 2:48 | nets unlaid 0 checker 0 | layout 6.1s
+BENCH [atlas-0] atlas atlas locus 1 | model 5:42 game 5:35 | 102% | built 12/12 model 5:42 game 5:28 | nets unlaid 0 checker 0 | layout 22.2s
+BENCH [split-0] split atlas merui 2 | model 2:01 game 1:44 | 116% | built 4/4 model 3:18 game 2:15 | nets unlaid 2 checker 0 | layout 12.8s
+BENCH [basin-0] basin atlas stell 2 | model 1:41 game 1:36 | 105% | built 5/5 model 2:22 game 2:04 | nets unlaid 0 checker 0 | layout 0.6s
+BENCH [onset-1] onset onset stell 2 | model 3:43 game 3:57 | 94% | built 15/15 model 4:04 game 4:00 | nets unlaid 0 checker 0 | layout 4.0s
+BENCH [aegis-1] aegis aegis stell 3 | model 3:09 game 2:38 | 120% | built 12/13 model 3:29 game - | nets unlaid 0 checker 0 | layout 10.4s
+BENCH [lake-1] lake lake stell 2 | model 3:09 game 2:34 | 122% | built 10/10 model 3:30 game 2:59 | nets unlaid 0 checker 0 | layout 13.8s
+BENCH [intersect-1] intersect intersect stell 2 | model 2:53 game 2:51 | 101% | built 11/11 model 2:55 game 2:48 | nets unlaid 0 checker 0 | layout 6.2s
+BENCH [atlas-1] atlas atlas locus 1 | model 4:45 game 5:08 | 92% | built 12/12 model 4:45 game 4:32 | nets unlaid 1 checker 0 | layout 16.2s
+BENCH [split-1] split atlas merui 2 | model 2:01 game 1:44 | 116% | built 4/4 model 3:18 game 2:15 | nets unlaid 2 checker 0 | layout 10.8s
+BENCH [basin-1] basin atlas stell 2 | model 1:40 game 1:35 | 106% | built 5/5 model 2:23 game 2:05 | nets unlaid 0 checker 0 | layout 1.4s
+BENCH [onset-2] onset onset stell 2 | model 3:47 game 4:06 | 92% | built 15/15 model 4:09 game 4:05 | nets unlaid 0 checker 0 | layout 1.7s
+BENCH [aegis-2] aegis aegis stell 3 | model 2:59 game 2:31 | 119% | built 12/13 model 3:27 game - | nets unlaid 0 checker 0 | layout 3.7s
+BENCH [lake-2] lake lake stell 2 | model 3:17 game 2:43 | 121% | built 10/10 model 3:32 game 3:11 | nets unlaid 0 checker 0 | layout 13.9s
+BENCH [intersect-2] intersect intersect stell 2 | model 2:53 game 2:51 | 101% | built 11/11 model 2:55 game 2:48 | nets unlaid 0 checker 0 | layout 8.4s
+BENCH [atlas-2] atlas atlas locus 1 | model 4:36 game 4:40 | 98% | built 12/12 model 4:36 game 4:26 | nets unlaid 1 checker 0 | layout 15.1s
+BENCH [split-2] split atlas merui 2 | model 2:01 game 1:44 | 116% | built 4/4 model 3:18 game 2:15 | nets unlaid 2 checker 0 | layout 9.7s
+BENCH [basin-2] basin atlas stell 2 | model 1:42 game 1:37 | 106% | built 5/5 model 2:22 game 2:08 | nets unlaid 0 checker 0 | layout 1.2s
+
+  aegis            3 of 3 runs at 90% or better; got the unit in 3, on average at 120% of the model time
+  atlas            3 of 3 runs at 90% or better; got the unit in 3, on average at 97% of the model time
+  basin            3 of 3 runs at 90% or better; got the unit in 3, on average at 106% of the model time
+  intersect        3 of 3 runs at 90% or better; got the unit in 3, on average at 101% of the model time
+  lake             3 of 3 runs at 90% or better; got the unit in 3, on average at 122% of the model time
+  onset            2 of 3 runs at 90% or better; got the unit in 3, on average at 91% of the model time
+  split            3 of 3 runs at 90% or better; got the unit in 3, on average at 116% of the model time

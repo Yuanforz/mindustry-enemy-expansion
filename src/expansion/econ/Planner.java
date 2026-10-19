@@ -16,6 +16,8 @@ public final class Planner{
     public final Field field;
     /** The places not yet given to a machine. */
     final List<Field.Site> free;
+    /** The map's idle machines not yet taken up by this plan (the field's list stays whole for a plan made again). */
+    final List<Machine> revivable;
     /** Machines built from nowhere in particular stand this far from the core (tiles). */
     public float baseDistance = 8f;
     /** How many machines beyond the plant may be tried. */
@@ -28,6 +30,7 @@ public final class Planner{
         this.cat = cat;
         this.field = field;
         free = new ArrayList<>(field.sites);
+        revivable = new ArrayList<>(field.revivable);
     }
 
     // ---------------------------------------------------------------- the plant
@@ -159,6 +162,11 @@ public final class Planner{
      * machine from what the plan (or the map) makes. Null if no place gives it.
      */
     public Machine makerNear(int res, Machine taker){
+        return makerNear(res, taker, taker.x, taker.y, true);
+    }
+
+    /** The same, near a place; taken only if asked (else it is only looked at, for what it would cost). */
+    public Machine makerNear(int res, Machine taker, int tx, int ty, boolean take){
         Field.Site best = null;
         Recipe bestRecipe = null;
         double bestD = Double.MAX_VALUE;
@@ -168,7 +176,7 @@ public final class Planner{
             if(!gives) continue;
             for(Field.Site s : free){
                 if(s.ground != r.ground || (r.perFactor[res] > 0f && s.item != res)) continue;
-                double d = Math.hypot(s.x - taker.x, s.y - taker.y) - (r.perFactor[res] > 0f ? r.perFactor[res] * s.factor : r.out[res]) * 2;
+                double d = Math.hypot(s.x - tx, s.y - ty) - (r.perFactor[res] > 0f ? r.perFactor[res] * s.factor : r.out[res]) * 2;
                 if(d < bestD){
                     bestD = d;
                     best = s;
@@ -177,8 +185,9 @@ public final class Planner{
             }
         }
         if(best == null) return null;
+        if(!take) return machine(bestRecipe, best);
         free.remove(best);
-        notes.append(String.format("%s at %d,%d could not be fed %s: a %s of its own at %d,%d\n", taker.recipe.name, taker.x, taker.y, cat.get(res).name, bestRecipe.name, best.x, best.y));
+        notes.append(String.format("%s at %d,%d could not be fed %s: a %s of its own at %d,%d\n", taker.recipe.name, tx, ty, cat.get(res).name, bestRecipe.name, best.x, best.y));
         return machine(bestRecipe, best);
     }
 
@@ -216,9 +225,9 @@ public final class Planner{
             return machine(best, null);
         }
         //a machine of the map's that stands idle: taken up, it costs only its lines
-        for(Machine old : field.revivable){
+        for(Machine old : revivable){
             if(old.out(res) <= 1e-4f) continue;
-            field.revivable.remove(old);
+            revivable.remove(old);
             Machine m = new Machine(old.recipe, old.item, old.factor, old.x, old.y, old.distance, new int[cat.size()], false, false);
             m.rotation = old.rotation;
             m.revived = true;

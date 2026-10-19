@@ -475,6 +475,8 @@ final class Router{
         branches(n, first, c == null ? null : at.get(c));
     }
 
+    static final boolean DEBUG = Boolean.getBoolean("xp.routerlog");
+
     void tap(Net n){
         Machine c = n.to.get(0);
         Part cp = at.get(c);
@@ -487,12 +489,19 @@ final class Router{
             if(!(b instanceof Duct)) continue;
             if(Math.abs(tx - cp.x) + Math.abs(ty - cp.y) > 120) continue;
             int rot = grid.rotation(tx, ty);
+            //a dock takes only from behind: the duct it replaces must be fed from behind, and from nowhere else (a duct at
+            //a corner, fed from the side, would be cut off, and the whole line with it)
+            int back = grid.pushes(tx - Geometry.d4x(rot), ty - Geometry.d4y(rot), tx, ty, false);
+            if(back == -1 || (back >= 0 && back != n.res)) continue;
+            if(grid.pushes(tx + Geometry.d4x(rot + 1), ty + Geometry.d4y(rot + 1), tx, ty, false) != -1
+                || grid.pushes(tx + Geometry.d4x(rot + 3), ty + Geometry.d4y(rot + 3), tx, ty, false) != -1) continue;
             for(int side : new int[]{(rot + 1) % 4, (rot + 3) % 4}){
                 int qx = tx - Geometry.d4x(side), qy = ty - Geometry.d4y(side);
                 //the side across from the branch must not take anything
                 if(!grid.in(qx, qy)) continue;
                 Block across = grid.block(qx, qy);
-                if(across != null && Grid.takesItems(across)) continue;
+                //(unless it is a line of the map's that ends in the core: what spills into it goes there anyway, as it would have)
+                if(across != null && Grid.takesItems(across) && !(across instanceof Duct && grid.reachesCore(grid.pos(qx, qy)))) continue;
                 if(across == null && !grid.free(qx, qy) && grid.ground[grid.pos(qx, qy)]) continue;
                 Start s = new Start(tx, ty, side, new Part(dock, tx, ty, rot, null));
                 s.quiet = across == null && grid.free(qx, qy) ? grid.pos(qx, qy) : -1;
@@ -544,7 +553,10 @@ final class Router{
             Seq<Part> mine = new Seq<>();
             n.branch.put(next, mine);
             //it may touch the spine already, and hand straight onto it
-            if(touches(n, next)) continue;
+            if(touches(n, next)){
+                if(DEBUG) log.append(String.format("router: %s at %d,%d hands %s straight onto its line\n", next.recipe.name, at.get(next).x, at.get(next).y, cat.get(n.res).name));
+                continue;
+            }
             //onto the line, or (when the line ends in a taker) straight into that taker
             Goal goal = end == null ? joinGoal(n) : either(joinGoal(n), into(end));
             Path path = search(n, starts(n, next), List.of(), goal, null);
@@ -554,6 +566,7 @@ final class Router{
                 continue;
             }
             keep(n, mine, path, true);
+            if(DEBUG) log.append(String.format("router: %s at %d,%d joins its %s line with %d pieces\n", next.recipe.name, at.get(next).x, at.get(next).y, cat.get(n.res).name, mine.size));
         }
     }
 
@@ -585,10 +598,25 @@ final class Router{
         return false;
     }
 
+    /**
+     * Whether makers that touch a taker feed it in full on their own: built no later than it, and making what it wants
+     * (else it gets a dock as well; a maker built after it would leave it with nothing until then).
+     */
     boolean fedDirect(Net n, Machine c){
-        for(Machine m : n.from) if(touchFeeds(n, m, c)) return true;
-        return false;
+        float got = 0f;
+        int ci = order.indexOf(c);
+        for(Machine m : n.from){
+            if(!touchFeeds(n, m, c)) continue;
+            int mi = order.indexOf(m);
+            if(ci >= 0 && mi > ci) continue;
+            got += m.out(n.res);
+        }
+        float need = c.recipe.in[n.res] + (c.boosted && c.recipe.boostRes == n.res ? c.recipe.boostUse : 0f);
+        return got > 0f && got >= need * 0.999f;
     }
+
+    /** The order the machines are built in (for which line waits on which machine). */
+    public List<Machine> order = new ArrayList<>();
 
     Machine farthestTaker(Net n, List<Machine> takers){
         Machine best = null;
@@ -953,7 +981,14 @@ final class Router{
             if(!grid.in(qx, qy)) continue;
             int q = grid.pos(qx, qy);
             if(s == S - 1){
-                if(goal.hit(q, d)){
+                //(straight from the machine, with no piece of its own between: what it hands on to must take from a machine
+                //on that side, which a conduit does only at its back)
+                int hk0 = how.get(key, 0);
+                boolean bare = hk0 < 0 && starts.get(-1 - hk0).first == null;
+                Part jq = join.get(q);
+                Block onq = jq != null ? jq.block : grid.block(qx, qy), self = grid.block(px, py);
+                int rq = jq != null ? jq.rotation : grid.rotation(qx, qy);
+                if(goal.hit(q, d) && (!bare || onq == null || !Grid.isLine(onq) || self == null || accepts(onq, rq, (d + 2) % 4, self))){
                     done = key;
                     break;
                 }

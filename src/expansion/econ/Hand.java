@@ -181,7 +181,10 @@ public final class Hand extends mindustry.entities.units.AIController{
      */
     void offload(){
         var core = unit.team.core();
-        if(core == null || unit.stack.amount < 6 || !unit.within(core, Vars.mineTransferRange)) return;
+        if(core == null || unit.stack.amount <= 0 || !unit.within(core, Vars.mineTransferRange)) return;
+        //(what is carried from a machine goes over at once; what is dug, a few at a time)
+        if(unit.stack.amount < 6 && !carrying) return;
+        carrying = false;
         int accepted = core.acceptStack(unit.item(), unit.stack.amount, unit);
         if(accepted > 0) Call.transferItemTo(unit, unit.item(), accepted, unit.x, unit.y, core);
     }
@@ -447,10 +450,57 @@ public final class Hand extends mindustry.entities.units.AIController{
         return true;
     }
 
+    /** Whether what it holds was taken from a machine, to be handed to the core however little it is. */
+    boolean carrying;
+
+    /**
+     * Carries what the core is short of from a machine of the plan's that has no line to the core (see
+     * {@link Machine#hauled}): flies there, takes what it holds, and brings it back. False if there is nothing to carry.
+     */
+    boolean haul(int[] cost){
+        var core = unit.team.core();
+        if(core == null || cost == null) return false;
+        for(Machine m : order){
+            if(!m.hauled) continue;
+            Part p = works.at.get(m);
+            Building b = p == null ? null : Vars.world.build(p.x, p.y);
+            if(b == null || b.team != unit.team || b.items == null) continue;
+            for(int k = 0; k < cost.length; k++){
+                Item item = Vars.content.item(works.cat.get(k).name);
+                if(item == null || cost[k] <= core.items.get(item)) continue;
+                boolean has = unit.stack.amount > 0 && unit.item() == item;
+                if(!has && b.items.get(item) <= 0) continue;
+                unit.mineTile = null;
+                //something else in hand goes to the core first
+                if(unit.stack.amount > 0 && unit.item() != item){
+                    carrying = true;
+                    moveTo(core.tile, Vars.mineTransferRange * 0.6f);
+                    return true;
+                }
+                int want = Math.min(unit.type.itemCapacity, cost[k] - core.items.get(item));
+                if(has && (unit.stack.amount >= want || b.items.get(item) <= 0)){
+                    carrying = true;
+                    doing += String.format(" (carrying %d %s from %s)", unit.stack.amount, item.name, m.recipe.name);
+                    moveTo(core.tile, Vars.mineTransferRange * 0.6f);
+                    return true;
+                }
+                if(unit.within(b, Vars.itemTransferRange * 0.8f)){
+                    Call.takeItems(b, item, want - (has ? unit.stack.amount : 0), unit);
+                }else{
+                    doing += String.format(" (fetching %s from %s at %d,%d)", item.name, m.recipe.name, p.x, p.y);
+                    moveTo(b, Vars.itemTransferRange * 0.5f);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Digs whatever of a cost the core is furthest short of and can be dug; with no cost, or nothing of it to dig, what it has least of. */
     void dig(int[] cost){
         var core = unit.team.core();
         if(core == null) return;
+        if(haul(cost)) return;
         Item pick = null;
         float worst = -1f;
         for(Item item : Vars.content.items()){
