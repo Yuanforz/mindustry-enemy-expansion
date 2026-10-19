@@ -90,6 +90,17 @@ public final class Hand extends mindustry.entities.units.AIController{
             Part where = works.at.get(m);
             //(once: the game works its fog out on a thread of its own)
             Tile dark = where == null ? null : unseen(where);
+            //waited too long for a look (no unit can get there): this one is put off to the end, and the next is begun
+            if(dark != null && fogSince[0] == next && now() - fogSince[1] > 45f){
+                skipped.add(next);
+                trouble.add(String.format("%s at %d,%d put off: nobody could get to see its ground", m.recipe.name, where.x, where.y));
+                next++;
+                return;
+            }
+            if(dark != null && fogSince[0] != next){
+                fogSince[0] = next;
+                fogSince[1] = now();
+            }
             if(dark != null){
                 doing = String.format("a unit is sent to see %d,%d for #%d %s (ground not seen can't be built on); digging meanwhile", where.x, where.y, next + 1, m.recipe.name);
                 scout(new Part(where.block, dark.x, dark.y, 0, null));
@@ -117,6 +128,35 @@ public final class Hand extends mindustry.entities.units.AIController{
             doing = repairing ? "putting back what went missing" : String.format("building #%d %s", next + 1, machine == null ? "" : machine.recipe.name);
             build();
             return;
+        }
+        //what was put off for want of a look is tried again once its ground is seen
+        if(!skipped.isEmpty()){
+            for(int i = 0; i < skipped.size; i++){
+                int idx = skipped.get(i);
+                Machine m = order.get(idx);
+                Part where = works.at.get(m);
+                if(where != null && unseen(where) != null){
+                    if(canScout()){
+                        Tile dark = unseen(where);
+                        if(dark != null) scout(new Part(where.block, dark.x, dark.y, 0, null));
+                    }
+                    continue;
+                }
+                Seq<Part> parts = works.job(m);
+                if(!affordable(cost(parts))){
+                    doing = String.format("saving up for #%d %s (put off before): %s", idx + 1, m.recipe.name, shortOf(cost(parts)));
+                    dig(cost(parts));
+                    return;
+                }
+                skipped.removeIndex(i);
+                begun[idx] = now();
+                partsOf[idx] = parts.size;
+                retrying = idx;
+                job = parts;
+                machine = m;
+                unit.mineTile = null;
+                return;
+            }
         }
         doing = "all built; digging what the core has least of";
         //all done: what a crafter sent to the core now goes all to the factories it touches; and dig for whatever comes later
@@ -181,6 +221,11 @@ public final class Hand extends mindustry.entities.units.AIController{
         words.put(Intent.Layer.watch, watching);
         intent.live(marks, words);
     }
+
+    /** Jobs put off because nobody could get to see their ground, by place in the order; the one being built again. */
+    public final IntSeq skipped = new IntSeq();
+    int retrying = -1;
+    final float[] fogSince = {-1f, 0f};
 
     /** Parts put off because their ground has not been seen and there was no unit to send. */
     public final Seq<Part> deferred = new Seq<>();
@@ -280,6 +325,14 @@ public final class Hand extends mindustry.entities.units.AIController{
                     return;
                 }
             }
+        }
+        if(all && retrying >= 0){
+            finished[retrying] = now();
+            retrying = -1;
+            job = null;
+            machine = null;
+            unit.plans.clear();
+            return;
         }
         if(all && repairing){
             repairing = false;
@@ -409,6 +462,19 @@ public final class Hand extends mindustry.entities.units.AIController{
         }
         Tile wall = wall(pick, core);
         if(wall == null) return;
+        //a full stack, or one of something else, goes to the core first: the game hands over only near it
+        boolean full = unit.stack.amount >= unit.type.itemCapacity || (unit.stack.amount > 0 && unit.item() != pick);
+        if(full && !unit.within(core, Vars.mineTransferRange * 0.9f)){
+            unit.mineTile = null;
+            moveTo(core.tile, Vars.mineTransferRange * 0.6f);
+            return;
+        }
+        if(full){
+            //in range but of another item: hand it all over now
+            int accepted = core.acceptStack(unit.item(), unit.stack.amount, unit);
+            if(accepted > 0) Call.transferItemTo(unit, unit.item(), accepted, unit.x, unit.y, core);
+            else unit.clearItem();
+        }
         if(unit.mineTile != wall) unit.mineTile = wall;
         moveTo(wall, unit.type.mineRange * 0.6f);
     }

@@ -80,10 +80,26 @@ public class EconRun{
         Vars.state.tick = 0;
         Boot.frames(2);
 
+        //the map's own base, watched a while: what of it really gets to the core (some of it may stand idle, or feed
+        //something else); then the core and the clock as they were
+        Map<String, Float> income = new HashMap<>();
+        int[] before = new int[Vars.content.items().size];
+        for(Item item : Vars.content.items()) before[item.id] = core.items.get(item);
+        float watched = 20f;
+        for(int f = 0; f < watched * 60; f++){
+            if(f % 60 == 0) for(Unit u : Groups.unit) if(u.team == enemy) u.kill();
+            Boot.frames(1);
+        }
+        for(Item item : Vars.content.items()) income.put(item.name, (core.items.get(item) - before[item.id]) / watched);
+        for(Item item : Vars.content.items()) core.items.set(item, before[item.id]);
+        Vars.state.tick = 0;
+
         //the plan
         Catalog cat = Recipes.read(blocks, (CoreBlock)core.block, rules.buildSpeed(me));
         cat.logistics(allowed);
         Field field = Sites.scan(cat, me, 110);
+        String pruned = Sites.prune(cat, field, income);
+        if(!pruned.isEmpty()) System.out.println("  the map's own: " + pruned);
         Planner planner = new Planner(cat, field);
         Recipe making = null;
         int unit = cat.id(unitName);

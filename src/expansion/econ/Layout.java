@@ -503,8 +503,17 @@ public final class Layout{
                     }
                 }
                 int fx = p.x + Geometry.d4x(p.rotation), fy = p.y + Geometry.d4y(p.rotation);
-                if(!leadsOn(n, fx, fy, p)) problems.add(String.format("%s at %d,%d (%s, net %d) leads to nothing that takes it at %d,%d (%s, facing %d, net %d)", b.name, p.x, p.y, cat.get(n.res).name, n.id, fx, fy,
-                    grid.block(fx, fy) == null ? "open ground" : grid.block(fx, fy).name, grid.in(fx, fy) ? grid.rotation(fx, fy) : -1, grid.in(fx, fy) ? grid.net[grid.pos(fx, fy)] : -1));
+                if(!leadsOn(n, fx, fy, p)){
+                    //with the net's pieces round it, in the order they were laid, to see how it came about
+                    StringBuilder near = new StringBuilder();
+                    Seq<Part> all = n.all();
+                    for(int i = 0; i < all.size; i++){
+                        Part q = all.get(i);
+                        if(Math.abs(q.x - p.x) + Math.abs(q.y - p.y) <= 5) near.append(String.format(" #%d %s %d,%d r%d", i, q.block.name.replace("duct-", "").replace("reinforced-", ""), q.x, q.y, q.rotation));
+                    }
+                    problems.add(String.format("%s at %d,%d (%s, %s net %d) leads to nothing that takes it at %d,%d (%s, facing %d, net %d); near:%s", b.name, p.x, p.y, cat.get(n.res).name, n.kind, n.id, fx, fy,
+                        grid.block(fx, fy) == null ? "open ground" : grid.block(fx, fy).name, grid.in(fx, fy) ? grid.rotation(fx, fy) : -1, grid.in(fx, fy) ? grid.net[grid.pos(fx, fy)] : -1, near));
+                }
             }
         }
         //solid things where beams cross or units come out

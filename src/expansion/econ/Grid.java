@@ -83,7 +83,7 @@ public final class Grid{
                 Tile t = Vars.world.tile(x, y);
                 int p = x + y * w;
                 ground[p] = !t.block().isStatic() && !t.floor().isDeep() && t.floor().placeableOn && Vars.world.isInMapArea(x, y) && Vars.world.getDarkness(x, y) < 3
-                    && !Vars.state.teams.anyEnemyCoresWithinBuildRadius(team, t.worldx(), t.worldy());
+                    && !Vars.state.teams.anyEnemyCoresWithinBuildRadius(team, t.worldx(), t.worldy()) && ours(t.worldx(), t.worldy());
                 if(t.build != null && t.build.team == team && t.build.tile == t){
                     int r = output(t.build.block, t.build);
                     if(r >= 0) t.getLinkedTilesAs(t.build.block, o -> dumps[o.x + o.y * w] = r);
@@ -103,6 +103,24 @@ public final class Grid{
             if(b instanceof BeamDrill.BeamDrillBuild && b.tile == Vars.world.tile(b.tileX(), b.tileY())) for(int t : beam((BeamDrill)b.block, b.tileX(), b.tileY(), b.rotation)) noSolid[t] = true;
         }
         trace();
+    }
+
+    /** With the rule that ground belongs to the nearest core (polygon core protection), whether that core is the side's. */
+    boolean ours(float wx, float wy){
+        if(!Vars.state.rules.polygonCoreProtection) return true;
+        float best = Float.MAX_VALUE;
+        Team closest = null;
+        for(var data : Vars.state.teams.active){
+            if(!data.team.rules().protectCores) continue;
+            for(var core : data.cores){
+                float d = core.dst2(wx, wy);
+                if(d < best){
+                    best = d;
+                    closest = data.team;
+                }
+            }
+        }
+        return closest == null || closest == team;
     }
 
     public int pos(int x, int y){

@@ -808,7 +808,7 @@ final class Router{
     /** Whether a piece may go on a tile at all for this net. */
     boolean open(int q, Block piece, Net n){
         int x = q % grid.w, y = q / grid.w;
-        if(!grid.free(x, y) || grid.quiet[q] || ownQuiet.contains(q) || own.containsKey(q)) return false;
+        if(!grid.free(x, y) || grid.quiet[q] || ownQuiet.contains(q) || own.containsKey(q) || blocked.contains(q)) return false;
         if(piece.solid && grid.noSolid[q]) return false;
         return true;
     }
@@ -870,7 +870,27 @@ final class Router{
      * either side (a duct takes from behind and its sides), or a bridge to up to its range ahead, or, when it is a dock's
      * tile, the dock.
      */
+    /** Tiles a search may not use, for laying a path again that had crossed itself. */
+    final IntSet blocked = new IntSet();
+
+    /** A path from the starts through the stages to the goal that never puts two pieces on one tile. */
     Path search(Net n, List<Start> starts, List<Stage> stages, Goal goal, int[] endAt){
+        blocked.clear();
+        for(int round = 0; round < 5; round++){
+            Path p = searchOnce(n, starts, stages, goal, endAt);
+            if(p == null || !crosses(p)){
+                blocked.clear();
+                return p;
+            }
+            //the tiles it came back over are shut to it, and it is laid again
+            IntSet seen = new IntSet();
+            for(Part part : p.parts) for(int t : grid.tiles(part)) if(!seen.add(t)) blocked.add(t);
+        }
+        blocked.clear();
+        return null;
+    }
+
+    Path searchOnce(Net n, List<Start> starts, List<Stage> stages, Goal goal, int[] endAt){
         Block piece = n.liquid ? conduit : duct, jump = n.liquid ? pipeBridge : bridge;
         float pieceCost = price(piece), jumpCost = price(jump), dockCost = price(dock);
         int N = grid.w * grid.h, S = stages.size() + 1;
@@ -982,7 +1002,6 @@ final class Router{
         Collections.reverse(rev);
         for(Part part : rev) path.parts.add(part);
         for(int i : docksAt) path.firstDock = path.firstDock < 0 ? size - 1 - i : Math.min(path.firstDock, size - 1 - i);
-        if(S == 1 && crosses(path)) log.append("router: a line of ").append(cat.get(n.res).name).append(" crosses itself\n");
         return path;
     }
 

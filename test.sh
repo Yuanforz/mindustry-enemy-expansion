@@ -156,11 +156,11 @@ origin atlas locus 1 12
 LIST
     started=$(date +%s)
     while read map sector unit n minutes; do
-      while [ $(jobs -r | wc -l) -ge $jobs ]; do sleep 2; done
+      while [ $(ps ax | grep -c "[x]test.EconRun") -ge $jobs ]; do sleep 2; done
       ( java $RUN_OPTS -cp "$CP" xtest.EconRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$sector" "$unit" "$n" "$minutes" > build/bench/$map.log 2> build/bench/$map.err; \
         grep -q "^BENCH" build/bench/$map.log || echo "BENCH $map $sector $unit $n | failed: $(grep -m1 -E 'Exception|Error' build/bench/$map.err)" >> build/bench/$map.log ) &
     done < build/bench/list
-    wait
+    while [ $(ps ax | grep -c "[x]test.EconRun") -gt 0 ]; do sleep 2; done
     echo "$(( $(date +%s) - started )) s"
     for map in $(cut -d' ' -f1 build/bench/list); do grep -h "^BENCH" build/bench/$map.log; done | tee build/bench/table.txt
     ;;

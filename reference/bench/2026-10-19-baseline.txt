@@ -1,0 +1,17 @@
+BENCH onset onset stell 2 | model 3:34 game 3:55 | 91% | built 15/15 model 3:56 game 5:06 | nets unlaid 0 checker 0 | layout 0.9s
+BENCH aegis aegis stell 3 | model 3:02 game 3:20 | 91% | built 16/16 model 3:33 game 3:46 | nets unlaid 0 checker 0 | layout 5.4s
+BENCH lake lake stell 2 | model 3:26 game 3:25 | 101% | built 3/8 model 4:41 game - | nets unlaid 0 checker 0 | layout 0.7s | stuck: a unit is sent to see 182,88 for #4 turbine-condenser (ground not seen can't be built on); digging meanwhile
+BENCH intersect intersect stell 2 | model 2:18 game 2:26 | 95% | built 11/11 model 2:21 game 2:16 | nets unlaid 1 checker 0 | layout 6.7s
+BENCH atlas atlas locus 1 | model 5:27 game 6:35 | 83% | built 15/15 model 5:27 game 6:11 | nets unlaid 0 checker 0 | layout 2.3s
+BENCH split atlas locus 1 | model 2:59 game never | - | built 0/5 model 3:11 game - | nets unlaid 1 checker 0 | layout 5.4s | stuck: saving up for #1 electrolyzer: tungsten 0/80
+BENCH basin atlas locus 1 | model 13:58 game never | - | built 2/9 model 13:58 game - | nets unlaid 3 checker 0 | layout 7.9s | stuck: a unit is sent to see 279,380 for #3 turbine-condenser (ground not seen can't be built on); digging meanwhile
+BENCH marsh atlas locus 1 | model 3:33 game never | - | built 6/9 model 5:50 game - | nets unlaid 0 checker 0 | layout 2.3s | stuck: saving up for #7 electrolyzer: beryllium 182/368
+BENCH peaks atlas locus 1 | model 7:17 game never | - | built 7/7 model 8:21 game 5:32 | nets unlaid 2 checker 0 | layout 3.2s
+BENCH ravine atlas locus 1 | model 3:48 game never | - | built 0/5 model 3:48 game - | nets unlaid 0 checker 1 | layout 0.9s | stuck: building #1 tank-fabricator:stell
+BENCH caldera-erekir atlas locus 1 | model 4:57 game never | - | built 10/10 model 5:43 game 4:38 | nets unlaid 2 checker 1 | layout 4.3s
+BENCH stronghold atlas locus 1 | model never game never | - | built 3/3 model 180:00 game 0:15 | nets unlaid 0 checker 0 | layout 0.5s
+BENCH crevice atlas locus 1 | model 2:37 game never | - | built 2/8 model 2:37 game - | nets unlaid 1 checker 1 | layout 26.6s | stuck: a unit is sent to see 139,193 for #3 impact-drill (ground not seen can't be built on); digging meanwhile
+BENCH siege atlas locus 1 | model 2:28 game never | - | built 6/10 model 2:28 game - | nets unlaid 2 checker 0 | layout 11.4s | stuck: a unit is sent to see 214,89 for #7 impact-drill (ground not seen can't be built on); digging meanwhile
+BENCH crossroads atlas locus 1 | model 1:33 game 2:11 | 71% | built 8/8 model 1:57 game 3:00 | nets unlaid 0 checker 0 | layout 0.7s
+BENCH karst atlas locus 1 | model 2:52 game never | - | built 4/14 model 2:52 game - | nets unlaid 0 checker 0 | layout 2.2s | stuck: a unit is sent to see 156,517 for #5 turbine-condenser (ground not seen can't be built on); digging meanwhile
+BENCH origin atlas locus 1 | model 1:50 game never | - | built 15/15 model 1:50 game 0:58 | nets unlaid 3 checker 0 | layout 13.9s

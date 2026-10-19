@@ -62,6 +62,20 @@ public final class Sites{
                 }
             }
         }
+        //only places a line can get to from the core: over ground that can be built on, or by bridge over up to three
+        //tiles of anything else
+        boolean[] reach = reach(field, team);
+        int w = Vars.world.width();
+        all.removeIf(site -> {
+            for(int t : site.tiles){
+                int x = t % w, y = t / w;
+                for(int d = 0; d < 4; d++){
+                    int nx = x + arc.math.geom.Geometry.d4x(d), ny = y + arc.math.geom.Geometry.d4y(d);
+                    if(Vars.world.tile(nx, ny) != null && reach[nx + ny * w]) return false;
+                }
+            }
+            return true;
+        });
         Vars.state.rules.fog = fog;
         //what the side has seen so far: the game works its fog out on a thread of its own, which this makes it do now
         if(fog && Vars.state.rules.staticFog){
@@ -115,6 +129,73 @@ public final class Sites{
             field.existing.add(m);
         }
         return field;
+    }
+
+    /**
+     * Leaves out of the map's own machines those whose item does not get to the core as the model would count it: for
+     * each item, if what the core was seen to get (a second, watched over a while) is well short of what those machines
+     * would make, they stand idle or feed something else, and the plan may not count on them. What was left out, in words.
+     */
+    public static String prune(Catalog cat, Field field, Map<String, Float> income){
+        StringBuilder out = new StringBuilder();
+        for(int k = 0; k < cat.size(); k++){
+            Res r = cat.get(k);
+            if(r.kind != Res.Kind.item || !r.storable) continue;
+            float made = 0f;
+            List<Machine> makers = new ArrayList<>();
+            for(Machine m : field.existing){
+                if(m.out(k) <= 1e-4f) continue;
+                made += m.out(k);
+                makers.add(m);
+            }
+            if(made <= 0.05f) continue;
+            float got = income.getOrDefault(r.name, 0f);
+            if(got >= made * 0.3f) continue;
+            field.existing.removeAll(makers);
+            out.append(String.format("%d makers of %s left out (they would make %.2f/s, the core got %.2f/s); ", makers.size(), r.name, made, got));
+        }
+        return out.toString().trim();
+    }
+
+    /** The tiles a line can get to from the core: ground that can be built on, crossing up to three tiles of anything else by bridge. */
+    static boolean[] reach(Field field, Team team){
+        int w = Vars.world.width(), h = Vars.world.height();
+        boolean[] open = new boolean[w * h], seen = new boolean[w * h];
+        for(int y = 0; y < h; y++){
+            for(int x = 0; x < w; x++){
+                Tile t = Vars.world.tile(x, y);
+                open[x + y * w] = !t.block().isStatic() && !t.floor().isDeep() && t.floor().placeableOn && Vars.world.isInMapArea(x, y) && Vars.world.getDarkness(x, y) < 3;
+            }
+        }
+        IntQueue queue = new IntQueue();
+        var core = team.core();
+        int r = core.block.size / 2 + 1;
+        for(int dx = -r; dx <= r; dx++){
+            for(int dy = -r; dy <= r; dy++){
+                int x = field.coreX + dx, y = field.coreY + dy;
+                if(x < 0 || y < 0 || x >= w || y >= h || !open[x + y * w] || seen[x + y * w]) continue;
+                seen[x + y * w] = true;
+                queue.addLast(x + y * w);
+            }
+        }
+        while(!queue.isEmpty()){
+            int p = queue.removeFirst(), x = p % w, y = p / w;
+            for(int d = 0; d < 4; d++){
+                for(int j = 1; j <= 4; j++){
+                    int nx = x + arc.math.geom.Geometry.d4x(d) * j, ny = y + arc.math.geom.Geometry.d4y(d) * j;
+                    if(nx < 0 || ny < 0 || nx >= w || ny >= h) break;
+                    int q = nx + ny * w;
+                    if(!open[q]) continue;
+                    if(!seen[q]){
+                        seen[q] = true;
+                        queue.addLast(q);
+                    }
+                    //open ground is walked one step at a time; only over what can't be built on does it jump
+                    break;
+                }
+            }
+        }
+        return seen;
     }
 
     /** Whether anything is built under where the block would go (the game would let some blocks be put over others; a plan may not count on that). */
