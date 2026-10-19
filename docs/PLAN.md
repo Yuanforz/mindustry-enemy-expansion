@@ -1678,15 +1678,26 @@ java ... xtest.DodgeLab build/test-data blueprints dodge|command 6 60 elude   # 
 
 ### 26.3 结果
 
-- 平开局（每局 25 分钟）：aegis、lake、onset 都在 7–9 分钟推掉 Brain 的核心；atlas 平（拆了 Brain 626 个方块但没拆到核心，之后改了 push 的目标顺序）；intersect、split 原来因为挑了走不到的核心而什么都没造（已改）。全图批量见 `build/match/summary-b2-even.txt`。
-- 战役开局：aegis 7:12 被 Brain 的 stell 速推（它 7 分钟有 10 个 stell，我方的 breach 对还没攒够钱）；lake 23:53 输（当时还没有"自己的活先干"）。
-- 对 RTS 小队 AI 的对打（`test/duels.sh`）：默认控兵层 31-3-8、伤害 +34%；加 push 31-5-6、+58%。
+**平开局，17 张图各 25 分钟（`TAG=b2 sh test/matches.sh 25 even`）：赢 9、输 0、平 5、没打 3。**
+
+| 结果 | 地图 |
+|---|---|
+| 赢 | onset 6:56、aegis 6:40、lake 9:00、marsh 7:28、siege 7:20、crossroads 5:21、stronghold 10:15、caldera 10:28、basin 16:50 |
+| 平 | atlas、origin（唯一一张 Brain 也造出大批兵的，30 个）；intersect、split、peaks（当时我方没有能走到对方核心的兵种，什么都没造） |
+| 没打 | ravine、crevice、karst（只有波次，没有 Brain 的核心） |
+
+平开局里 Brain 在大多数图上 25 分钟一个兵都没造出来（从空核心起步它很慢），所以这组结果说明我方能打、会推，但对手偏弱。
+
+**战役开局（`sector`，第一轮，最后几项修复之前）：输 8、平 6。** 这里 Brain 带着地图给的整座基地：siege 开局就有 4 个核心、7873 个方块、92 座炮塔，5 分钟出 30 多个兵；onset 的 Brain 2 分钟就有 4 个 stell，第 3 分钟推掉我方核心。aegis、atlas、caldera、origin 我方撑满 25 分钟，并打掉 Brain 几十到上百个兵、上千个方块。战役图本来是给带着科技和资源来的玩家打的，从空落地去对抗满配的敌方基地，参考意义有限；更公平的比较是平开局。
+
+**对 RTS 小队 AI 的对打（`test/duels.sh`，42 局）：** 默认控兵层 31-3-8、伤害 +34%；加 push 31-5-6、+58%。
 
 ### 26.4 还弱的地方
 
-- 战役开局 Brain 有现成基地和战役给敌方的规则，我方开局只顾经济，挡不住第一波速推；需要按对方开局兵力决定先防后经济。
-- 只做了 T1 兵：没钨的图上没有 T2；有钨的图还没在对战里稳定走到 T2、T3。空军（avert 等）还没进阶段表，隔墙、隔水只有飞的才过得去的图（intersect、split 部分核心）还打不了。
-- 规划仍在主线程，一个阶段几秒到几十秒，真实游戏里会卡顿。
+- 战役开局挡不住满配基地的速推（onset 3 分钟、siege 6 分钟），开局只顾经济；需要按对方开局兵力决定先防后经济、先用核心机和地图给的炮塔。
+- 兵量差距：战役开局 Brain 一局造 70–240 个兵，我方 10–60 个；工厂数、T2/T3 都要跟上（atlas 上 T2 locus 已能走到）。
+- 隔墙、隔水只有飞的才过得去的图（split、peaks）：飞行单位要钨，这两张图附近没有。
+- 规划仍在主线程，一个阶段几秒到几十秒。
 - 炮塔推进（`creep`）做了但没接经济的供给线，默认关。
 
 ## 9. 踩过的坑
