@@ -50,6 +50,8 @@ public final class Grid{
     final boolean[] quiet;
     /** Tiles kept for later (fields to be mined one day): what it costs a line or a cell to take one. */
     final float[] kept;
+    /** Tiles the side has not seen at the start (with fog on): a part there waits until a unit has been to look. */
+    final boolean[] dark;
     /** What a machine of the plan or of the map hands out to its neighbours, by its tiles; -1 for nothing. */
     final int[] dumps;
     /** What the map's own ducts carry, as traced from what feeds them. */
@@ -68,6 +70,7 @@ public final class Grid{
         noSolid = new boolean[n];
         quiet = new boolean[n];
         kept = new float[n];
+        dark = new boolean[n];
         dumps = new int[n];
         Arrays.fill(net, -1);
         Arrays.fill(carry, -1);
@@ -88,6 +91,13 @@ public final class Grid{
             }
         }
         Vars.state.rules.fog = fog;
+        if(fog && Vars.state.rules.staticFog){
+            try{
+                Vars.fogControl.update();
+            }catch(Throwable ignored){
+            }
+            for(int y = 0; y < h; y++) for(int x = 0; x < w; x++) dark[x + y * w] = !Vars.fogControl.isDiscovered(team, x, y);
+        }
         //what the map's drills reach across stays clear
         for(Building b : team.data().buildings){
             if(b instanceof BeamDrill.BeamDrillBuild && b.tile == Vars.world.tile(b.tileX(), b.tileY())) for(int t : beam((BeamDrill)b.block, b.tileX(), b.tileY(), b.rotation)) noSolid[t] = true;

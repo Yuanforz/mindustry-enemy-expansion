@@ -99,22 +99,37 @@ public class EconRun{
         works.prepare(model.order);
         long l1 = System.nanoTime();
         System.out.println(String.format("  laid out in %.1fs: %s", (l1 - l0) / 1e9, works.summary()));
+        //what it all really costs (and how long each job takes) goes back to the planner, which orders it again; who owns
+        //which line depends on the order, so this goes round until the order holds still
         int modelSpent = 0, realSpent = 0;
-        for(Machine m : model.order){
-            int[] real = works.realCost(m);
-            m.buildSeconds = works.buildSeconds(m);
-            for(int k = 0; k < real.length; k++){
-                modelSpent += m.cost[k];
-                realSpent += real[k];
-                m.cost[k] = real[k];
-            }
-        }
+        for(Machine m : model.order) for(int c : m.cost) modelSpent += c;
         planner.extras = 0;
-        Timeline again = planner.order(new ArrayList<>(model.order), unit);
+        float firstModel = model.first[unit], doneModel = model.t;
+        for(int round = 0; round < 3; round++){
+            for(Machine m : model.order){
+                int[] real = works.realCost(m);
+                m.buildSeconds = works.buildSeconds(m);
+                m.draw = works.drawShare(m);
+                System.arraycopy(real, 0, m.cost, 0, real.length);
+            }
+            Timeline again = planner.order(new ArrayList<>(model.order), unit);
+            boolean same = again.order.equals(model.order);
+            model = again;
+            works.reorder(model.order);
+            if(same) break;
+        }
+        //and the model's times for the order as it now is, with what each job now really costs
+        for(Machine m : model.order){
+            System.arraycopy(works.realCost(m), 0, m.cost, 0, m.cost.length);
+            m.buildSeconds = works.buildSeconds(m);
+            m.draw = works.drawShare(m);
+            for(int c : m.cost) realSpent += c;
+        }
+        Timeline settled = new Timeline(cat, field, model.order);
+        settled.runToGoal(unit, planner.limit);
+        model = settled;
         System.out.println(String.format("  the plan cost %d in items, the layout %d; ordered again on what it really costs: done by %s, first %s at %s (was %s, %s)",
-            modelSpent, realSpent, EconLab.time(again.t), unitName, EconLab.time(again.first[unit]), EconLab.time(model.t), EconLab.time(model.first[unit])));
-        model = again;
-        works.reorder(model.order);
+            modelSpent, realSpent, EconLab.time(model.t), unitName, EconLab.time(model.first[unit]), EconLab.time(doneModel), EconLab.time(firstModel)));
         for(String p : works.problems) System.out.println("  checker: " + p);
         expansion.econ.Hand hand = new expansion.econ.Hand(works, model.order);
         //what each module means to do, as words and as a picture (with the debug option on the game draws the same)

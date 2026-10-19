@@ -843,11 +843,24 @@ final class Router{
             Part o = own.get(grid.pos(x, y));
             if(o != null && o.block == b && o.rotation == rot) return false;
         }
+        //and no bridge of another line facing either end from any side with nothing between: it would link to it
+        for(int[] end : new int[][]{{sx, sy}, {ex, ey}}){
+            for(int d = 0; d < 4; d++){
+                for(int i = 1; i <= range; i++){
+                    int x = end[0] + Geometry.d4x(d) * i, y = end[1] + Geometry.d4y(d) * i;
+                    if(!grid.in(x, y)) break;
+                    if(grid.block(x, y) != b) continue;
+                    if(grid.rotation(x, y) == (d + 2) % 4 && grid.planned(x, y) != null || grid.rotation(x, y) == (d + 2) % 4 && Vars.world.build(x, y) != null) return false;
+                    break;
+                }
+            }
+        }
         return true;
     }
 
     float step(int q, float base){
-        float c = base + grid.kept[q] + hist[q];
+        //ground not seen yet: a part there waits for a unit to look, so a way round it is worth a little
+        float c = base + grid.kept[q] + hist[q] + (grid.dark[q] ? 2f : 0f);
         return c * (1f + pres * use[q]);
     }
 

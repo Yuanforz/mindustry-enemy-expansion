@@ -36,6 +36,15 @@ public final class Timeline{
      * NaN until that time is worked out.
      */
     public float[] ready = new float[0];
+    /**
+     * What of each thing the machines filling their first batch take that would have gone to the core: a dock gives the
+     * machine all it will take first, so while it fills the core gets that much less.
+     */
+    float[] draw;
+    /** Until when each machine still draws to fill its buffer (it holds two batches: the game's unit makers do). */
+    float[] drawUntil = new float[0];
+    /** How many batches a machine draws for before the core gets that thing again (for testing the model: xp.draw). */
+    public static float drawBatches = Float.parseFloat(System.getProperty("xp.draw", "2"));
     /** For each unit kind: how many were made, and when the first was. */
     public final float[] made, first;
     /** When each machine of the order was begun and finished, by its place in the order. */
@@ -82,6 +91,7 @@ public final class Timeline{
         waiting = o.waiting.clone();
         feeds = o.feeds.clone();
         ready = o.ready.clone();
+        drawUntil = o.drawUntil.clone();
         made = o.made.clone();
         first = o.first.clone();
         begun = o.begun.clone();
@@ -155,6 +165,7 @@ public final class Timeline{
         }
 
         float[] income = plant.toCore.clone();
+        if(draw != null) for(int k = 0; k < income.length; k++) income[k] = Math.max(0f, income[k] - draw[k]);
         if(digging >= 0) income[digging] += field.handRate(cat, digging);
 
         //the next thing to happen
@@ -175,6 +186,7 @@ public final class Timeline{
             if(!r.makesUnits()) continue;
             float e = plant.eff[i];
             if(Float.isNaN(ready[i])) continue;
+            if(drawUntil[i] > t) dt = Math.min(dt, drawUntil[i] - t);
             if(ready[i] > t){
                 dt = Math.min(dt, ready[i] - t);
                 continue;
@@ -190,6 +202,11 @@ public final class Timeline{
             stock[k] = Math.min(cat.coreCap, stock[k] + income[k] * dt);
         }
         boolean changed = false;
+        //a machine whose first batch is in stops drawing what the core would have had
+        for(int i = 0; i < built.size(); i++){
+            if(!Float.isNaN(ready[i]) && ready[i] > t - dt + 1e-6f && ready[i] <= t + 1e-6f) changed = true;
+            if(drawUntil[i] > t - dt + 1e-6f && drawUntil[i] <= t + 1e-6f) changed = true;
+        }
         for(int i = 0; i < built.size(); i++){
             Recipe r = built.get(i).recipe;
             if(!r.makesUnits() || waiting[i] || Float.isNaN(ready[i]) || ready[i] > t - dt + 1e-6f) continue;
@@ -271,17 +288,42 @@ public final class Timeline{
         }
         plant.solve(built, active, false);
         dirty = false;
-        for(int i = 0; i < built.size(); i++){
-            Recipe r = built.get(i).recipe;
-            if(!r.makesUnits() || !Float.isNaN(ready[i])) continue;
-            //its first batch comes in at what it is given plus what would have gone on to the core
-            float fill = 0f;
-            for(int k = 0; k < r.in.length; k++){
-                if(r.in[k] <= 0f || cat.get(k).kind != Res.Kind.item) continue;
-                float batch = r.in[k] * r.unitSeconds, rate = r.in[k] * Math.max(plant.eff[i], active[i] ? 0f : 1f) + plant.toCore[k];
-                fill = Math.max(fill, rate <= 1e-6f ? Float.POSITIVE_INFINITY : batch / rate);
+        //the first batch of each machine that makes units comes in at what the plant gives it running plus what would have
+        //gone on to the core: a dock hands the machine all it will take, and it takes until it holds two batches. While it
+        //draws, the core gets none of that. One machine draws at a time from what goes to the core: the next starts once
+        //the first is full
+        float[] free = plant.toCore.clone();
+        draw = new float[cat.size()];
+        for(int pass = 0; pass < 2; pass++){
+            for(int i = 0; i < built.size(); i++){
+                Recipe r = built.get(i).recipe;
+                if(!r.makesUnits()) continue;
+                float share = built.get(i).draw;
+                if(pass == 0 && drawUntil[i] > t + 1e-6f){
+                    for(int k = 0; k < r.in.length; k++){
+                        if(r.in[k] <= 0f || cat.get(k).kind != Res.Kind.item) continue;
+                        draw[k] += free[k] * share;
+                        free[k] -= free[k] * share;
+                    }
+                }
+                if(pass == 1 && Float.isNaN(ready[i])){
+                    float fill = 0f;
+                    for(int k = 0; k < r.in.length; k++){
+                        if(r.in[k] <= 0f || cat.get(k).kind != Res.Kind.item) continue;
+                        float batch = r.in[k] * r.unitSeconds, rate = r.in[k] * (active[i] ? plant.eff[i] : 0f) + free[k] * share;
+                        fill = Math.max(fill, rate <= 1e-6f ? Float.POSITIVE_INFINITY : batch / rate);
+                    }
+                    if(!Float.isInfinite(fill)){
+                        ready[i] = t + fill;
+                        drawUntil[i] = t + drawBatches * fill;
+                        if(drawBatches > 0f) for(int k = 0; k < r.in.length; k++){
+                            if(r.in[k] <= 0f || cat.get(k).kind != Res.Kind.item) continue;
+                            draw[k] += free[k] * share;
+                            free[k] -= free[k] * share;
+                        }
+                    }
+                }
             }
-            if(!Float.isInfinite(fill)) ready[i] = t + fill;
         }
     }
 
@@ -302,6 +344,7 @@ public final class Timeline{
             feeds = Arrays.copyOf(feeds, n);
             Arrays.fill(feeds, old, n, -1);
             ready = Arrays.copyOf(ready, n);
+            drawUntil = Arrays.copyOf(drawUntil, n);
             //what stood from the start has its items in already
             for(int i = old; i < n; i++) ready[i] = built.get(i).existing ? 0f : Float.NaN;
         }

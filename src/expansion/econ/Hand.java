@@ -57,6 +57,21 @@ public final class Hand extends mindustry.entities.units.AIController{
         offload();
         tell();
         watch.update(next);
+        //parts left for want of anyone to see their ground: once seen, they go up; until then a unit goes to look
+        if(job == null && !deferred.isEmpty()){
+            Seq<Part> now = new Seq<>();
+            for(Part p : deferred) if(unseen(p) == null) now.add(p);
+            if(now.size > 0){
+                deferred.removeAll(now, true);
+                for(Part p : now) watch.taken.remove(p);
+                job = now;
+                repairing = true;
+                unit.mineTile = null;
+            }else if(canScout()){
+                Tile dark = unseen(deferred.first());
+                if(dark != null) scout(new Part(deferred.first().block, dark.x, dark.y, 0, null));
+            }
+        }
         //a line to the core that is no longer wanted is cut
         if(job == null && !cuts.isEmpty()){
             cut();
@@ -73,9 +88,10 @@ public final class Hand extends mindustry.entities.units.AIController{
             Machine m = order.get(next);
             //its place not yet seen: a unit goes to have a look (the core unit sees nothing), and meanwhile it digs
             Part where = works.at.get(m);
-            if(where != null && unseen(where) != null){
+            //(once: the game works its fog out on a thread of its own)
+            Tile dark = where == null ? null : unseen(where);
+            if(dark != null){
                 doing = String.format("a unit is sent to see %d,%d for #%d %s (ground not seen can't be built on); digging meanwhile", where.x, where.y, next + 1, m.recipe.name);
-                Tile dark = unseen(where);
                 scout(new Part(where.block, dark.x, dark.y, 0, null));
                 dig(m.cost);
                 return;
@@ -166,6 +182,15 @@ public final class Hand extends mindustry.entities.units.AIController{
         intent.live(marks, words);
     }
 
+    /** Parts put off because their ground has not been seen and there was no unit to send. */
+    public final Seq<Part> deferred = new Seq<>();
+
+    /** Whether there is a unit (not the core unit) to send to have a look. */
+    boolean canScout(){
+        for(Unit u : unit.team.data().units) if(u != unit && u.type != unit.type && !u.dead() && u.controller() instanceof mindustry.ai.types.CommandAI) return true;
+        return false;
+    }
+
     /** Pieces to take up. */
     final Seq<Part> cuts = new Seq<>();
 
@@ -201,6 +226,18 @@ public final class Hand extends mindustry.entities.units.AIController{
     }
 
     void build(){
+        //ground no one has seen, with no unit to send to look: those parts wait, the rest goes up
+        if(!canScout()){
+            for(int i = job.size - 1; i >= 0; i--){
+                Part p = job.get(i);
+                Tile tile = Vars.world.tile(p.x, p.y);
+                if(tile != null && tile.block() != p.block && unseen(p) != null){
+                    deferred.add(p);
+                    watch.taken.add(p);
+                    job.remove(i);
+                }
+            }
+        }
         boolean all = true;
         Part target = null;
         float best = Float.MAX_VALUE;

@@ -22,6 +22,12 @@ public final class Machine{
     public boolean unseen;
     /** How long its job takes to build once laid out (the machine, its lines and nodes), in seconds; NaN until then. */
     public float buildSeconds = Float.NaN;
+    /**
+     * For a machine that makes units: the share of what would go on to the core that it takes while it fills its buffer.
+     * All of it behind an underflow dock (it is served first), half behind a router, a share when a maker it touches
+     * hands out by turns. Known once laid out; a middle guess before.
+     */
+    public float draw = 0.5f;
 
     public Machine(Recipe recipe, int item, float factor, int x, int y, float distance, int[] cost, boolean boosted, boolean existing){
         this.recipe = recipe;

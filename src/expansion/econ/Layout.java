@@ -79,7 +79,8 @@ public final class Layout{
         for(int t = 0; t < tries; t++){
             Attempt a = attempt(t, stress);
             log.append(String.format("try %d: %s\n", t + 1, a.note));
-            if(best == null || a.failed < best.failed || (a.failed == best.failed && a.cost < best.cost)) best = a;
+            //fewest nets left unlaid, then the fewest items the lines take
+            if(best == null || a.failed < best.failed || (a.failed == best.failed && a.linesCost < best.linesCost)) best = a;
             if(a.failed == 0) break;
             for(Router.Net n : a.nets) if(!n.ok) stress.merge(n.res, 2f, (x, y) -> x * y);
         }
@@ -101,7 +102,7 @@ public final class Layout{
         Map<Machine, Part> at = new HashMap<>();
         List<Router.Net> nets = new ArrayList<>();
         int failed;
-        float cost;
+        float cost, linesCost;
         String note = "";
         List<String> cellNotes = new ArrayList<>();
     }
@@ -155,7 +156,10 @@ public final class Layout{
         a.nets = nets(router, a.at);
         a.failed = router.routeAll(a.nets);
         int pieces = 0;
-        for(Router.Net n : a.nets) pieces += n.all().size;
+        for(Router.Net n : a.nets){
+            pieces += n.all().size;
+            for(Part p : n.all()) a.linesCost += Router.price(p.block);
+        }
         a.note = String.format("%d cells placed (cost %.0f), %d tiles kept for later fields, %d nets with %d pieces, %d not laid", cellMachines.size(), cells.best, keptTiles, a.nets.size(), pieces, a.failed);
         return a;
     }
@@ -413,6 +417,44 @@ public final class Layout{
             for(ItemStack s : p.block.requirements) c[cat.id(s.item.name)] += Math.round(s.amount * Vars.state.rules.buildCostMultiplier);
         }
         return c;
+    }
+
+    /**
+     * For a machine that makes units, the share of what flows on to the core it takes while it fills (see
+     * {@link Machine#draw}), by how its lines reach it: the most it gets of any one thing.
+     */
+    public float drawShare(Machine m){
+        float share = -1f;
+        for(Router.Net n : nets){
+            String how = n.feeds.get(m);
+            if(how == null) continue;
+            float s;
+            if(how.startsWith("touching")){
+                //a maker hands out by turns to all it touches that take, and to its own lines
+                int outlets = 1;
+                for(Machine o : n.from){
+                    Part p = at.get(o);
+                    if(p == null) continue;
+                    int around = 0;
+                    for(int[] t : Grid.around(p)){
+                        Block b = grid.block(t[0], t[1]);
+                        if(b != null && (Grid.isLine(b) || grid.uses(b, n.res))) around++;
+                    }
+                    outlets = Math.max(outlets, around);
+                }
+                s = 1f / Math.max(1, outlets);
+            }else if(how.startsWith("dock") || how.startsWith("spur") || how.startsWith("tap")){
+                s = dockIsRouter() ? 0.5f : 1f;
+            }else{
+                s = 1f;
+            }
+            share = Math.max(share, s);
+        }
+        return share < 0f ? 0.5f : share;
+    }
+
+    boolean dockIsRouter(){
+        return !allowed.contains("underflow-duct");
     }
 
     /** How long a machine's job takes the core unit to build: every part, and flying along the lines between them. */
