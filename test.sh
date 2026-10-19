@@ -178,6 +178,27 @@ LIST
            if(seg[2] !~ /never/ && r != "" && r != "-") { if(r + 0 >= 90) good[map]++; sum[map] += r; got[map]++ } }
          END { for(m in n) printf "  %-16s %d of %d runs at 90%% or better; got the unit in %d, on average at %.0f%% of the model time\n", m, good[m], n[m], got[m], got[m] ? sum[m] / got[m] : 0 }' build/bench/table.txt | sort | tee build/bench/summary.txt
     ;;
+  duel)
+    # ./test.sh duel <minutes> <controller A> <controller B> <maps...>   two sides with the same base and the same units, led by two
+    # controllers ("rts" = the game's squad AI alone; "army:flag,..." = with the army module, see expansion.army.Army.Flags);
+    # each map is played twice, the sides swapped. A map is a name of the campaign's (onset, aegis, ...) or gen:<seed>.
+    # JOBS=n splits the maps over n games at once (default 1; at most 2 on this machine)
+    mkdir -p build/test-maps build/duel
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    minutes="$1"; ca="$2"; cb="$3"; shift 3
+    maps=""
+    for m in "$@"; do case "$m" in gen:*) maps="$maps $m";; *) maps="$maps build/test-maps/maps/erekir/$m.msav";; esac; done
+    jobs="${JOBS:-1}"; n=0
+    tag="${TAG:+$TAG-}$(echo "$ca-$cb" | tr ':,' '__')"
+    for j in $(seq 1 "$jobs"); do
+      part=""; i=0
+      for m in $maps; do [ $((i % jobs + 1)) -eq "$j" ] && part="$part $m"; i=$((i + 1)); done
+      [ -n "$part" ] && java $RUN_OPTS -Dxp.syncpath=true $JAVA_OPTS -cp "$CP" xtest.Duel build/test-data "$minutes" "$ca" "$cb" $part > "build/duel/$tag-$j.log" 2> "build/duel/$tag-$j.err" &
+    done
+    wait
+    cat build/duel/$tag-[0-9]*.log | grep "^DUEL" | sort
+    cat build/duel/$tag-[0-9]*.log | grep "^DUEL" | awk -v a="$ca" -v b="$cb" '/winner=A/{w++} /winner=B/{l++} /winner=-/{d++} {for(i=1;i<=NF;i++){split($i,kv,"="); if(kv[1]=="doneA") da+=kv[2]; if(kv[1]=="doneB") db+=kv[2]}} END { printf "TOTAL %s against %s: won %d, lost %d, drew %d; damage done %d against %d\n", a, b, w, l, d, da, db }'
+    ;;
   modlab)
     # ./test.sh modlab <out.tsv> <file.msch>...   each schematic put down, fed from its own sources, measured at its voids
     out="$1"; shift

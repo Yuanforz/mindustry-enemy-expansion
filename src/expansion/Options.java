@@ -85,6 +85,8 @@ public class Options{
     //its army and its defences
     public static final Flag
     yards = flag("military", "yards", true).strong(true),
+    /** Whether the army layer (expansion.army) leads its units over the game's squad AI: see docs/PLAN.md §23. */
+    army = flag("military", "army", true).strong(true),
     cores = flag("military", "cores", true).strong(true);
     public static final Num
     yardsPerCore = num("military", "yards-per-core", 3, 0, 8, 1, "").strong(8),

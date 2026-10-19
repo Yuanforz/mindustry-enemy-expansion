@@ -14,7 +14,7 @@ import mindustry.world.blocks.defense.turrets.ItemTurret.*;
  * How well quick units get through a turret's fire: a breach of the other side, kept loaded, and a few ships of the
  * mod's side sent against it, steered the way the mod steers them or the plain way (to the edge of their range, and
  * stand there firing). Says how much of their health they lost and how much of the turret's they took.
- * Usage: DodgeLab data-dir blueprint-dir mod|stand [units] [seconds] [unit]
+ * Usage: DodgeLab data-dir blueprint-dir mod|stand|command|dodge [units] [seconds] [unit]
  */
 public class DodgeLab{
     /** The plain way: to the edge of its range, and there it stands and fires. */
@@ -73,7 +73,12 @@ public class DodgeLab{
             Unit unit = type.create(own);
             unit.set(48 * 8f, (28 + i * 3) * 8f);
             unit.add();
-            if(mode.equals("mod")){
+            if(mode.equals("command") || mode.equals("dodge")){
+                //the game's own controller for a unit given an order (as the squad AI gives it), or the army layer's that dodges
+                mindustry.ai.types.CommandAI ai = mode.equals("dodge") ? new expansion.army.Dodger(new expansion.army.Army(own, expansion.army.Army.Flags.parse("army:micro"))) : new mindustry.ai.types.CommandAI();
+                unit.controller(ai);
+                ai.commandTarget(breach, false);
+            }else if(mode.equals("mod")){
                 FighterAI ai = new FighterAI(ExpansionMod.brain);
                 unit.controller(ai);
                 ai.attack(breach);

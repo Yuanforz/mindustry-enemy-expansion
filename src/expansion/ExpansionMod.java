@@ -39,6 +39,8 @@ public class ExpansionMod extends Mod{
         Events.on(SaveWriteEvent.class, e -> brain.save());
         Events.on(BlockDestroyEvent.class, e -> brain.lost(e.tile));
         Events.run(Trigger.update, brain::update);
+        //the army layer over the game's squad AI, for the side the mod plays
+        expansion.army.Army.install();
 
         if(!headless) Events.on(ClientLoadEvent.class, e -> buildUi());
         //with the debug option on, what the economy executor's modules mean to do is drawn over the map
