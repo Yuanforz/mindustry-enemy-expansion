@@ -142,7 +142,7 @@ public final class Timeline{
                 float fly = Math.max(0f, (float)Math.hypot(m.x - bx, m.y - by) - cat.buildRange) / cat.flySpeed;
                 building = next;
                 begun[next] = t;
-                buildLeft = fly + cat.buildSeconds(m.recipe);
+                buildLeft = fly + (Float.isNaN(m.buildSeconds) ? cat.buildSeconds(m.recipe) : m.buildSeconds);
                 bx = m.x;
                 by = m.y;
                 next++;

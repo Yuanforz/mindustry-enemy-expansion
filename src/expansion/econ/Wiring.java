@@ -35,12 +35,52 @@ final class Wiring{
         this.log = log;
         node = Vars.content.block("beam-node");
         range = node instanceof BeamNode b ? b.range : 10;
-        //what of the side's has power from a generator already is the tree to begin with
+        //what of the side's has power from a generator already: the biggest grid is the tree to begin with; the others
+        //are islands, to be joined to it
+        Map<Object, IntSeq> graphs = new LinkedHashMap<>();
+        Map<Object, Float> made = new HashMap<>();
         for(Building b : grid.team.data().buildings){
             if(b.power == null || b.tile != Vars.world.tile(b.tileX(), b.tileY())) continue;
             if(b.power.graph.producers.isEmpty()) continue;
-            add(grid.pos(b.tileX(), b.tileY()));
+            graphs.computeIfAbsent(b.power.graph, g -> new IntSeq()).add(grid.pos(b.tileX(), b.tileY()));
+            if(b.block instanceof PowerGenerator gen) made.merge(b.power.graph, gen.powerProduction, Float::sum);
         }
+        Object biggest = null;
+        for(Object g : graphs.keySet()) if(biggest == null || made.getOrDefault(g, 0f) > made.getOrDefault(biggest, 0f)) biggest = g;
+        for(var e : graphs.entrySet()){
+            if(e.getKey() == biggest) for(int i = 0; i < e.getValue().size; i++) add(e.getValue().get(i));
+            else islands.add(e.getValue());
+        }
+    }
+
+    /** Grids of the map's own, with generators, that are not on the tree. */
+    final List<IntSeq> islands = new ArrayList<>();
+
+    /** Joins every island to the tree: the nodes it took. */
+    Seq<Part> joinIslands(){
+        Seq<Part> out = new Seq<>();
+        for(IntSeq island : islands){
+            Seq<Part> best = null;
+            //from the island's generator nearest the tree
+            for(int i = 0; i < island.size; i++){
+                int o = island.get(i);
+                Block b = grid.block(o % grid.w, o / grid.w);
+                if(!(b instanceof PowerGenerator)) continue;
+                Seq<Part> nodes = connect(new Part(b, o % grid.w, o / grid.w, 0, null));
+                if(nodes != null){
+                    best = nodes;
+                    break;
+                }
+            }
+            if(best == null){
+                log.append("a grid of the map's own could not be joined to the rest\n");
+                continue;
+            }
+            out.addAll(best);
+            for(int i = 0; i < island.size; i++) add(island.get(i));
+        }
+        relight();
+        return out;
     }
 
     /** The origin of the powered building on a tile (planned before standing), or -1. */

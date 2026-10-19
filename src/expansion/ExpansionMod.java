@@ -41,6 +41,8 @@ public class ExpansionMod extends Mod{
         Events.run(Trigger.update, brain::update);
 
         if(!headless) Events.on(ClientLoadEvent.class, e -> buildUi());
+        //with the debug option on, what the economy executor's modules mean to do is drawn over the map
+        expansion.econ.IntentDraw.install();
     }
 
     /**
@@ -77,6 +79,21 @@ public class ExpansionMod extends Mod{
             });
             t.table(Styles.black3, info -> info.add(label).left()).margin(6f);
             t.visible(() -> ui.hudfrag.shown && !ui.minimapfrag.shown() && Options.debug.on() && brain.active());
+        });
+        //what the economy executor is doing, when one runs
+        ui.hudGroup.fill(t -> {
+            t.name = "enemy-expansion-intent";
+            t.right();
+            Label label = new Label("");
+            label.setStyle(Styles.outlineLabel);
+            float[] timer = {30f};
+            label.update(() -> {
+                if((timer[0] += Time.delta) < 30f) return;
+                timer[0] = 0f;
+                label.setText(expansion.econ.IntentDraw.panel());
+            });
+            t.table(Styles.black3, info -> info.add(label).left()).margin(6f);
+            t.visible(() -> ui.hudfrag.shown && !ui.minimapfrag.shown() && Options.debug.on() && expansion.econ.Intent.current != null);
         });
     }
 

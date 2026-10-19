@@ -91,6 +91,7 @@ public class EconRun{
         int modelSpent = 0, realSpent = 0;
         for(Machine m : model.order){
             int[] real = works.realCost(m);
+            m.buildSeconds = works.buildSeconds(m);
             for(int k = 0; k < real.length; k++){
                 modelSpent += m.cost[k];
                 realSpent += real[k];
@@ -105,6 +106,14 @@ public class EconRun{
         works.reorder(model.order);
         for(String p : works.problems) System.out.println("  checker: " + p);
         expansion.econ.Hand hand = new expansion.econ.Hand(works, model.order);
+        //what each module means to do, as words and as a picture (with the debug option on the game draws the same)
+        Intent intent = works.intent();
+        Intent.current = intent;
+        hand.intent = intent;
+        String mapName = new Fi(args[1]).nameWithoutExtension();
+        IntentImage.write(intent, me, field.coreX, field.coreY, new java.io.File("build/intent/" + mapName + "-plan.png"));
+        int[] box = cellBox(works);
+        if(box != null) IntentImage.write(intent, me, box[0], box[1], box[2], box[3], new java.io.File("build/intent/" + mapName + "-cells.png"));
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == me && !firstMade.containsKey(e.unit.type.name)) firstMade.put(e.unit.type.name, (float)(Vars.state.tick / 60.0));
         });
@@ -146,10 +155,16 @@ public class EconRun{
                 b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild uf ? (uf.payload != null ? " a unit waiting to get out" : "") + String.format(" progress %.0f/%.0f", uf.progress, uf.currentPlan >= 0 ? ((mindustry.world.blocks.units.UnitFactory)uf.block).plans.get(uf.currentPlan).time : 0f) : "");
             System.out.println(String.format("    %-30s at %d,%d: %s", m.recipe.name, p.x, p.y, state));
         }
+        System.out.println("  what each module meant to do, and how it went (intent):");
+        System.out.print(intent.report());
+        IntentImage.write(intent, me, field.coreX, field.coreY, new java.io.File("build/intent/" + mapName + "-end.png"));
+        if(box != null) IntentImage.write(intent, me, box[0], box[1], box[2], box[3], new java.io.File("build/intent/" + mapName + "-cells-end.png"));
         System.out.println("  how each ran since it was built (watch):");
         System.out.print(hand.watch.report(cat));
         if(hand.watch.repaired > 0) System.out.println("  parts put back: " + hand.watch.repaired);
         System.out.println(picture(works, me));
+        System.out.println("  the cells close up:");
+        System.out.println(cells(works, me));
         //where what each maker sends out ends up: followed duct by duct from it
         for(Machine m : model.order){
             Part p = works.at.get(m);
@@ -198,6 +213,35 @@ public class EconRun{
         }
         x0 = Math.min(x0, works.field.coreX - 4); x1 = Math.max(x1, works.field.coreX + 4);
         y0 = Math.min(y0, works.field.coreY - 4); y1 = Math.max(y1, works.field.coreY + 4);
+        return picture(me, x0, y0, x1, y1);
+    }
+
+    /** Round the cells and the core, for a close-up. */
+    static int[] cellBox(Layout works){
+        int x0 = works.field.coreX - 6, y0 = works.field.coreY - 6, x1 = works.field.coreX + 6, y1 = works.field.coreY + 6;
+        boolean any = false;
+        for(Machine m : works.order){
+            Part p = works.at.get(m);
+            if(p == null || m.recipe.ground != Recipe.Ground.none) continue;
+            any = true;
+            x0 = Math.min(x0, p.x - 8); y0 = Math.min(y0, p.y - 8); x1 = Math.max(x1, p.x + 8); y1 = Math.max(y1, p.y + 8);
+        }
+        return any ? new int[]{x0, y0, x1, y1} : null;
+    }
+
+    /** The cells close up: what the plan placed off the ground, and a margin. */
+    static String cells(Layout works, Team me){
+        int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE;
+        for(Machine m : works.order){
+            Part p = works.at.get(m);
+            if(p == null || m.recipe.ground != Recipe.Ground.none) continue;
+            x0 = Math.min(x0, p.x - 8); y0 = Math.min(y0, p.y - 8); x1 = Math.max(x1, p.x + 8); y1 = Math.max(y1, p.y + 8);
+        }
+        if(x0 > x1) return "";
+        return picture(me, x0, y0, x1, y1);
+    }
+
+    static String picture(Team me, int x0, int y0, int x1, int y1){
         arc.struct.ObjectIntMap<String> used = new arc.struct.ObjectIntMap<>();
         StringBuilder out = new StringBuilder();
         for(int y = y1; y >= y0; y--){

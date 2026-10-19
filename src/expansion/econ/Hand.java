@@ -54,6 +54,8 @@ public final class Hand extends mindustry.entities.units.AIController{
     @Override
     public void updateUnit(){
         rally();
+        offload();
+        tell();
         watch.update(next);
         //something built that went missing is put back before anything new
         if(job == null && !watch.repairs.isEmpty()){
@@ -67,6 +69,7 @@ public final class Hand extends mindustry.entities.units.AIController{
             //its place not yet seen: a unit goes to have a look (the core unit sees nothing), and meanwhile it digs
             Part where = works.at.get(m);
             if(where != null && !Vars.fogControl.isDiscovered(unit.team, where.x, where.y)){
+                doing = String.format("a unit is sent to see %d,%d for #%d %s (ground not seen can't be built on); digging meanwhile", where.x, where.y, next + 1, m.recipe.name);
                 scout(where);
                 dig(m.cost);
                 return;
@@ -83,20 +86,78 @@ public final class Hand extends mindustry.entities.units.AIController{
                 for(int c : need) costOf[next] += c;
                 unit.mineTile = null;
             }else{
+                doing = String.format("saving up for #%d %s: %s", next + 1, m.recipe.name, shortOf(need));
                 dig(need);
                 return;
             }
         }
         if(job != null){
+            doing = repairing ? "putting back what went missing" : String.format("building #%d %s", next + 1, machine == null ? "" : machine.recipe.name);
             build();
             return;
         }
+        doing = "all built; digging what the core has least of";
         //all done: what a crafter sent to the core now goes all to the factories it touches; and dig for whatever comes later
         if(!cut){
             cut = true;
             for(Part p : works.coreLine.values()) unit.addBuild(new BuildPlan(p.x, p.y));
         }
         dig(null);
+    }
+
+    /**
+     * What has been dug goes to the core as it comes, as a player's unit has it (the game has a unit run by the AI hand it
+     * over only once its stack is full: sixty items, eleven seconds of digging, that a build would wait for).
+     */
+    void offload(){
+        var core = unit.team.core();
+        if(core == null || unit.stack.amount < 6 || !unit.within(core, Vars.mineTransferRange)) return;
+        int accepted = core.acceptStack(unit.item(), unit.stack.amount, unit);
+        if(accepted > 0) Call.transferItemTo(unit, unit.item(), accepted, unit.x, unit.y, core);
+    }
+
+    /** What the layout meant, to which what the hand and the watch are doing now is added for showing; null for none. */
+    public Intent intent;
+    float toldAt;
+    /** What it is doing, in words: set where it decides. */
+    String doing = "";
+
+    /** Puts what it is doing now, and how each machine runs, into the intent being shown. */
+    void tell(){
+        if(intent == null || now() < toldAt) return;
+        toldAt = now() + 1f;
+        List<Intent.Mark> marks = new ArrayList<>();
+        Map<Intent.Layer, List<String>> words = new EnumMap<>(Intent.Layer.class);
+        List<String> hand = new ArrayList<>();
+        hand.add(String.format("%s: %d of %d jobs done; %s", Watch.clock(now()), next, order.size(), doing));
+        Seq<Part> showing = job != null ? job : pending;
+        if(showing != null){
+            for(Part p : showing){
+                Tile t = Vars.world.tile(p.x, p.y);
+                if(t == null || (t.block() == p.block && !(t.build instanceof ConstructBuild))) continue;
+                int off = -(p.block.size - 1) / 2;
+                marks.add(Intent.liveMark(Intent.Layer.hand, Intent.Shape.rect, p.x + off, p.y + off, p.x + off + p.block.size - 1, p.y + off + p.block.size - 1, job != null ? Intent.orange : Intent.grey, null));
+            }
+        }
+        if(unit.mineTile != null) marks.add(Intent.liveMark(Intent.Layer.hand, Intent.Shape.arrow, unit.tileX(), unit.tileY(), unit.mineTile.x, unit.mineTile.y, Intent.yellow, "digging " + unit.mineTile.wallDrop().name));
+        if(next < order.size() && works.at.get(order.get(next)) != null){
+            Part p = works.at.get(order.get(next));
+            marks.add(Intent.liveMark(Intent.Layer.hand, Intent.Shape.text, p.x, p.y + p.block.size, p.x, p.y, Intent.orange, "next: #" + (next + 1) + " " + order.get(next).recipe.name));
+        }
+        words.put(Intent.Layer.hand, hand);
+        //the watch: a dot on each machine by how it runs
+        List<String> watching = new ArrayList<>();
+        int[] colors = {Intent.green, Intent.yellow, Intent.orange, Intent.red, Intent.grey};
+        for(var e : watch.seconds.entrySet()){
+            Part p = works.at.get(e.getKey());
+            Integer st = watch.last.get(e.getKey());
+            if(p == null || st == null) continue;
+            marks.add(Intent.liveMark(Intent.Layer.watch, Intent.Shape.dot, p.x, p.y, p.x, p.y, colors[st], Watch.states[st]));
+            if(st != 0) watching.add(String.format("%s at %d,%d: %s", e.getKey().recipe.name, p.x, p.y, Watch.states[st]));
+        }
+        if(watch.repaired > 0) watching.add(watch.repaired + " parts put back so far");
+        words.put(Intent.Layer.watch, watching);
+        intent.live(marks, words);
     }
 
     boolean cut, repairing;
@@ -196,6 +257,18 @@ public final class Hand extends mindustry.entities.units.AIController{
     boolean hasPlan(Part p){
         for(BuildPlan plan : unit.plans) if(plan.x == p.x && plan.y == p.y && plan.block == p.block) return true;
         return false;
+    }
+
+    /** What of a cost the core does not have yet, in words. */
+    String shortOf(int[] need){
+        var core = unit.team.core();
+        StringBuilder b = new StringBuilder();
+        for(int k = 0; k < need.length; k++){
+            if(need[k] <= 0 || core == null) continue;
+            int have = core.items.get(Vars.content.item(works.cat.get(k).name));
+            if(have < need[k]) b.append(works.cat.get(k).name).append(' ').append(have).append('/').append(need[k]).append(' ');
+        }
+        return b.length() == 0 ? "paid for" : b.toString().trim();
     }
 
     int[] cost(Seq<Part> parts){

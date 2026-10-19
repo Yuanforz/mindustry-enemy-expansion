@@ -50,6 +50,9 @@ public final class Layout{
     public List<Machine> order = new ArrayList<>();
     public int failed, tries = 3;
     Wiring wiring;
+    /** Why the cells stand where they do, from the try that was kept. */
+    List<String> cellNotes = new ArrayList<>();
+    String tryNotes = "";
 
     public Layout(Catalog cat, Field field, Team team, Set<String> allowed){
         this.cat = cat;
@@ -76,6 +79,8 @@ public final class Layout{
             for(Router.Net n : a.nets) if(!n.ok) stress.merge(n.res, 2f, (x, y) -> x * y);
         }
         grid = best.grid;
+        cellNotes = best.cellNotes;
+        tryNotes = best.note;
         at.clear();
         at.putAll(best.at);
         nets = best.nets;
@@ -93,6 +98,7 @@ public final class Layout{
         int failed;
         float cost;
         String note = "";
+        List<String> cellNotes = new ArrayList<>();
     }
 
     Attempt attempt(int seed, Map<Integer, Float> stress){
@@ -124,6 +130,7 @@ public final class Layout{
             return a;
         }
         a.cost = cells.best;
+        a.cellNotes = cells.explain();
         for(var e : cells.result().entrySet()){
             Machine m = e.getKey();
             int[] p = e.getValue();
@@ -187,6 +194,27 @@ public final class Layout{
                     }
                     continue;
                 }
+                //what the new makers give short of what the takers take (the plan counts the map's own drills, whose
+                //lines go to the core): the takers furthest down the order are fed off those lines instead, until it is made up
+                float made = 0f, taken = 0f;
+                for(Machine m : makers) made += m.out(k);
+                for(Machine c : takers) taken += c.recipe.in[k];
+                boolean running = false;
+                for(var e : router.grid.running) if(e.value == k){ running = true; break; }
+                if(taken > made * 1.05f && running && router.dock != null){
+                    List<Machine> tapped = new ArrayList<>(takers);
+                    Collections.reverse(tapped);
+                    float short_ = taken - made;
+                    for(Machine c : tapped){
+                        if(short_ <= 1e-3f || takers.size() <= 1) break;
+                        Router.Net n = new Router.Net(id++, k, false, Router.Kind.tap);
+                        n.to.add(c);
+                        out.add(n);
+                        takers.remove(c);
+                        short_ -= c.recipe.in[k];
+                        log.append(String.format("%s fed %s off a running line: the new makers give %.2f/s of the %.2f/s taken\n", c.recipe.name, r.name, made, taken));
+                    }
+                }
                 if(router.dock != null){
                     Router.Net n = new Router.Net(id++, k, false, Router.Kind.bus);
                     n.from.addAll(makers);
@@ -246,11 +274,21 @@ public final class Layout{
         for(Seq<Part> w : wires.values()) for(Part p : w) grid.unplan(p);
         wires.clear();
         wiring = new Wiring(grid, log);
+        Seq<Part> islands = null;
         for(Machine m : order){
             if(m.recipe.powerUse <= 0f && m.powerOut() <= 0f) continue;
             Part p = at.get(m);
             if(p == null) continue;
+            //the map's grids that are not joined to each other are joined with the first machine that needs power
+            if(islands == null){
+                islands = wiring.joinIslands();
+                if(islands.size > 0) log.append("the map's ").append(wiring.islands.size() + 1).append(" grids joined by ").append(islands.size).append(" nodes\n");
+            }
             Seq<Part> nodes = wiring.connect(p);
+            if(nodes != null && islands.size > 0){
+                nodes.addAll(islands);
+                islands = new Seq<>();
+            }
             if(nodes == null){
                 log.append("no way to power ").append(m.recipe.name).append(" at ").append(p.x).append(',').append(p.y).append('\n');
                 nodes = new Seq<>();
@@ -343,6 +381,19 @@ public final class Layout{
         return c;
     }
 
+    /** How long a machine's job takes the core unit to build: every part, and flying along the lines between them. */
+    public float buildSeconds(Machine m){
+        float ticks = 0f;
+        int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE;
+        for(Part p : job(m)){
+            ticks += p.block.buildTime;
+            x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+        }
+        float reach = cat.buildRange;
+        float span = x0 > x1 ? 0f : Math.max(0f, (x1 - x0) + (y1 - y0) - 2 * reach);
+        return ticks / (cat.buildSpeed * cat.buildRule) / 60f + span / cat.flySpeed;
+    }
+
     // ---------------------------------------------------------------- the checker
 
     /** Goes over the plan as if it were all built, by the game's rules, and says what would go wrong. */
@@ -350,8 +401,9 @@ public final class Layout{
         problems.clear();
         for(Router.Net n : nets){
             for(Part p : n.all()){
-                //anything pushing a wrong thing into it
-                for(int j = 0; j < 4; j++){
+                //anything pushing a wrong thing into it (a bridge end, with no link of its own, takes nothing)
+                boolean end = p.block instanceof DirectionBridge && grid.bridgeLink(p.x, p.y) == null;
+                for(int j = 0; j < 4 && !end; j++){
                     int mx = p.x + Geometry.d4x(j), my = p.y + Geometry.d4y(j);
                     if(!grid.in(mx, my) || !Router.accepts(p.block, p.rotation, j, grid.block(mx, my))) continue;
                     int v = grid.pushes(mx, my, p.x, p.y, n.liquid);
@@ -375,7 +427,8 @@ public final class Layout{
                     }
                 }
                 int fx = p.x + Geometry.d4x(p.rotation), fy = p.y + Geometry.d4y(p.rotation);
-                if(!leadsOn(n, fx, fy, p)) problems.add(String.format("%s at %d,%d (%s) leads to nothing that takes it at %d,%d (%s)", b.name, p.x, p.y, cat.get(n.res).name, fx, fy, grid.block(fx, fy) == null ? "open ground" : grid.block(fx, fy).name));
+                if(!leadsOn(n, fx, fy, p)) problems.add(String.format("%s at %d,%d (%s, net %d) leads to nothing that takes it at %d,%d (%s, facing %d, net %d)", b.name, p.x, p.y, cat.get(n.res).name, n.id, fx, fy,
+                    grid.block(fx, fy) == null ? "open ground" : grid.block(fx, fy).name, grid.in(fx, fy) ? grid.rotation(fx, fy) : -1, grid.in(fx, fy) ? grid.net[grid.pos(fx, fy)] : -1));
             }
         }
         //solid things where beams cross or units come out
@@ -409,10 +462,145 @@ public final class Layout{
         if(b == null) return false;
         int q = grid.pos(fx, fy);
         if(Grid.isLine(b)){
-            boolean ours = grid.net[q] == n.id || (grid.planned(fx, fy) == null && grid.running.get(q, -1) == n.res);
+            //its own net, a running line of the map's carrying the same, or another net's piece carrying the same (a tap's dock on such a line)
+            boolean ours = grid.net[q] == n.id || (grid.planned(fx, fy) == null && grid.running.get(q, -1) == n.res) || (grid.planned(fx, fy) != null && grid.carry[q] == n.res);
             return ours && Router.accepts(b, grid.rotation(fx, fy), (from.rotation + 2) % 4, from.block);
         }
         return grid.uses(b, n.res);
+    }
+
+    // ---------------------------------------------------------------- what it means to do, to be shown
+
+    /** Everything the layout decided, as marks and notes by layer (see {@link Intent}). */
+    public Intent intent(){
+        Intent in = new Intent();
+        Map<Machine, Integer> index = new HashMap<>();
+        for(int i = 0; i < order.size(); i++) index.put(order.get(i), i);
+        //L2a: fields, ranked, and what is kept of them; the places used, and the beams that must stay clear
+        List<Packing.Group> groups = Packing.fields(field.sites, cat, grid.w);
+        Map<String, Integer> rank = new HashMap<>();
+        in.note(Intent.Layer.fields, String.format("%d places looked at, %d left once packed so none is in another's way", field.candidates, field.sites.size()));
+        for(Packing.Group g : groups){
+            String what = g.item >= 0 ? cat.get(g.item).name : "vent";
+            int r = rank.merge(g.ground + what, 1, Integer::sum);
+            int sx = 0, sy = 0, keptTiles = 0, used = 0;
+            for(Field.Site s : g.sites){
+                sx += s.x;
+                sy += s.y;
+                for(int t : s.tiles) if(grid.kept[t] > 0) keptTiles++;
+                for(Machine m : order) if(m.x == s.x && m.y == s.y && m.recipe.ground == s.ground) used++;
+            }
+            if(keptTiles == 0 && used == 0) continue;
+            int cx = sx / g.sites.size(), cy = sy / g.sites.size();
+            String label = String.format("%s field #%d: %.2f/s, %d of %d places used%s", what, r, g.rate, used, g.sites.size(), keptTiles > 0 ? ", the rest kept" : "");
+            in.text(Intent.Layer.fields, cx, cy + 3, Intent.kept | 0xff, label);
+            in.note(Intent.Layer.fields, String.format("%s at %d,%d, %.0f tiles out", label, cx, cy, g.distance));
+        }
+        for(int t = 0; t < grid.kept.length; t++) if(grid.kept[t] > 0) in.rect(Intent.Layer.fields, t % grid.w, t / grid.w, t % grid.w, t / grid.w, Intent.kept, null);
+        for(Machine m : order){
+            if(m.recipe.ground == Recipe.Ground.none) continue;
+            Part p = at.get(m);
+            if(p == null) continue;
+            in.block(Intent.Layer.fields, p.x, p.y, p.block.size, Intent.green, m.item >= 0 ? String.format("%s %.2f/s", cat.get(m.item).name, m.out(m.item)) : null);
+            if(p.block instanceof BeamDrill drill){
+                int len = 0;
+                for(int i = 1; i <= drill.range; i++){
+                    Tile t = Vars.world.tile(p.x + Geometry.d4x(p.rotation) * (i + p.block.size / 2), p.y + Geometry.d4y(p.rotation) * (i + p.block.size / 2));
+                    if(t == null || t.solid()) break;
+                    len = i;
+                }
+                if(len > 0) in.line(Intent.Layer.fields, p.x, p.y, p.x + Geometry.d4x(p.rotation) * (len + p.block.size / 2), p.y + Geometry.d4y(p.rotation) * (len + p.block.size / 2), Intent.yellow, null);
+            }
+        }
+        //L2b: the cells and the reasons
+        for(Machine m : order){
+            if(m.recipe.ground != Recipe.Ground.none) continue;
+            Part p = at.get(m);
+            if(p != null) in.block(Intent.Layer.cells, p.x, p.y, p.block.size, Intent.violet, m.recipe.name);
+        }
+        for(String n : cellNotes) in.note(Intent.Layer.cells, n);
+        in.note(Intent.Layer.cells, "kept: " + tryNotes);
+        //L2c: every net, with what each piece carries, its docks and spurs and quiet tiles
+        for(Router.Net n : nets){
+            Res r = cat.get(n.res);
+            int color = color(r);
+            for(Part p : n.all()){
+                int fx = p.x + Geometry.d4x(p.rotation), fy = p.y + Geometry.d4y(p.rotation);
+                if(p.block instanceof DirectionBridge){
+                    int[] link = grid.bridgeLink(p.x, p.y);
+                    if(link != null){
+                        in.arrow(Intent.Layer.lines, p.x, p.y, link[0], link[1], color, null);
+                        continue;
+                    }
+                }
+                in.arrow(Intent.Layer.lines, p.x, p.y, fx, fy, color, null);
+                if(p.block instanceof OverflowDuct || p.block instanceof DuctRouter){
+                    for(Machine c : n.to){
+                        Part cp = at.get(c);
+                        if(cp != null && Cells.gap(rectOf(p), rectOf(cp)) == 0) in.arrow(Intent.Layer.lines, p.x, p.y, cp.x, cp.y, Intent.white, "dock: " + r.name + " to " + c.recipe.name + " first");
+                    }
+                    if(n.kind == Router.Kind.tap) in.text(Intent.Layer.lines, p.x, p.y, Intent.white, "tap: " + r.name + " off the map's line");
+                }
+            }
+            for(int i = 0; i < n.quiet.size; i++) in.cross(Intent.Layer.lines, n.quiet.get(i) % grid.w, n.quiet.get(i) / grid.w, Intent.grey, null);
+            if(n.first != null && at.get(n.first) != null){
+                Part f = at.get(n.first);
+                in.text(Intent.Layer.lines, f.x, f.y - 2, color, String.format("%s %s from here", n.kind, r.name));
+            }
+            StringBuilder b = new StringBuilder(String.format("%s of %s: %d makers -> ", n.kind, r.name, n.from.size()));
+            for(var e : n.feeds.entrySet()) b.append(e.getKey().recipe.name).append(" (").append(e.getValue()).append("), ");
+            b.append(n.toCore ? "the rest to the core" : "no further");
+            b.append(String.format("; %d pieces, %d quiet tiles%s", n.all().size, n.quiet.size, n.ok ? "" : "; NOT LAID: " + String.join("; ", n.why)));
+            in.note(Intent.Layer.lines, b.toString());
+        }
+        //L2d: the nodes and where each beams to
+        int nodes = 0;
+        for(var e : wires.entrySet()){
+            for(Part p : e.getValue()){
+                nodes++;
+                in.block(Intent.Layer.power, p.x, p.y, 1, Intent.cyan, null);
+                for(int d = 0; d < 4; d++){
+                    for(int j = 1; j <= wiring.range; j++){
+                        int tx = p.x + Geometry.d4x(d) * j, ty = p.y + Geometry.d4y(d) * j;
+                        if(!grid.in(tx, ty) || wiring.insulated(tx, ty)) break;
+                        if(wiring.powered(tx, ty) >= 0){
+                            in.line(Intent.Layer.power, p.x, p.y, tx, ty, Intent.cyan & 0xffffff80, null);
+                            break;
+                        }
+                    }
+                }
+            }
+            if(!e.getValue().isEmpty()) in.note(Intent.Layer.power, String.format("#%d %s: %d nodes to the grid", index.getOrDefault(e.getKey(), -1) + 1, e.getKey().recipe.name, e.getValue().size));
+        }
+        in.note(Intent.Layer.power, nodes + " nodes in all; machines joined in the order they are built, each by the fewest nodes to the grid as it then is");
+        //L1/L3: the jobs
+        for(int i = 0; i < order.size(); i++){
+            Machine m = order.get(i);
+            Part p = at.get(m);
+            if(p == null) continue;
+            int cost = 0;
+            for(int c : realCost(m)) cost += c;
+            in.text(Intent.Layer.jobs, p.x, p.y, Intent.white, "#" + (i + 1));
+            in.note(Intent.Layer.jobs, String.format("#%d %s%s at %d,%d: %d parts, %d items, %.0f s to build", i + 1, m.recipe.name, m.item >= 0 ? " (" + cat.get(m.item).name + ")" : "", p.x, p.y, job(m).size, cost, buildSeconds(m)));
+        }
+        for(String pr : problems) in.note(Intent.Layer.jobs, "checker: " + pr);
+        return in;
+    }
+
+    int[] rectOf(Part p){
+        int s = p.block.size, off = -(s - 1) / 2;
+        return new int[]{p.x + off, p.y + off, p.x + off + s - 1, p.y + off + s - 1};
+    }
+
+    static int color(Res r){
+        if(r.kind == Res.Kind.item){
+            Item item = Vars.content.item(r.name);
+            if(item != null) return Intent.rgba(item.color, 1f);
+        }else if(r.kind == Res.Kind.liquid){
+            Liquid liquid = Vars.content.liquid(r.name);
+            if(liquid != null) return Intent.rgba(liquid.color, 1f);
+        }
+        return Intent.white;
     }
 
     public String summary(){

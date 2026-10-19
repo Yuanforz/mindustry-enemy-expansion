@@ -20,6 +20,8 @@ public final class Machine{
     public int rotation;
     /** Whether its place is on ground not yet seen: it can only be begun once a unit has been there. */
     public boolean unseen;
+    /** How long its job takes to build once laid out (the machine, its lines and nodes), in seconds; NaN until then. */
+    public float buildSeconds = Float.NaN;
 
     public Machine(Recipe recipe, int item, float factor, int x, int y, float distance, int[] cost, boolean boosted, boolean existing){
         this.recipe = recipe;

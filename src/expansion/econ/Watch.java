@@ -24,6 +24,9 @@ public final class Watch{
     public final Map<Machine, float[]> seconds = new LinkedHashMap<>();
     public static final String[] states = {"running", "starved", "blocked", "no power", "missing"};
     public int repaired;
+    /** When each machine's state changed, as "time state" entries. */
+    public final Map<Machine, StringBuilder> changes = new LinkedHashMap<>();
+    final Map<Machine, Integer> last = new HashMap<>();
     float at;
     static final float every = 2f;
 
@@ -52,13 +55,23 @@ public final class Watch{
             if(self == null) continue;
             float[] s = seconds.computeIfAbsent(m, x -> new float[states.length]);
             Building b = Vars.world.build(self.x, self.y);
-            s[state(b, self)] += every;
+            int st = state(b, self);
+            s[st] += every;
+            if(last.getOrDefault(m, -1) != st){
+                last.put(m, st);
+                changes.computeIfAbsent(m, x -> new StringBuilder()).append(String.format(" %d:%02d %s", (int)now / 60, (int)now % 60, states[st]));
+            }
         }
+    }
+
+    static String clock(float seconds){
+        return String.format("%d:%02d", (int)seconds / 60, (int)seconds % 60);
     }
 
     static int state(Building b, Part p){
         if(b == null || b.block != p.block) return 4;
-        if(b.power != null && b.block.consPower != null && b.power.status < 0.99f) return 3;
+        //short of power when its grid is (a machine that waits for an item asks for no power, and is starved, not unpowered)
+        if(b.power != null && b.block.consPower != null && b.power.graph.getSatisfaction() < 0.99f && b.shouldConsume()) return 3;
         BlockStatus st = b.status();
         if(st == BlockStatus.noOutput) return 2;
         if(st == BlockStatus.noInput || b.efficiency <= 0.01f) return 1;
@@ -76,6 +89,8 @@ public final class Watch{
             out.append(String.format("    %-30s %-9s", e.getKey().recipe.name, e.getKey().item >= 0 ? cat.get(e.getKey().item).name : ""));
             for(int k = 0; k < states.length; k++) if(s[k] > 0) out.append(String.format(" %s %.0f%%", states[k], 100f * s[k] / total));
             out.append(String.format("  (%.0f s)\n", total));
+            StringBuilder c = changes.get(e.getKey());
+            if(c != null) out.append("        ").append(c.length() > 300 ? c.substring(0, 300) + " ..." : c).append('\n');
         }
         return out.toString();
     }

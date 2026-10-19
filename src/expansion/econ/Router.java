@@ -57,6 +57,8 @@ final class Router{
         final IntSeq quiet = new IntSeq();
         /** The machine whose line is the trunk. */
         Machine first;
+        /** How each taker is fed: "dock", "spur", "touching", "end of the line", "tap". */
+        final Map<Machine, String> feeds = new LinkedHashMap<>();
         boolean ok;
         final List<String> why = new ArrayList<>();
         final IntSet tiles = new IntSet();
@@ -139,6 +141,7 @@ final class Router{
         int failed = 0;
         for(Net n : nets){
             if(!commit(n)){
+                log.append("router: ").append(cat.get(n.res).name).append(" laid again on its own: ").append(refusal).append('\n');
                 n.tiles.clear();
                 pres = 1e4f;
                 route(n);
@@ -154,6 +157,8 @@ final class Router{
         }
         return failed;
     }
+
+    String refusal = "";
 
     boolean contested(Net n){
         for(var it = n.tiles.iterator(); it.hasNext;) if(use[it.next()] > 1) return true;
@@ -177,19 +182,27 @@ final class Router{
         for(Part p : all){
             //a tap's dock goes over the map's own duct
             boolean over = p.block == dock && grid.planned(p.x, p.y) == null && grid.block(p.x, p.y) instanceof Duct;
-            for(int t : grid.tiles(p)) if((!over && !grid.free(t % grid.w, t / grid.w)) || grid.quiet[t]) return false;
+            for(int t : grid.tiles(p)) if((!over && !grid.free(t % grid.w, t / grid.w)) || grid.quiet[t]){
+                refusal = String.format("%s at %d,%d: %s", p.block.name, p.x, p.y, grid.quiet[t] ? "a quiet tile" : "taken by " + (grid.block(t % grid.w, t / grid.w) == null ? "?" : grid.block(t % grid.w, t / grid.w).name));
+                return false;
+            }
         }
         for(int i = 0; i < n.quiet.size; i++){
             int q = n.quiet.get(i);
             Block b = grid.block(q % grid.w, q / grid.w);
-            if(b != null && Grid.takesItems(b)) return false;
+            if(b != null && Grid.takesItems(b)){
+                refusal = "quiet tile holds " + b.name;
+                return false;
+            }
         }
         for(Part p : all) grid.plan(p, n.id, n.res, -1);
         for(int i = 0; i < n.quiet.size; i++) grid.quiet[n.quiet.get(i)] = true;
-        //and what it now is against the rest: anything pushing a wrong thing into it
+        //and what it now is against the rest: anything pushing a wrong thing into it, a bridge linking across nets
         for(Part p : all){
             String bad = wrongInto(p, n);
+            if(bad == null && p.block instanceof DirectionBridge db) bad = crossLink(p, db, n);
             if(bad != null){
+                refusal = bad;
                 for(Part q : all) grid.unplan(q);
                 for(int i = 0; i < n.quiet.size; i++) grid.quiet[n.quiet.get(i)] = false;
                 return false;
@@ -199,8 +212,28 @@ final class Router{
         return true;
     }
 
+    /** A bridge of this net that would link to another net's, or another net's that would link to it. */
+    String crossLink(Part p, DirectionBridge db, Net n){
+        int[] link = grid.bridgeLink(p.x, p.y);
+        if(link != null && grid.net[grid.pos(link[0], link[1])] != n.id) return "bridge at " + p.x + "," + p.y + " would link to another line's";
+        //(a bridge links to the first of its kind ahead of it, whichever way that one faces)
+        for(int d = 0; d < 4; d++){
+            for(int i = 1; i <= db.range; i++){
+                int x = p.x + Geometry.d4x(d) * i, y = p.y + Geometry.d4y(d) * i;
+                if(!grid.in(x, y)) break;
+                if(grid.block(x, y) != p.block) continue;
+                int[] l = grid.bridgeLink(x, y);
+                if(l != null && l[0] == p.x && l[1] == p.y && grid.net[grid.pos(x, y)] != n.id) return "another line's bridge at " + x + "," + y + " would link to this one's";
+                break;
+            }
+        }
+        return null;
+    }
+
     /** What, if anything, would push something else into this piece of a net, as it stands on the grid. */
     String wrongInto(Part p, Net n){
+        //a bridge end (no link of its own) takes nothing from beside it
+        if(p.block instanceof DirectionBridge && grid.bridgeLink(p.x, p.y) == null) return null;
         for(int j = 0; j < 4; j++){
             int mx = p.x + Geometry.d4x(j), my = p.y + Geometry.d4y(j);
             if(!grid.in(mx, my) || !accepts(p.block, p.rotation, j, grid.block(mx, my))) continue;
@@ -217,6 +250,7 @@ final class Router{
         n.branch.clear();
         n.quiet.clear();
         n.why.clear();
+        n.feeds.clear();
         n.ok = true;
         own.clear();
         ownQuiet.clear();
@@ -255,7 +289,10 @@ final class Router{
     void bus(Net n){
         //the machines that a maker of the net already touches and feeds need no dock
         List<Machine> takers = new ArrayList<>();
-        for(Machine c : n.to) if(!fedDirect(n, c)) takers.add(c);
+        for(Machine c : n.to){
+            if(!fedDirect(n, c)) takers.add(c);
+            else n.feeds.put(c, "touching a maker");
+        }
         if(n.from.isEmpty()) return;
         boolean last = !n.toCore && !takers.isEmpty();
         Goal end;
@@ -299,6 +336,8 @@ final class Router{
             else stages.add(s);
         }
         Path trunk = search(n, starts(n, first), stages, end, endAt);
+        //a spine that has to come back over itself (a dock beyond the end) is no spine: those takers go on spurs
+        if(trunk != null && !stages.isEmpty() && crosses(trunk)) trunk = null;
         if(trunk == null && !stages.isEmpty()){
             //no way past every dock: the spine straight to the end, and every taker on a spur
             for(Stage s : stages) spurs.add(s.taker);
@@ -322,8 +361,20 @@ final class Router{
             ownQuiet.add(trunk.quiet.get(i));
             n.quiet.add(trunk.quiet.get(i));
         }
+        for(Stage st : stages) n.feeds.put(st.taker, "dock on the spine");
+        if(last) n.feeds.put(takers.get(takers.size() - 1), "end of the spine");
         branches(n, first, last ? at.get(takers.get(takers.size() - 1)) : null);
-        for(Machine c : spurs) spur(n, c);
+        for(Machine c : spurs){
+            spur(n, c);
+            n.feeds.put(c, n.branch.containsKey(c) ? "spur off the spine" : "not fed: no spur found");
+        }
+    }
+
+    /** Whether a path puts two pieces on one tile (its stages let it pass a tile again on the way back). */
+    boolean crosses(Path path){
+        IntSet seen = new IntSet();
+        for(Part p : path.parts) for(int t : grid.tiles(p)) if(!seen.add(t)) return true;
+        return false;
     }
 
     /**
@@ -345,6 +396,10 @@ final class Router{
                 Part o = own.get(grid.pos(p.x + Geometry.d4x(j), p.y + Geometry.d4y(j)));
                 if(o != null && o.x + Geometry.d4x(o.rotation) == p.x && o.y + Geometry.d4y(o.rotation) == p.y) fed = true;
             }
+            //and an underflow duct takes only from straight behind: the piece before must push straight in
+            if(i == 0) continue;
+            Part before = n.trunk.get(i - 1);
+            if(before.rotation != p.rotation || before.x + Geometry.d4x(before.rotation) != p.x || before.y + Geometry.d4y(before.rotation) != p.y) fed = true;
             if(fed) continue;
             for(int side : new int[]{(p.rotation + 1) % 4, (p.rotation + 3) % 4}){
                 int ax = p.x - Geometry.d4x(side), ay = p.y - Geometry.d4y(side);
@@ -403,6 +458,7 @@ final class Router{
             return;
         }
         keep(n, n.trunk, trunk, true);
+        if(c != null) n.feeds.put(c, "end of the line");
         branches(n, first, c == null ? null : at.get(c));
     }
 
@@ -442,6 +498,7 @@ final class Router{
             return;
         }
         keep(n, n.trunk, path, false);
+        n.feeds.put(c, "tap off a line of the map's");
     }
 
     /** Leads every maker of a net but the first onto what is laid of it, the nearest first. */
@@ -908,6 +965,7 @@ final class Router{
         Collections.reverse(rev);
         for(Part part : rev) path.parts.add(part);
         for(int i : docksAt) path.firstDock = path.firstDock < 0 ? size - 1 - i : Math.min(path.firstDock, size - 1 - i);
+        if(S == 1 && crosses(path)) log.append("router: a line of ").append(cat.get(n.res).name).append(" crosses itself\n");
         return path;
     }
 

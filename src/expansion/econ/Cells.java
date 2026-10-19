@@ -531,6 +531,44 @@ final class Cells{
         }
     }
 
+    /** Why each placed machine stands where it does: for each thing it makes or takes, how it is to get there; its room. */
+    List<String> explain(){
+        List<String> out = new ArrayList<>();
+        for(Unit u : units){
+            for(Machine m : u.ms){
+                int[] p = where.get(m);
+                if(p == null) continue;
+                StringBuilder b = new StringBuilder(String.format("%s at %d,%d facing %d%s:", m.recipe.name, p[0], p[1], p[2], u.ms.size() > 1 ? " (with " + (u.ms.get(0) == m ? u.ms.get(1) : u.ms.get(0)).recipe.name + " in front, as one)" : ""));
+                int lines = 0;
+                for(NetModel n : nets){
+                    boolean maker = n.from.contains(m), taker = n.to.contains(m);
+                    if(!maker && !taker) continue;
+                    String how = null;
+                    int d = Integer.MAX_VALUE;
+                    for(Machine o : maker ? n.to : n.from){
+                        if(o == m || !where.containsKey(o)) continue;
+                        if(maker ? feeds(m, o, n.res) : feeds(o, m, n.res)){
+                            how = (maker ? "hands it to " : "gets it from ") + o.recipe.name + " it touches";
+                            break;
+                        }
+                        d = Math.min(d, gap(rect(m), rect(o)));
+                    }
+                    if(n.toCore) d = Math.min(d, gap(rect(m), coreRect()));
+                    if(how == null){
+                        how = d == Integer.MAX_VALUE ? "nothing near" : "a line of about " + (d + 1) + " tiles";
+                        lines++;
+                    }
+                    b.append(String.format(" %s %s %s;", maker ? "makes" : "takes", cat.get(n.res).name, how));
+                }
+                int free = 0;
+                for(int[] t : Grid.around(block(m).size, p[0], p[1])) if(grid.free(t[0], t[1]) && foot.get(grid.pos(t[0], t[1]), 0) == 0) free++;
+                b.append(String.format(" %d free tiles round it for %d lines", free, lines));
+                out.add(b.toString());
+            }
+        }
+        return out;
+    }
+
     /** Each placed machine's place and facing (a block that does not turn faces 0). */
     Map<Machine, int[]> result(){
         Map<Machine, int[]> out = new HashMap<>();
