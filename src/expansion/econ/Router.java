@@ -183,7 +183,7 @@ final class Router{
         Seq<Part> all = n.all();
         for(Part p : all){
             //a tap's dock goes over the map's own duct
-            boolean over = p.block == dock && grid.planned(p.x, p.y) == null && grid.block(p.x, p.y) instanceof Duct;
+            boolean over = (p.block == dock && grid.planned(p.x, p.y) == null && grid.block(p.x, p.y) instanceof Duct) || (!n.liquid && grid.deadLine(p.x, p.y));
             for(int t : grid.tiles(p)) if((!over && !grid.free(t % grid.w, t / grid.w)) || grid.quiet[t]){
                 refusal = String.format("%s at %d,%d: %s", p.block.name, p.x, p.y, grid.quiet[t] ? "a quiet tile" : "taken by " + (grid.block(t % grid.w, t / grid.w) == null ? "?" : grid.block(t % grid.w, t / grid.w).name));
                 return false;
@@ -348,7 +348,7 @@ final class Router{
         }
         if(trunk == null){
             n.ok = false;
-            n.why.add(cat.get(n.res).name + " from " + first.recipe.name + " at " + at.get(first).x + "," + at.get(first).y + " to " + (n.toCore ? "the core" : "the last taker"));
+            n.why.add(cat.get(n.res).name + " from " + first.recipe.name + " at " + at.get(first).x + "," + at.get(first).y + " to " + (n.toCore ? "the core" : "the last taker") + stats());
             return;
         }
         //a branch joins the spine before its first dock: what comes after it would pass the takers by
@@ -685,13 +685,21 @@ final class Router{
             sample.add(t);
         }
         IntSet lines = new IntSet();
-        if(!n.liquid) for(var e : grid.running) if(e.value == n.res){ lines.add(e.key); if(sample.size < 48) sample.add(e.key); }
+        //(only a line that gets there: the map's own lines may end nowhere. Whatever such a line carries: a duct takes any
+        //item, the core every one, and what stands along it takes only what it uses, so a core walled in by the map's own
+        //base is got into this way)
+        if(!n.liquid) for(int i = 0; i < grid.mapLines().size; i++){
+            int t = grid.mapLines().get(i);
+            if(!grid.reachesCore(t)) continue;
+            lines.add(t);
+            if(sample.size < 48) sample.add(t);
+        }
         return new Goal(){
             public boolean hit(int q, int d){
                 if(tiles.contains(q)) return true;
-                if(!lines.contains(q)) return false;
+                if(!lines.contains(q) || grid.planned(q % grid.w, q / grid.w) != null) return false;
                 Block b = grid.block(q % grid.w, q / grid.w);
-                return b instanceof Duct && accepts(b, grid.rotation(q % grid.w, q / grid.w), (d + 2) % 4, duct);
+                return b != null && accepts(b, grid.rotation(q % grid.w, q / grid.w), (d + 2) % 4, duct);
             }
 
             public IntSeq sample(){
@@ -817,7 +825,9 @@ final class Router{
     /** Whether a piece may go on a tile at all for this net. */
     boolean open(int q, Block piece, Net n){
         int x = q % grid.w, y = q / grid.w;
-        if(!grid.free(x, y) || grid.quiet[q] || ownQuiet.contains(q) || own.containsKey(q) || blocked.contains(q)) return false;
+        //(a dead line piece of the map's own, one leading nowhere, is built over by an item line)
+        boolean over = !n.liquid && grid.deadLine(x, y) && grid.ground[q];
+        if((!grid.free(x, y) && !over) || grid.quiet[q] || ownQuiet.contains(q) || own.containsKey(q) || blocked.contains(q)) return false;
         if(piece.solid && grid.noSolid[q]) return false;
         return true;
     }

@@ -128,22 +128,23 @@ case "$what" in
     java $RUN_OPTS -cp "$CP" xtest.EconRun build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "$3" "$4" "$5" 2>build/test-err.log
     ;;
   econbench)
-    # ./test.sh econbench [jobs]   the plan laid out and played on many maps; a table of the model against the game
+    # ./test.sh econbench [jobs] [all|first7] [seeds]   the plan laid out and played on many maps (from several seeds each);
+    # a table of the model against the game, and how often each map got its unit at 90% of the model's time or better
     mkdir -p build/test-maps build/bench
     [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
-    jobs="${1:-4}"
+    jobs="${1:-4}"; which="${2:-all}"; seeds="${3:-1}"
     snap=build/bench/snap; rm -rf $snap; mkdir -p $snap; cp -r build/classes $snap/classes; cp -r build/test-classes $snap/test-classes
     CP="$GAME_JAR:$snap/classes:$snap/test-classes"
     # map sector unit machines minutes [radius]   (split, peaks and siege have no tungsten in reach: a T1 goal there, of a
-    # kind the map does not ban)
-    cat > build/bench/list <<LIST
+    # kind the map does not ban; basin's tungsten is all under enemy turrets)
+    cat > build/bench/all <<LIST
 onset onset stell 2 8
 aegis aegis stell 3 8
 lake lake stell 2 8
 intersect intersect stell 2 8
 atlas atlas locus 1 12
 split atlas merui 2 12
-basin atlas locus 1 12
+basin atlas stell 2 12
 marsh atlas locus 1 12
 peaks atlas elude 2 12
 ravine atlas locus 1 12
@@ -155,15 +156,27 @@ crossroads atlas locus 1 12
 karst atlas locus 1 12
 origin atlas locus 1 12 200
 LIST
+    head -7 build/bench/all > build/bench/first7
     started=$(date +%s)
-    while read map sector unit n minutes radius; do
-      while [ $(ps ax | grep -c "[x]test.EconRun") -ge $jobs ]; do sleep 2; done
-      ( java $RUN_OPTS -Dxp.radius=${radius:-110} -cp "$CP" xtest.EconRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$sector" "$unit" "$n" "$minutes" > build/bench/$map.log 2> build/bench/$map.err; \
-        grep -q "^BENCH" build/bench/$map.log || echo "BENCH $map $sector $unit $n | failed: $(grep -m1 -E 'Exception|Error' build/bench/$map.err)" >> build/bench/$map.log ) &
-    done < build/bench/list
-    while [ $(ps ax | grep -c "[x]test.EconRun") -gt 0 ]; do sleep 2; done
+    : > build/bench/runs
+    seed=0
+    while [ $seed -lt $seeds ]; do
+      while read map sector unit n minutes radius; do
+        while [ $(ps ax | grep -c "[x]test.EconRun") -ge $jobs ]; do sleep 1; done
+        echo "$map-$seed" >> build/bench/runs
+        ( java $RUN_OPTS -Dxp.radius=${radius:-110} -Dxp.seed=$seed -cp "$CP" xtest.EconRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$sector" "$unit" "$n" "$minutes" > build/bench/$map-$seed.log 2> build/bench/$map-$seed.err; \
+          grep -q "^BENCH" build/bench/$map-$seed.log || echo "BENCH $map $sector $unit $n | failed: $(grep -m1 -E 'Exception|Error' build/bench/$map-$seed.err)" >> build/bench/$map-$seed.log ) &
+        sleep 1
+      done < build/bench/$which
+      seed=$((seed + 1))
+    done
+    while [ $(ps ax | grep -c "[x]test.EconRun") -gt 0 ]; do sleep 1; done
     echo "$(( $(date +%s) - started )) s"
-    for map in $(cut -d' ' -f1 build/bench/list); do grep -h "^BENCH" build/bench/$map.log; done | tee build/bench/table.txt
+    for run in $(cat build/bench/runs); do sed "s/^BENCH /BENCH [$run] /" build/bench/$run.log | grep -h "^BENCH"; done | tee build/bench/table.txt
+    # by map: runs that got the unit at 90% of the model's time or better, and the middle ratio
+    awk '{ split($0, seg, "|"); split($2, a, " "); map = $3; n[map]++; r = seg[3]; gsub(/[ %]/, "", r);
+           if(seg[2] !~ /never/ && r != "" && r != "-") { if(r + 0 >= 90) good[map]++; sum[map] += r; got[map]++ } }
+         END { for(m in n) printf "  %-16s %d of %d runs at 90%% or better; got the unit in %d, on average at %.0f%% of the model time\n", m, good[m], n[m], got[m], got[m] ? sum[m] / got[m] : 0 }' build/bench/table.txt | sort | tee build/bench/summary.txt
     ;;
   econwhy)
     # ./test.sh econwhy <map> <sector> <unit> <machines> [recipe]   the balanced plant solved, and with one more of a recipe

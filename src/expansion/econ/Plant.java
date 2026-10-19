@@ -120,7 +120,7 @@ public final class Plant{
             u[power] = 0f;
             for(int i = 0; i < m; i++) u[power] += eff[i] * machines.get(i).recipe.powerUse;
         }
-        for(int k = 0; k < power; k++) toCore[k] = cat.get(k).storable ? Math.max(0f, s[k] - u[k]) : 0f;
+        for(int k = 0; k < power; k++) toCore[k] = cat.get(k).storable ? Math.max(0f, s[k] - u[k] - (cat.drain == null ? 0f : cat.drain[k])) : 0f;
     }
 
     private boolean feasible(float[] s, float[] u){

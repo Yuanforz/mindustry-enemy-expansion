@@ -105,7 +105,7 @@ public class EconRun{
         Catalog cat = Recipes.read(blocks, (CoreBlock)core.block, rules.buildSpeed(me));
         cat.logistics(allowed);
         Field field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
-        String pruned = Sites.prune(cat, field, income);
+        String pruned = Sites.prune(cat, field, income, me);
         if(!pruned.isEmpty()) System.out.println("  the map's own: " + pruned);
         Planner planner = new Planner(cat, field);
         Recipe making = null;
@@ -126,14 +126,27 @@ public class EconRun{
             if(unfed.isEmpty()) break;
             List<Machine> more = new ArrayList<>(model.order);
             Set<String> asked = new HashSet<>();
+            boolean replan = false;
             for(Object[] u : unfed){
                 int res = (Integer)u[0];
                 Machine c = (Machine)u[1];
                 if(!asked.add(res + "@" + System.identityHashCode(c))) continue;
+                //what the map's own make of it can't be got to: the plan may not count on them, and is made again
+                List<Machine> theirs = new ArrayList<>();
+                for(Machine m : field.existing) if(m.out(res) > 1e-4f) theirs.add(m);
+                if(!theirs.isEmpty() && cat.get(res).kind == Res.Kind.item){
+                    field.existing.removeAll(theirs);
+                    replan = true;
+                    System.out.println("  " + c.recipe.name + " can't be fed " + cat.get(res).name + " off the map's lines: its " + theirs.size() + " makers are left out of the plan");
+                    continue;
+                }
                 Machine m = planner.makerNear(res, c);
                 if(m != null) more.add(m);
             }
-            if(more.size() == model.order.size()) break;
+            if(replan){
+                planner = new Planner(cat, field);
+                more = planner.balance(unit, machines / making.unitSeconds);
+            }else if(more.size() == model.order.size()) break;
             System.out.println("  the layout could not feed " + unfed.size() + " machine(s); makers of their own added: " + planner.notes.toString().trim().replace("\n", "; "));
             planner.extras = 0;
             model = planner.order(more, unit);

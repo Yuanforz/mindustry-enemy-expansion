@@ -137,7 +137,7 @@ public final class Sites{
      * each item, if what the core was seen to get (a second, watched over a while) is under a tenth of what those machines
      * would make, they stand idle or feed something else, and the plan may not count on them. What was left out, in words.
      */
-    public static String prune(Catalog cat, Field field, Map<String, Float> income){
+    public static String prune(Catalog cat, Field field, Map<String, Float> income, Team team){
         StringBuilder out = new StringBuilder();
         for(int k = 0; k < cat.size(); k++){
             Res r = cat.get(k);
@@ -157,7 +157,23 @@ public final class Sites{
             float got = income.getOrDefault(r.name, 0f);
             if(got >= made * 0.1f) continue;
             field.existing.removeAll(makers);
-            out.append(String.format("%d makers of %s left out (they would make %.2f/s, the core got %.2f/s); ", makers.size(), r.name, made, got));
+            //(one within reach of another side's turrets is not: a line to it would be shot down, which may be why it is idle)
+            boolean[] shot = danger(team);
+            for(Machine m : makers) if(m.recipe.ground != Recipe.Ground.none && !field.revivable.contains(m) && !shot[m.x + m.y * Vars.world.width()]) field.revivable.add(m);
+            out.append(String.format("%d makers of %s left out (they would make %.2f/s, the core got %.2f/s), but may be taken up; ", makers.size(), r.name, made, got));
+        }
+        //what is left of the map's own: what the model says they give the core against what it got, the difference a drain
+        Plant own = new Plant(cat);
+        own.solve(field.existing, null, false);
+        cat.drain = cat.zeros();
+        for(int k = 0; k < cat.size(); k++){
+            Res r = cat.get(k);
+            if(r.kind != Res.Kind.item || !r.storable) continue;
+            float expected = own.toCore[k], got = income.getOrDefault(r.name, 0f);
+            if(expected > 0.05f && got < expected * 0.9f){
+                cat.drain[k] = expected - Math.max(0f, got);
+                out.append(String.format("%s: the map's own would give the core %.2f/s, it got %.2f/s; ", r.name, expected, got));
+            }
         }
         return out.toString().trim();
     }

@@ -65,7 +65,7 @@ public final class Packing{
         double best = total(worth, in);
         boolean[] bestIn = in.clone();
         //iterated local search: force a few places in, mend, keep it when better
-        Random rand = new Random(7);
+        Random rand = new Random(7 + Layout.seed);
         long end = System.currentTimeMillis() + timeLimitMs;
         int iter = 0;
         while(System.currentTimeMillis() < end && iter++ < 4000){

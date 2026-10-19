@@ -46,6 +46,11 @@ public final class Field{
     public int candidates;
     /** Machines already standing on the map at the start. */
     public final List<Machine> existing = new ArrayList<>();
+    /**
+     * Machines of the map's that stand but give the core nothing (no power, no water, no line): the plan may take one up
+     * as a machine of its own that costs nothing but its lines.
+     */
+    public final List<Machine> revivable = new ArrayList<>();
     /** What the core holds at the start. */
     public float[] stock;
 

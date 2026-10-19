@@ -102,6 +102,27 @@ public final class Planner{
             }
             plan.add(add);
         }
+        //what building it all costs must come from somewhere: the core's stock, digging by hand, or a maker whose surplus goes
+        //to the core. A thing it can get none of is given a maker (one of the map's idle ones first)
+        for(int k = 0; k < cat.size(); k++){
+            Res r = cat.get(k);
+            if(r.kind != Res.Kind.item || !r.storable) continue;
+            float cost = 0f;
+            for(Machine m : plan) cost += m.recipe.cost[k];
+            if(cost <= field.stock[k] || field.handRate(cat, k) > 0f) continue;
+            boolean made = false;
+            for(Machine m : field.existing) if(m.out(k) > 1e-4f) made = true;
+            for(Machine m : plan) if(m.out(k) > 1e-4f) made = true;
+            if(made) continue;
+            sofar = plan;
+            Machine add = maker(k, 0.1f, false);
+            if(add == null){
+                notes.append(String.format("building it all costs %.0f %s, the core has %.0f, and nothing could make it\n", cost, r.name, field.stock[k]));
+                continue;
+            }
+            plan.add(add);
+            notes.append(String.format("%s for building: %s\n", r.name, add.recipe.name));
+        }
         //a liquid is led only so far: a machine on the ground that takes one with nothing making it near gets a maker of
         //its own on the nearest free vent (a turbine gives power too)
         for(int k = 0; k < cat.size(); k++){
@@ -193,6 +214,16 @@ public final class Planner{
                 return machine(best, site);
             }
             return machine(best, null);
+        }
+        //a machine of the map's that stands idle: taken up, it costs only its lines
+        for(Machine old : field.revivable){
+            if(old.out(res) <= 1e-4f) continue;
+            field.revivable.remove(old);
+            Machine m = new Machine(old.recipe, old.item, old.factor, old.x, old.y, old.distance, new int[cat.size()], false, false);
+            m.rotation = old.rotation;
+            m.revived = true;
+            notes.append(String.format("the map's idle %s at %d,%d taken up\n", old.recipe.name, old.x, old.y));
+            return m;
         }
         //a crafter that makes it, if there is one
         for(Recipe r : cat.recipes){

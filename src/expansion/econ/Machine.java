@@ -28,6 +28,8 @@ public final class Machine{
      * hands out by turns. Known once laid out; a middle guess before.
      */
     public float draw = 0.5f;
+    /** Whether it is a machine of the map's that stood idle, taken up by the plan: it stands already, only its lines are built. */
+    public boolean revived;
 
     public Machine(Recipe recipe, int item, float factor, int x, int y, float distance, int[] cost, boolean boosted, boolean existing){
         this.recipe = recipe;

@@ -54,6 +54,8 @@ public final class Layout{
     public final List<String> problems = new ArrayList<>();
     public List<Machine> order = new ArrayList<>();
     public int failed, tries = 3;
+    /** Where the random choices start from (the bench runs each map from several, to see how sure a result is). */
+    public static long seed = Long.getLong("xp.seed", 0L);
     Wiring wiring;
     /** Why the cells stand where they do, from the try that was kept. */
     List<String> cellNotes = new ArrayList<>();
@@ -126,7 +128,7 @@ public final class Layout{
         //2. the cells
         List<Machine> cellMachines = new ArrayList<>();
         for(Machine m : order) if(m.recipe.ground == Recipe.Ground.none) cellMachines.add(m);
-        Cells cells = new Cells(g, cat, field, 1000 + seed);
+        Cells cells = new Cells(g, cat, field, 1000 + seed + 7919L * Layout.seed);
         cells.stress.putAll(stress);
         cells.model(order, field.existing);
         cells.group(cellMachines);
@@ -196,7 +198,8 @@ public final class Layout{
             //the plan's makers as feeding them)
             boolean mapMakes = false;
             for(Machine m : field.existing) if(m.out(k) > 1e-4f) mapMakes = true;
-            if(!mapMakes) for(Machine m : field.existing) if(Cells.takes(m, k) && at.get(m) != null && !makers.isEmpty()) takers.add(m);
+            //(the map's machines that run short: as the plant has them, the map's own alone)
+            for(Machine m : field.existing) if(Cells.takes(m, k) && at.get(m) != null && !makers.isEmpty() && (!mapMakes || shortOnItsOwn(m))) takers.add(m);
             if(makers.isEmpty() && takers.isEmpty()) continue;
             boolean running = false;
             if(!liquid) for(var e : router.grid.running) if(e.value == k){ running = true; break; }
@@ -255,6 +258,9 @@ public final class Layout{
                     spare.put(m, spare.get(m) - give);
                     n.from.add(m);
                 }
+                //the trunk is laid from the first of them to be built (it goes up with the taker, and does not wait for a maker
+                //that comes later); the others join it as they come
+                n.from.sort(Comparator.comparingInt(m -> order.indexOf(m)));
                 if(!n.from.isEmpty()) out.add(n);
                 if(need > 1e-3f) log.append(String.format("%s short of %s by %.2f/s with nothing left to lead it from\n", c.recipe.name, r.name, need));
             }
@@ -266,6 +272,18 @@ public final class Layout{
             }
         }
         return out;
+    }
+
+    Plant ownPlant;
+
+    /** Whether a machine of the map's runs short of something with only the map's own machines to feed it. */
+    boolean shortOnItsOwn(Machine m){
+        if(ownPlant == null){
+            ownPlant = new Plant(cat);
+            ownPlant.solve(field.existing, null, false);
+        }
+        int i = field.existing.indexOf(m);
+        return i >= 0 && i < ownPlant.eff.length && ownPlant.eff[i] < 0.95f;
     }
 
     /** Whether anything of the plan, or a line piece, costs this item to build. */
@@ -425,10 +443,17 @@ public final class Layout{
         return parts;
     }
 
+    static boolean standsAlready(Part p){
+        Tile t = Vars.world.tile(p.x, p.y);
+        return t != null && t.block() == p.block && t.build != null && t.build.tile == t;
+    }
+
     /** What a machine's job really costs, item by item. */
     public int[] realCost(Machine m){
         int[] c = new int[cat.size()];
         for(Part p : job(m)){
+            //what stands already (a machine of the map's taken up) costs nothing
+            if(standsAlready(p)) continue;
             for(ItemStack s : p.block.requirements) c[cat.id(s.item.name)] += Math.round(s.amount * Vars.state.rules.buildCostMultiplier);
         }
         return c;
@@ -477,6 +502,7 @@ public final class Layout{
         float ticks = 0f;
         int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE;
         for(Part p : job(m)){
+            if(standsAlready(p)) continue;
             ticks += p.block.buildTime;
             x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
         }
@@ -564,7 +590,7 @@ public final class Layout{
         if(Grid.isLine(b)){
             //its own net, a running line of the map's carrying the same, or another net's piece carrying the same (a tap's dock on such a line)
             //(or a piece of the map's own line, as a tap hands what it does not take on to the line it was put in)
-            boolean ours = grid.net[q] == n.id || (grid.planned(fx, fy) == null && (grid.running.get(q, -1) == n.res || from.block instanceof OverflowDuct || from.block instanceof DuctRouter)) || (grid.planned(fx, fy) != null && grid.carry[q] == n.res);
+            boolean ours = grid.net[q] == n.id || (grid.planned(fx, fy) == null && (grid.running.get(q, -1) == n.res || from.block instanceof OverflowDuct || from.block instanceof DuctRouter || grid.reachesCore(q))) || (grid.planned(fx, fy) != null && grid.carry[q] == n.res);
             return ours && Router.accepts(b, grid.rotation(fx, fy), (from.rotation + 2) % 4, from.block);
         }
         return grid.uses(b, n.res);

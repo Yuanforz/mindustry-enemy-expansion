@@ -419,28 +419,106 @@ public final class Grid{
         return out;
     }
 
-    /** Follows the ducts out of each of the side's drills and crafters, to know what every running line carries. */
+    final IntIntMap reaches = new IntIntMap(), dead = new IntIntMap();
+
+    /**
+     * Whether a line piece of the map's own on this tile leads nowhere: followed forward, it ends in no machine and no core
+     * (what it carries stops there). Such a piece may be built over by a new line.
+     */
+    public boolean deadLine(int x, int y){
+        if(!in(x, y) || planned[pos(x, y)] != null) return false;
+        Building at0 = standing(x, y);
+        if(at0 == null || !isLine(at0.block) || isConduit(at0.block) || at0.block instanceof LiquidRouter || at0.block instanceof DirectionLiquidBridge) return false;
+        int start = pos(x, y);
+        int known = dead.get(start, -1);
+        if(known >= 0) return known == 1;
+        IntSet seen = new IntSet();
+        IntQueue queue = new IntQueue();
+        queue.addLast(start);
+        boolean sink = false;
+        while(!queue.isEmpty() && seen.size < 3000 && !sink){
+            int p = queue.removeFirst();
+            if(!seen.add(p)) continue;
+            Building at = Vars.world.build(p % w, p / w);
+            if(at == null || at.team != team) continue;
+            if(!isLine(at.block)){ sink = true; break; }
+            List<Building> next = new ArrayList<>();
+            if(at.block instanceof Duct) next.add(at.front());
+            else if(isOneWay(at.block)){ for(int d = 0; d < 4; d++) if(d != (at.rotation + 2) % 4) next.add(at.nearby(d)); }
+            else if(at instanceof DirectionBridge.DirectionBridgeBuild br){ Building link = br.findLink(); next.add(link != null ? link : at.front()); }
+            for(Building n : next) if(n != null) queue.addLast(n.tileX() + n.tileY() * w);
+        }
+        dead.put(start, sink ? 0 : 1);
+        return !sink;
+    }
+    IntSeq mapLines;
+
+    /** Every item line piece of the map's own (ducts, routers, underflow and overflow ducts, bridges), by tile. */
+    IntSeq mapLines(){
+        if(mapLines != null) return mapLines;
+        mapLines = new IntSeq();
+        for(Building b : team.data().buildings){
+            if(isLine(b.block) && !isConduit(b.block) && !(b.block instanceof LiquidRouter) && !(b.block instanceof DirectionLiquidBridge) && !(b.block instanceof LiquidJunction)) mapLines.add(b.tileX() + b.tileY() * w);
+        }
+        return mapLines;
+    }
+
+    /** Whether a running line of the map's at this tile gets what it carries to the core, followed forward (1 yes, 0 no). */
+    public boolean reachesCore(int start){
+        int known = reaches.get(start, -1);
+        if(known >= 0) return known == 1;
+        IntSet seen = new IntSet();
+        IntQueue queue = new IntQueue();
+        queue.addLast(start);
+        boolean ok = false;
+        while(!queue.isEmpty() && seen.size < 3000 && !ok){
+            int p = queue.removeFirst();
+            if(!seen.add(p)) continue;
+            Building at = Vars.world.build(p % w, p / w);
+            if(at == null || at.team != team) continue;
+            if(at.block instanceof CoreBlock){ ok = true; break; }
+            if(!isLine(at.block) || isConduit(at.block)) continue;
+            List<Building> next = new ArrayList<>();
+            if(at.block instanceof Duct) next.add(at.front());
+            else if(isOneWay(at.block)){ for(int d = 0; d < 4; d++) if(d != (at.rotation + 2) % 4) next.add(at.nearby(d)); }
+            else if(at instanceof DirectionBridge.DirectionBridgeBuild br){ Building link = br.findLink(); next.add(link != null ? link : at.front()); }
+            for(Building n : next) if(n != null) queue.addLast(n.tileX() + n.tileY() * w);
+        }
+        reaches.put(start, ok ? 1 : 0);
+        return ok;
+    }
+
+    /**
+     * Follows the lines out of each of the side's drills and crafters, to know what every running line carries: through
+     * ducts, routers, underflow and overflow ducts (front and sides) and bridges (to their link, or on from an end).
+     */
     void trace(){
         for(Building b : team.data().buildings){
             int res = output(b.block, b);
             if(res < 0 || isLine(b.block)) continue;
             IntQueue queue = new IntQueue();
-            for(Building near : b.proximity) if(near.block instanceof Duct && near.front() != b) queue.addLast(near.pos());
+            for(Building near : b.proximity) if(isLine(near.block) && near.front() != b) queue.addLast(near.pos());
             while(!queue.isEmpty()){
                 int pos = queue.removeFirst();
                 int x = Point2.x(pos), y = Point2.y(pos), p = pos(x, y);
                 if(running.containsKey(p)) continue;
                 Building at = Vars.world.build(pos);
-                if(at == null || at.team != team) continue;
+                if(at == null || at.team != team || !isLine(at.block) || isConduit(at.block)) continue;
+                if(live != null && at.block instanceof Duct && !live.contains(p)) continue;
+                running.put(p, res);
                 if(at.block instanceof Duct){
-                    //a line that was watched and seen carrying nothing is not counted on (beyond it, nothing is)
-                    if(live != null && !live.contains(p)) continue;
-                    running.put(p, res);
                     Building front = at.front();
                     if(front != null) queue.addLast(front.pos());
-                }else if(at.block instanceof DuctRouter){
-                    running.put(p, res);
-                    for(Building near : at.proximity) if(near.block instanceof Duct && near.front() != at) queue.addLast(near.pos());
+                }else if(isOneWay(at.block)){
+                    for(int d = 0; d < 4; d++){
+                        if(d == (at.rotation + 2) % 4) continue;
+                        Building n = at.nearby(d);
+                        if(n != null) queue.addLast(n.pos());
+                    }
+                }else if(at instanceof DirectionBridge.DirectionBridgeBuild br){
+                    Building link = br.findLink();
+                    if(link != null) queue.addLast(link.pos());
+                    else if(at.front() != null) queue.addLast(at.front().pos());
                 }
             }
         }

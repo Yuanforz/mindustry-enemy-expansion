@@ -19,6 +19,12 @@ public final class Catalog{
      * machine gets at most half of what passes it. Null when docks give the machines all they want first.
      */
     public float[] coreShare;
+    /**
+     * For each thing, how much less a second the core gets of what the map's own machines make than the model would say:
+     * measured, by watching the map before planning (lines that back up, makers that also feed what the map has). Taken
+     * off what goes to the core, nothing else. Null when not measured.
+     */
+    public float[] drain;
     /** The core unit: build speed, items a second it digs from a wall, how much it carries, how fast it flies (tiles a second). */
     public float buildSpeed = 1f, mineRate = 5f, flySpeed = 40f;
     public int carry = 60;
