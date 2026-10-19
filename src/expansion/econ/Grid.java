@@ -56,6 +56,8 @@ public final class Grid{
     final int[] dumps;
     /** What the map's own ducts carry, as traced from what feeds them. */
     final IntIntMap running = new IntIntMap();
+    /** The map's ducts seen carrying something, when the map was watched before planning; null if it was not. */
+    public static IntSet live;
 
     public Grid(Catalog cat, Team team){
         this.cat = cat;
@@ -431,6 +433,8 @@ public final class Grid{
                 Building at = Vars.world.build(pos);
                 if(at == null || at.team != team) continue;
                 if(at.block instanceof Duct){
+                    //a line that was watched and seen carrying nothing is not counted on (beyond it, nothing is)
+                    if(live != null && !live.contains(p)) continue;
                     running.put(p, res);
                     Building front = at.front();
                     if(front != null) queue.addLast(front.pos());

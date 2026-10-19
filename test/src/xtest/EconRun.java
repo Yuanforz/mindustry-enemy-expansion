@@ -88,10 +88,14 @@ public class EconRun{
         int[] before = new int[Vars.content.items().size];
         for(Item item : Vars.content.items()) before[item.id] = core.items.get(item);
         float watched = 20f;
+        arc.struct.IntSet live = new arc.struct.IntSet();
         for(int f = 0; f < watched * 60; f++){
             if(f % 60 == 0) for(Unit u : Groups.unit) if(u.team == enemy) u.kill();
             Boot.frames(1);
+            //which of the map's ducts carry anything: a line seen empty all the while is not fed (or goes nowhere)
+            if(f % 20 == 0) for(Building b : me.data().buildings) if(b.block instanceof mindustry.world.blocks.distribution.Duct && b.items != null && b.items.total() > 0) live.add(b.tileX() + b.tileY() * Vars.world.width());
         }
+        Grid.live = live;
         for(Item item : Vars.content.items()) income.put(item.name, (core.items.get(item) - before[item.id]) / watched);
         for(Item item : Vars.content.items()) core.items.set(item, before[item.id]);
         Vars.state.tick = 0;
@@ -156,6 +160,12 @@ public class EconRun{
         hand.intent = intent;
         String mapName = new Fi(args[1]).nameWithoutExtension();
         IntentImage.write(intent, me, field.coreX, field.coreY, new java.io.File("build/intent/" + mapName + "-plan.png"));
+        //a close-up asked for: -Dxp.look=x,y
+        String look = System.getProperty("xp.look");
+        if(look != null){
+            int lx = Integer.parseInt(look.split(",")[0]), ly = Integer.parseInt(look.split(",")[1]);
+            IntentImage.write(intent, me, lx - 14, ly - 14, lx + 14, ly + 14, new java.io.File("build/intent/" + mapName + "-look.png"));
+        }
         int[] box = cellBox(works);
         if(box != null) IntentImage.write(intent, me, box[0], box[1], box[2], box[3], new java.io.File("build/intent/" + mapName + "-cells.png"));
         List<String> destroyed = new ArrayList<>();

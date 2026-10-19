@@ -240,10 +240,10 @@ public final class Layout{
                 float need = c.recipe.in[k] + (c.boosted && c.recipe.boostRes == k ? c.recipe.boostUse : 0f);
                 Part cp = at.get(c);
                 List<Machine> from = new ArrayList<>(makers);
-                //makers that stand by the time the taker does come first (a line from one built later would wait for it,
-                //and a pipe is laid with the later of its two ends), the nearest of them first
+                //the nearest makers first, but one built after the taker counts as 25 tiles further (a line from it waits
+                //for it: a pipe is laid with the later of its two ends)
                 int ci = order.indexOf(c);
-                from.sort(Comparator.comparingDouble(m -> (order.indexOf(m) > ci ? 1e6 : 0) + (at.get(m) == null || cp == null ? 1e5 : Math.abs(at.get(m).x - cp.x) + Math.abs(at.get(m).y - cp.y))));
+                from.sort(Comparator.comparingDouble(m -> (order.indexOf(m) > ci ? 25 : 0) + (at.get(m) == null || cp == null ? 1e5 : Math.abs(at.get(m).x - cp.x) + Math.abs(at.get(m).y - cp.y))));
                 Router.Net n = new Router.Net(id++, k, liquid, Router.Kind.direct);
                 n.to.add(c);
                 n.byOrder = true;

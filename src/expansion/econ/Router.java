@@ -456,9 +456,18 @@ final class Router{
         Machine first = makers.get(0);
         n.first = first;
         Path trunk = search(n, starts(n, first), List.of(), end, endAt);
+        //no way from that one: from another of its makers, then
+        for(int i = 1; trunk == null && i < makers.size(); i++){
+            Path p = search(n, starts(n, makers.get(i)), List.of(), end, endAt);
+            if(p != null){
+                trunk = p;
+                first = makers.get(i);
+                n.first = first;
+            }
+        }
         if(trunk == null){
             n.ok = false;
-            n.why.add(cat.get(n.res).name + " from " + first.recipe.name + " to " + (c == null ? "the core" : c.recipe.name));
+            n.why.add(cat.get(n.res).name + " from " + first.recipe.name + " at " + at.get(first).x + "," + at.get(first).y + " to " + (c == null ? "the core" : c.recipe.name + " at " + at.get(c).x + "," + at.get(c).y) + stats());
             return;
         }
         keep(n, n.trunk, trunk, true);
@@ -870,6 +879,13 @@ final class Router{
      * either side (a duct takes from behind and its sides), or a bridge to up to its range ahead, or, when it is a dock's
      * tile, the dock.
      */
+    /** How the last search went: states looked at, and places it could begin. */
+    int lastExpanded, lastStarts;
+
+    String stats(){
+        return String.format(" [searched %d states%s from %d starts]", lastExpanded, lastExpanded > budget ? ", out of budget" : "", lastStarts);
+    }
+
     /** Tiles a search may not use, for laying a path again that had crossed itself. */
     final IntSet blocked = new IntSet();
 
@@ -965,6 +981,29 @@ final class Router{
                     }
                 }
             }
+        }
+        lastExpanded = expanded;
+        lastStarts = starts.size();
+        if(done < 0 && endAt != null && Boolean.getBoolean("xp.searchmap")){
+            //what the search got to round its goal: * reached, o taken, # not ground, . open, G the goal
+            IntSet reached = new IntSet();
+            for(var e : g) reached.add((e.key / 4) % N);
+            StringBuilder b = new StringBuilder();
+            int[][] centres = {endAt, {starts.get(0).x, starts.get(0).y}};
+            for(int[] at : centres){
+            b.append("router: search for " + cat.get(n.res).name + " failed; round " + at[0] + "," + at[1] + ":\n");
+            for(int y = at[1] + 10; y >= at[1] - 10; y--){
+                for(int x = at[0] - 16; x <= at[0] + 16; x++){
+                    if(!grid.in(x, y)){ b.append(' '); continue; }
+                    int q = grid.pos(x, y);
+                    boolean goalTile = false;
+                    for(int i = 0; i < goal.sample().size; i++) if(goal.sample().get(i) == q) goalTile = true;
+                    b.append(goalTile ? 'G' : reached.contains(q) ? '*' : !grid.ground[q] ? '#' : !grid.free(x, y) ? 'o' : '.');
+                }
+                b.append('\n');
+            }
+            }
+            log.append(b);
         }
         if(done < 0) return null;
         //back from the end: each state's move put down its pieces

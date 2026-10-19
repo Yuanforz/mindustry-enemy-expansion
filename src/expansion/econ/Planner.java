@@ -85,6 +85,7 @@ public final class Planner{
             }
             Machine add = null;
             if(worst >= 0){
+                sofar = plan;
                 add = maker(worst, want[worst] - have[worst], powerWant > powerHave);
                 if(add == null){
                     notes.append("no way to make enough ").append(cat.get(worst).name).append(" (").append(String.format("%.2f", want[worst] - have[worst])).append("/s short)\n");
@@ -101,8 +102,39 @@ public final class Planner{
             }
             plan.add(add);
         }
+        //a liquid is led only so far: a machine on the ground that takes one with nothing making it near gets a maker of
+        //its own on the nearest free vent (a turbine gives power too)
+        for(int k = 0; k < cat.size(); k++){
+            if(cat.get(k).kind != Res.Kind.liquid) continue;
+            List<Machine> all = new ArrayList<>(field.existing);
+            all.addAll(plan);
+            for(Machine c : new ArrayList<>(plan)){
+                float need = c.recipe.in[k] + (c.boosted && c.recipe.boostRes == k ? c.recipe.boostUse : 0f);
+                if(c.recipe.ground == Recipe.Ground.none || need <= 0f) continue;
+                //what is made near enough (counting makers already given to others near it as shared alike)
+                for(int guard = 0; guard < 4; guard++){
+                    float near = 0f;
+                    for(Machine m : all) if(m != c && m.out(k) > 0f && m.recipe.ground != Recipe.Ground.none && Math.hypot(m.x - c.x, m.y - c.y) <= localLiquid) near += m.out(k);
+                    if(near >= need - 1e-3f) break;
+                    sofar = List.of(c);
+                    Machine add = maker(k, need - near, false);
+                    sofar = plan;
+                    if(add == null) break;
+                    if(Math.hypot(add.x - c.x, add.y - c.y) > localLiquid * 1.5f){
+                        free.add(0, new Field.Site(add.recipe.ground, add.x, add.y, add.rotation, add.item, add.factor, add.distance, new int[0]));
+                        break;
+                    }
+                    plan.add(add);
+                    all.add(add);
+                    notes.append(String.format("%s at %d,%d gets %s from its own %s at %d,%d\n", c.recipe.name, c.x, c.y, cat.get(k).name, add.recipe.name, add.x, add.y));
+                }
+            }
+        }
         return plan;
     }
+
+    /** How far a liquid is worth leading (tiles); beyond it a machine is given a maker of its own. */
+    public float localLiquid = 25f;
 
     /** The recipe that makes this unit. */
     Recipe maker(int unit){
@@ -126,8 +158,11 @@ public final class Planner{
             }
             if(best == null) return null;
             if(best.ground == Recipe.Ground.vent){
-                Field.Site site = take(Recipe.Ground.vent, -1);
-                return site == null ? null : machine(best, site);
+                //a liquid is led only so far: the vent nearest a machine that takes it, not the one nearest the core
+                Field.Site site = nearestVent(res);
+                if(site == null) return null;
+                free.remove(site);
+                return machine(best, site);
             }
             return machine(best, null);
         }
@@ -149,6 +184,28 @@ public final class Planner{
         if(bestSite == null) return null;
         free.remove(bestSite);
         return machine(bestRecipe, bestSite);
+    }
+
+    /** The machines of the plan so far, for {@link #nearestVent}. */
+    List<Machine> sofar = new ArrayList<>();
+
+    /** The free vent nearest any machine of the plan (or of the map's) that takes this liquid. */
+    Field.Site nearestVent(int res){
+        List<Machine> takers = new ArrayList<>();
+        for(Machine m : sofar) if(m.recipe.in[res] > 0f || (m.boosted && m.recipe.boostRes == res)) takers.add(m);
+        for(Machine m : field.existing) if(m.recipe.in[res] > 0f) takers.add(m);
+        Field.Site best = null;
+        double bestD = Double.MAX_VALUE;
+        for(Field.Site s : free){
+            if(s.ground != Recipe.Ground.vent) continue;
+            double d = takers.isEmpty() ? s.distance : Double.MAX_VALUE;
+            for(Machine m : takers) d = Math.min(d, Math.hypot(s.x - m.x, s.y - m.y));
+            if(d < bestD){
+                bestD = d;
+                best = s;
+            }
+        }
+        return best;
     }
 
     Machine powerMaker(){
