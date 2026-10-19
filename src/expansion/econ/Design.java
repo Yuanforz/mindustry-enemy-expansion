@@ -95,6 +95,43 @@ public final class Design{
         return new Schematic(tiles, new arc.struct.StringMap(), s.height, s.width);
     }
 
+    /**
+     * Puts right what a design made in an older version of the game says a constructor builds: configurations of blocks
+     * are kept by number, and the numbers have moved since, so an old design may tell its constructor to build a
+     * crucible. A constructor whose block is not one it may build is set to the wall the design's assembler needs (the
+     * assembler's plan of the tier its modules give it). Returns how many were put right.
+     */
+    public static int repair(Schematic s){
+        int modules = 0;
+        mindustry.world.blocks.units.UnitAssembler asm = null;
+        for(Stile t : s.tiles){
+            if(t.block instanceof mindustry.world.blocks.units.UnitAssemblerModule) modules++;
+            if(t.block instanceof mindustry.world.blocks.units.UnitAssembler a) asm = a;
+        }
+        Block wanted = null;
+        if(asm != null && !asm.plans.isEmpty()){
+            var plan = asm.plans.get(Math.min(modules, asm.plans.size - 1));
+            int most = 0;
+            if(plan.requirements != null) for(mindustry.type.PayloadStack stack : plan.requirements){
+                if(stack.item instanceof Block b && stack.amount > most){
+                    most = stack.amount;
+                    wanted = b;
+                }
+            }
+        }
+        int fixed = 0;
+        for(Stile t : s.tiles){
+            if(!(t.block instanceof mindustry.world.blocks.payloads.Constructor c)) continue;
+            boolean ok = t.config instanceof Block b && (c.filter.isEmpty() || c.filter.contains(b)) && b.size >= c.minBlockSize && b.size <= c.maxBlockSize;
+            if(ok) continue;
+            Block fix = wanted != null && (c.filter.isEmpty() || c.filter.contains(wanted)) && wanted.size <= c.maxBlockSize ? wanted : null;
+            if(fix == null) continue;
+            t.config = fix;
+            fixed++;
+        }
+        return fixed;
+    }
+
     static boolean sandbox(Block b){
         return b.buildVisibility == BuildVisibility.sandboxOnly;
     }
@@ -125,6 +162,28 @@ public final class Design{
                 for(int dy = 0; dy < size; dy++){
                     int x = t.x - off + dx, y = t.y - off + dy;
                     if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+                }
+            }
+        }
+        //and where units come out: two rows in front of a factory or refabricator that hands to nothing of the design's
+        //own, and the whole square an assembler builds its unit on
+        for(Stile t : turned[o].tiles){
+            Block b = t.block;
+            int size = b.size, off = (size - 1) / 2;
+            int dx = arc.math.geom.Geometry.d4x(t.rotation), dy = arc.math.geom.Geometry.d4y(t.rotation);
+            if(b instanceof mindustry.world.blocks.units.UnitAssembler ua){
+                //(its centre (area + size) / 2 tiles ahead, the area wide)
+                int cx = t.x + dx * (ua.areaSize + size) / 2, cy = t.y + dy * (ua.areaSize + size) / 2, h = ua.areaSize / 2;
+                for(int x = cx - h; x <= cx + h; x++) for(int y = cy - h; y <= cy + h; y++) if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+            }else if(b instanceof mindustry.world.blocks.units.UnitFactory || b instanceof mindustry.world.blocks.units.Reconstructor){
+                //the first row ahead: if part of the design (the next machine of the chain) the unit goes into it
+                int ax = t.x + dx * (size - off), ay = t.y + dy * (size - off);
+                if(seen.contains(ax * 4096 + ay)) continue;
+                for(int row = 0; row < 2; row++){
+                    for(int i = -off; i < size - off; i++){
+                        int x = ax + dx * row + (dy != 0 ? i : 0), y = ay + dy * row + (dx != 0 ? i : 0);
+                        if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+                    }
                 }
             }
         }
@@ -203,6 +262,7 @@ public final class Design{
             }catch(Throwable t){
                 continue;
             }
+            repair(s);
             Design m = new Design(id, f[col.get("name")], s, Float.parseFloat(f[col.get("power")]));
             ports(m, f[col.get("inputs")], true);
             ports(m, f[col.get("outputs")], false);

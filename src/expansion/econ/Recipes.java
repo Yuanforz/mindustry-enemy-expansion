@@ -53,6 +53,8 @@ public final class Recipes{
             list.add(block);
             if(block instanceof UnitFactory factory) for(UnitFactory.UnitPlan plan : factory.plans) unit(cat, plan.unit);
             if(block instanceof Reconstructor rec) for(UnitType[] pair : rec.upgrades){ unit(cat, pair[0]); unit(cat, pair[1]); }
+            //(units only designs make, by assemblers, are known too, so every recipe's arrays are as long as the catalog)
+            if(block instanceof UnitAssembler asm) for(UnitAssembler.AssemblerUnitPlan plan : asm.plans) unit(cat, plan.unit);
         }
         for(Block block : list) read(cat, block);
         return cat;
@@ -166,8 +168,27 @@ public final class Recipes{
             if(!ok) continue;
             int[] cost = new int[n];
             for(var e : m.cost) cost[cat.id(e.key)] += Math.round(e.value * Vars.state.rules.buildCostMultiplier);
+            //a design that makes units: the strongest it makes (the others are steps on the way), at the rate measured
+            int unitOut = -1;
+            float unitSeconds = 0f;
+            mindustry.type.UnitType strongest = null;
+            for(var e : m.units){
+                mindustry.type.UnitType type = Vars.content.unit(e.key);
+                if(type == null || e.value <= 0f) continue;
+                if(strongest == null || type.health > strongest.health){
+                    strongest = type;
+                    unitOut = unit(cat, type);
+                    unitSeconds = 1f / e.value;
+                }
+            }
+            if(unitOut >= 0 && (in.length != cat.size() || out.length != cat.size())){
+                in = java.util.Arrays.copyOf(in, cat.size());
+                out = java.util.Arrays.copyOf(out, cat.size());
+                n = cat.size();
+                cost = java.util.Arrays.copyOf(cost, n);
+            }
             Recipe r = new Recipe("module:" + m.id, "module:" + m.id, Math.max(m.width(0), m.height(0)), Recipe.Ground.none, cost, m.buildTicks, m.power, 0f,
-                in, out, new float[n], -1, 0f, 1f, -1, -1, 0f);
+                in, out, new float[n], -1, 0f, 1f, unitOut, -1, unitSeconds);
             r.module = m;
             cat.recipes.add(r);
         }

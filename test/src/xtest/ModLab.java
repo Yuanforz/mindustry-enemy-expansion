@@ -133,6 +133,9 @@ public class ModLab{
             r.error = "unreadable: " + t;
             return r;
         }
+        //what an older game version's numbering got wrong (a constructor told to build a crucible) put right
+        int repaired = expansion.econ.Design.repair(s);
+        if(repaired > 0) System.out.println("  (" + repaired + " constructors set to the wall their assembler needs)");
         //turned, if asked (-Dlab.turn=1..3): a design must do the same whichever way it faces
         for(int o = 0; o < Integer.getInteger("lab.turn", 0); o++) s = expansion.econ.Design.turn(s);
         r.name = s.name();
@@ -256,7 +259,7 @@ public class ModLab{
         //warm up, then measure; the second half against the first says whether it has settled
         for(int f = 0; f < warm * 60; f++){
             Boot.frames(1);
-            if(f % 60 == 0) Groups.unit.each(u -> u.team == team, Unit::kill);
+            if(f % 60 == 0) Groups.unit.each(u -> u.team == team && u.type != UnitTypes.assemblyDrone, Unit::kill);
         }
         float[][] before = snapshot(r);
         ObjectIntMap<String> unitsBefore = new ObjectIntMap<>(units);
@@ -268,7 +271,7 @@ public class ModLab{
         int frames = (int)(measure * 60);
         for(int f = 0; f < frames; f++){
             Boot.frames(1);
-            if(f % 60 == 0) Groups.unit.each(u -> u.team == team, Unit::kill);
+            if(f % 60 == 0) Groups.unit.each(u -> u.team == team && u.type != UnitTypes.assemblyDrone, Unit::kill);
             if(f % 30 == 0){
                 for(int i = 0; i < machines.size; i++) eff[i] += machines.get(i).efficiency;
                 samples++;

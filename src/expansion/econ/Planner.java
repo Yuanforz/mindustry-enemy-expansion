@@ -216,10 +216,29 @@ public final class Planner{
     /** How far a liquid is worth leading (tiles); beyond it a machine is given a maker of its own. */
     public float localLiquid = 25f;
 
-    /** The recipe that makes this unit. */
+    /**
+     * The recipe that makes this unit: of several (a factory chain, designs that make it whole), the one whose units cost
+     * least to make, counting what it costs to build and what its inputs cost a second (a design whose inputs can't be
+     * made at all is left out).
+     */
     Recipe maker(int unit){
-        for(Recipe r : cat.recipes) if(r.unitOut == unit) return r;
-        return null;
+        Recipe best = null;
+        float bestCost = Float.POSITIVE_INFINITY;
+        for(Recipe r : cat.recipes){
+            if(r.unitOut != unit) continue;
+            float c = r.totalCost();
+            if(chains != null){
+                for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f) c += r.in[k] * chains.cost[k];
+                c += r.powerUse * chains.power;
+            }
+            //per unit a second
+            c *= Math.max(r.unitSeconds, 1e-3f);
+            if(best == null || c < bestCost){
+                best = r;
+                bestCost = c;
+            }
+        }
+        return best;
     }
 
     /** A machine that makes more of a thing: a crafter, or a machine on the best free place that gives it. */
