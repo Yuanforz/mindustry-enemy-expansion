@@ -94,6 +94,7 @@ public final class Timeline{
         drawUntil = o.drawUntil.clone();
         made = o.made.clone();
         first = o.first.clone();
+        goal = o.goal;
         begun = o.begun.clone();
         finished = o.finished.clone();
         plant = new Plant(cat);
@@ -121,9 +122,21 @@ public final class Timeline{
 
     /** Runs until the order is all built and the given unit has come out once, or the time is up. */
     public void runToGoal(int unit, float limit){
-        while(t < limit && !(done() && made[unit] >= 1f)){
+        goal = unit;
+        while(t < limit && !(done() && made[unit] >= goalAmount(unit))){
             if(!step(limit)) break;
         }
+    }
+
+    /**
+     * What is aimed at: a unit (the first of it), or an item, of which {@link #itemGoal} must have come to the core from
+     * the plant (what is dug by hand does not count). -1 for none.
+     */
+    public int goal = -1;
+    public static float itemGoal = Float.parseFloat(System.getProperty("xp.itemgoal", "100"));
+
+    public float goalAmount(int res){
+        return cat.get(res).kind == Res.Kind.unit ? 1f : itemGoal;
     }
 
     /** Runs until the core unit has started on the machine at this place in the order, or the time is up. */
@@ -193,11 +206,21 @@ public final class Timeline{
             }
             if(e > 1e-6f && !waiting[i]) dt = Math.min(dt, (1f - progress[i]) * r.unitSeconds / e);
         }
+        //an item aimed at: the moment enough of it has come in
+        if(goal >= 0 && cat.get(goal).kind == Res.Kind.item && made[goal] < itemGoal && plant.toCore[goal] > 1e-6f){
+            dt = Math.min(dt, (itemGoal - made[goal]) / plant.toCore[goal]);
+        }
         if(Float.isInfinite(dt) || dt < 0f) return false;
         dt = Math.max(dt, 0f);
 
         //everything moves on by that much
         t += dt;
+        //(what the plant gives the core of each item, counted as made)
+        for(int k = 0; k < stock.length; k++){
+            if(cat.get(k).kind != Res.Kind.item || plant.toCore[k] <= 0f) continue;
+            made[k] += plant.toCore[k] * dt;
+            if(Float.isInfinite(first[k]) && made[k] >= itemGoal - 1e-3f) first[k] = t;
+        }
         for(int k = 0; k < stock.length; k++){
             stock[k] = Math.min(cat.coreCap, stock[k] + income[k] * dt);
         }

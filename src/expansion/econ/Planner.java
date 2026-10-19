@@ -38,7 +38,14 @@ public final class Planner{
     /** Machines to add to what stands so that the unit comes out at this rate (units a second) with every machine fed and powered. */
     public List<Machine> balance(int unit, float rate){
         wantRate = rate;
+        chains = new Chains(cat, field);
         List<Machine> plan = new ArrayList<>();
+        //an item aimed at: that much a second for the core, besides everything the machines take
+        demand = cat.zeros();
+        if(cat.get(unit).kind != Res.Kind.unit){
+            demand[unit] = rate;
+            return balanceRest(plan);
+        }
         //the unit itself, then the units it is made from
         Map<Integer, Float> unitsWanted = new HashMap<>();
         unitsWanted.put(unit, rate);
@@ -61,11 +68,20 @@ public final class Planner{
             }
         }
 
+        return balanceRest(plan);
+    }
+
+    /** What is wanted for the core besides what machines take, a second, by {@link Res#id}. */
+    float[] demand;
+    /** What each thing costs to make, the cheapest way: for choosing between recipes and modules. */
+    public Chains chains;
+
+    List<Machine> balanceRest(List<Machine> plan){
         //what everything takes, until there is enough of all of it
         for(int guard = 0; guard < 400; guard++){
             List<Machine> all = new ArrayList<>(field.existing);
             all.addAll(plan);
-            float[] want = cat.zeros(), have = cat.zeros();
+            float[] want = demand.clone(), have = cat.zeros();
             float powerWant = 0f, powerHave = 0f;
             for(Machine m : all){
                 for(int k = 0; k < cat.size(); k++){
@@ -234,10 +250,10 @@ public final class Planner{
             notes.append(String.format("the map's idle %s at %d,%d taken up\n", old.recipe.name, old.x, old.y));
             return m;
         }
-        //a crafter that makes it, if there is one
-        for(Recipe r : cat.recipes){
-            if(r.ground == Recipe.Ground.none && r.out[res] > 0f) return machine(r, null);
-        }
+        //a crafter (or module) that makes it, the one whose whole chain is cheapest; none at all if a drill is cheaper
+        Recipe crafter = chains == null ? null : chains.bestCrafter(res);
+        if(chains == null) for(Recipe r : cat.recipes) if(r.ground == Recipe.Ground.none && r.out[res] > 0f){ crafter = r; break; }
+        if(crafter != null) return machine(crafter, null);
         //else a machine on the ground: the best place for any recipe that can dig it
         Field.Site bestSite = null;
         Recipe bestRecipe = null;
@@ -453,8 +469,9 @@ public final class Planner{
      * unit at the rate wanted with power fully met (extras may not take what the plant needs).
      */
     boolean reached(Timeline t, int unit){
-        if(!t.done() || t.made[unit] < 1f) return false;
+        if(!t.done() || t.made[unit] < t.goalAmount(unit) - 1e-3f) return false;
         Plant p = t.steady();
+        if(cat.get(unit).kind != Res.Kind.unit) return p.powerMet >= 0.999f && p.toCore[unit] >= wantRate * 0.98f;
         return p.powerMet >= 0.999f && p.unitRate(t.built, unit) >= wantRate * 0.98f;
     }
 

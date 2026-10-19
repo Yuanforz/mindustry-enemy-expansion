@@ -4,3 +4,6 @@ build/
 reference/schematics/
 .DS_Store
 *.class
+
+# third-party designs picked for the module library: used locally, not shipped (see blueprints/modules/README.md)
+blueprints/modules/*.msch

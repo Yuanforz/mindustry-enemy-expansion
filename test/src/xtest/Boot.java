@@ -58,6 +58,11 @@ public class Boot{
 
     /** @param early run before the game makes its blocks and items, which is when the game loads mods */
     public static void boot(String dataDir, Runnable early){
+        boot(dataDir, early, null);
+    }
+
+    /** @param afterBase run once the game's own blocks are made and before they are set up: where a mod adds its blocks */
+    public static void boot(String dataDir, Runnable early, Runnable afterBase){
         Core.app = app;
         Core.files = new MockFiles();
         Core.audio = new MockAudio();
@@ -72,6 +77,7 @@ public class Boot{
         Vars.init();
         if(early != null) early.run();
         Vars.content.createBaseContent();
+        if(afterBase != null) afterBase.run();
         Vars.logic = new Logic();
         Vars.netServer = new NetServer();
         Vars.content.init();

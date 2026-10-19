@@ -40,6 +40,16 @@ public final class Recipe{
     /** For unit factories and refabricators: the unit made, and the one taken in (-1 for none); one comes out every so many seconds. */
     public final int unitOut, unitIn;
     public final float unitSeconds;
+    /** For a module (a whole design built as one): the design. Null for a single block. */
+    public Design module;
+    /** For a module turned o times, its width and height (a single block: its size both ways). */
+    public int width(int o){
+        return module == null ? size : module.width(o);
+    }
+
+    public int height(int o){
+        return module == null ? size : module.height(o);
+    }
 
     public Recipe(String name, String block, int size, Ground ground, int[] cost, float buildTicks, float powerUse, float powerOut,
                   float[] in, float[] out, float[] perFactor, int boostRes, float boostUse, float boostMultiplier,

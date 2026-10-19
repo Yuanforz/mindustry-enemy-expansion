@@ -121,6 +121,9 @@ public final class Recipes{
             ground = Recipe.Ground.vent;
             powerOut = gen.powerProduction * 9f * 60f;
             if(gen.outputLiquid != null) out[cat.id(gen.outputLiquid.liquid.name)] = gen.outputLiquid.amount * 9f * 60f;
+        }else if(block instanceof HeatCrafter hc && hc.heatRequirement > 0f){
+            //it works only with heaters against it: it comes in modules (designs with their heaters), not alone
+            return;
         }else if(block instanceof GenericCrafter crafter){
             if(crafter instanceof AttributeCrafter ac && ac.attribute == mindustry.world.meta.Attribute.steam) ground = Recipe.Ground.vent;
             float seconds = crafter.craftTime / 60f;
@@ -136,6 +139,32 @@ public final class Recipes{
         }
         cat.recipes.add(new Recipe(block.name, block.name, block.size, ground, cost, block.buildTime, powerUse, powerOut,
             in, out, perFactor, boostRes, boostUse, boostMultiplier, -1, -1, 0f));
+    }
+
+    /**
+     * Modules as recipes: what the lab measured at their ports, their power, what they cost. Only those all of whose blocks
+     * may be built (and none banned), and whose ports are things the catalog knows.
+     */
+    public static void modules(Catalog cat, List<Design> modules, Collection<String> allowed){
+        for(Design m : modules){
+            boolean ok = true;
+            for(mindustry.game.Schematic.Stile t : m.parts(0)) if(!allowed.contains(t.block.name) || Vars.state.rules.isBanned(t.block)) ok = false;
+            if(!ok) continue;
+            int n = cat.size();
+            float[] in = new float[n], out = new float[n];
+            for(Design.Port p : m.ports){
+                Res r = cat.byName.get(p.what);
+                if(r == null){ ok = false; break; }
+                (p.in ? in : out)[r.id] += p.rate;
+            }
+            if(!ok) continue;
+            int[] cost = new int[n];
+            for(var e : m.cost) cost[cat.id(e.key)] += Math.round(e.value * Vars.state.rules.buildCostMultiplier);
+            Recipe r = new Recipe("module:" + m.id, "module:" + m.id, Math.max(m.width(0), m.height(0)), Recipe.Ground.none, cost, m.buildTicks, m.power, 0f,
+                in, out, new float[n], -1, 0f, 1f, -1, -1, 0f);
+            r.module = m;
+            cat.recipes.add(r);
+        }
     }
 
     /** What a block takes that it must have, per second. Items are per craft, so they are spread over the craft's time. */

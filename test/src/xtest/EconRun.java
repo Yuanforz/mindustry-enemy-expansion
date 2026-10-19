@@ -87,13 +87,16 @@ public class EconRun{
     public static void main(String[] args){
         Boot.boot(args[0]);
         String sector = args[2], unitName = args[3];
-        int machines = Integer.parseInt(args[4]);
+        //(for a unit: how many of its machines; for an item: how much a second the core is to get)
+        float machines = Float.parseFloat(args[4]);
         float minutes = Float.parseFloat(args[5]);
         List<String> blocks = new ArrayList<>();
         for(String[] row : EconLab.tech){
             for(int i = 1; i < row.length; i++) blocks.add(row[i]);
             if(row[0].equals(sector)) break;
         }
+        //"late": everything Erekir has
+        if(sector.equals("late")) for(Block b : Vars.content.blocks()) if(b.isOnPlanet(Planets.erekir) && b.buildVisibility != mindustry.world.meta.BuildVisibility.sandboxOnly && !blocks.contains(b.name)) blocks.add(b.name);
         Set<String> allowed = new HashSet<>(blocks);
         for(String[] row : logistics){
             for(int i = 1; i < row.length; i++) allowed.add(row[i]);
@@ -149,10 +152,15 @@ public class EconRun{
         String pruned = Sites.prune(cat, field, income, me);
         if(!pruned.isEmpty()) System.out.println("  the map's own: " + pruned);
         Planner planner = new Planner(cat, field);
+        //the modules of the library that may be built here
+        Recipes.modules(cat, Design.load(new Fi("blueprints/modules")), allowed);
         Recipe making = null;
         int unit = cat.id(unitName);
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
-        List<Machine> plant = planner.balance(unit, machines / making.unitSeconds);
+        final float wanted = making != null ? machines / making.unitSeconds : machines;
+        List<Machine> plant = planner.balance(unit, wanted);
+        if(Boolean.getBoolean("xp.chains")) System.out.print(planner.chains.describe());
+        if(!planner.notes.toString().isEmpty()) System.out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
         Timeline model = planner.order(plant, unit);
         System.out.println("######## " + new Fi(args[1]).nameWithoutExtension() + ": " + unitName + " from " + machines + "; the model has it done by " + EconLab.time(model.t)
             + ", first " + unitName + " at " + EconLab.time(model.first[unit]) + "; " + model.order.size() + " machines");
@@ -231,7 +239,7 @@ public class EconRun{
             }
             if(replan){
                 planner = new Planner(cat, field);
-                more = planner.balance(unit, machines / making.unitSeconds);
+                more = planner.balance(unit, wanted);
             }else if(more.size() == model.order.size() && !hauled) break;
             if(replan) more.addAll(instead);
             System.out.println("  the layout could not feed " + unfed.size() + " machine(s); makers of their own added: " + planner.notes.toString().trim().replace("\n", "; "));
@@ -304,6 +312,9 @@ public class EconRun{
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == me && !firstMade.containsKey(e.unit.type.name)) firstMade.put(e.unit.type.name, (float)(Vars.state.tick / 60.0));
         });
+        Item goalItem = Vars.content.item(unitName);
+        int lastGoal = goalItem == null ? 0 : core.items.get(goalItem);
+        float goalIn = 0f;
         Unit builder = null;
         Timeline shadow = new Timeline(cat, field, new ArrayList<>(model.order));
         String wa = System.getProperty("xp.watchat");
@@ -333,6 +344,13 @@ public class EconRun{
                     pay = " payload " + pb.payload + (pb.payload instanceof mindustry.world.blocks.payloads.UnitPayload up ? " cancreate " + Units.canCreate(me, up.unit.type) + " cap " + Units.getCap(me) + " count " + me.data().countType(up.unit.type) : "");
                 }
                 if(wb != null) System.out.println(String.format("    watch %s %s: efficiency %.2f, items %s, liquids %s, core %s%s", EconLab.time(f / 60f), wb.block.name, wb.efficiency, wb.items, wb.liquids == null ? "-" : wb.liquids.currentAmount(), holds(core), pay));
+            }
+            //an item aimed at: what comes into the core (spending taken no account of), till enough has
+            if(goalItem != null){
+                int now = core.items.get(goalItem);
+                if(now > lastGoal) goalIn += now - lastGoal;
+                lastGoal = now;
+                if(goalIn >= Timeline.itemGoal && !firstMade.containsKey(unitName)) firstMade.put(unitName, (float)(Vars.state.tick / 60.0));
             }
             if(firstMade.containsKey(unitName) && f % 600 == 0) break;
             //no job begun or finished for three minutes, and no unit: it is stuck, and says where
@@ -474,8 +492,8 @@ public class EconRun{
         for(float f : hand.finished) if(!Float.isNaN(f)) lastDone = Math.max(lastDone, f);
         int done = 0;
         for(float f : hand.finished) if(!Float.isNaN(f)) done++;
-        System.out.println(String.format("BENCH %s %s %s %d | model %s game %s | %s | built %d/%d model %s game %s | nets unlaid %d checker %d | layout %.1fs",
-            mapName, sector, unitName, machines, EconLab.time(model.first[unit]), made == null ? "never" : EconLab.time(made),
+        System.out.println(String.format("BENCH %s %s %s %s | model %s game %s | %s | built %d/%d model %s game %s | nets unlaid %d checker %d | layout %.1fs",
+            mapName, sector, unitName, Strings.autoFixed(machines, 2), EconLab.time(model.first[unit]), made == null ? "never" : EconLab.time(made),
             made == null ? "-" : String.format("%.0f%%", 100f * model.first[unit] / made), done, model.order.size(), EconLab.time(model.t), done == model.order.size() ? EconLab.time(lastDone) : "-",
             works.failed, works.problems.size(), (l1 - l0) / 1e9) + (made == null ? " | stuck: " + hand.doing : ""));
         System.exit(0);

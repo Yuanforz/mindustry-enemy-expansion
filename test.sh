@@ -178,6 +178,11 @@ LIST
            if(seg[2] !~ /never/ && r != "" && r != "-") { if(r + 0 >= 90) good[map]++; sum[map] += r; got[map]++ } }
          END { for(m in n) printf "  %-16s %d of %d runs at 90%% or better; got the unit in %d, on average at %.0f%% of the model time\n", m, good[m], n[m], got[m], got[m] ? sum[m] / got[m] : 0 }' build/bench/table.txt | sort | tee build/bench/summary.txt
     ;;
+  modlab)
+    # ./test.sh modlab <out.tsv> <file.msch>...   each schematic put down, fed from its own sources, measured at its voids
+    out="$1"; shift
+    java $RUN_OPTS -cp "$CP" xtest.ModLab build/test-data "$out" "$@" 2>build/test-err.log
+    ;;
   econwhy)
     # ./test.sh econwhy <map> <sector> <unit> <machines> [recipe]   the balanced plant solved, and with one more of a recipe
     java -cp "$CP" xtest.EconWhy build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "$3" "$4" "$5" 2>build/test-err.log
