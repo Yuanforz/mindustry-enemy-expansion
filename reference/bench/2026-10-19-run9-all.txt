@@ -1,0 +1,35 @@
+BENCH [onset-0] onset onset stell 2 | model 3:36 game 3:52 | 93% | built 14/15 model 3:58 game - | nets unlaid 0 checker 0 | layout 1.0s
+BENCH [aegis-0] aegis aegis stell 3 | model 2:49 game 2:22 | 119% | built 12/13 model 3:27 game - | nets unlaid 0 checker 0 | layout 2.8s
+BENCH [lake-0] lake lake stell 2 | model 2:50 game 2:37 | 109% | built 8/8 model 2:50 game 2:33 | nets unlaid 0 checker 0 | layout 3.0s
+BENCH [intersect-0] intersect intersect stell 2 | model 2:53 game 2:51 | 101% | built 11/11 model 2:55 game 2:48 | nets unlaid 0 checker 0 | layout 6.0s
+BENCH [atlas-0] atlas atlas locus 1 | model 5:15 game 5:01 | 104% | built 12/12 model 5:15 game 4:47 | nets unlaid 0 checker 0 | layout 12.8s
+BENCH [split-0] split atlas merui 2 | model 2:01 game 1:44 | 116% | built 4/4 model 3:18 game 2:15 | nets unlaid 2 checker 0 | layout 10.8s
+BENCH [basin-0] basin atlas stell 2 | model 1:41 game 1:36 | 105% | built 5/5 model 2:22 game 2:04 | nets unlaid 0 checker 0 | layout 0.7s
+BENCH [marsh-0] marsh atlas locus 1 | model 3:44 game 4:27 | 84% | built 14/14 model 5:17 game 4:05 | nets unlaid 0 checker 0 | layout 2.5s
+BENCH [peaks-0] peaks atlas elude 2 | model 2:16 game 2:10 | 104% | built 4/7 model 4:38 game - | nets unlaid 0 checker 0 | layout 21.3s
+BENCH [ravine-0] ravine atlas locus 1 | model 5:54 game 4:13 | 140% | built 5/5 model 5:54 game 3:01 | nets unlaid 0 checker 0 | layout 1.4s
+BENCH [caldera-erekir-0] caldera-erekir atlas locus 1 | model 4:53 game 4:33 | 107% | built 8/8 model 8:59 game 4:59 | nets unlaid 0 checker 0 | layout 4.8s
+BENCH [stronghold-0] stronghold atlas locus 1 | model never game never | - | built 6/6 model 180:00 game 0:46 | nets unlaid 0 checker 0 | layout 8.3s | stuck: all built; digging what the core has least of
+BENCH [crevice-0] crevice atlas locus 1 | model 3:42 game never | - | built 18/18 model 11:01 game 6:00 | nets unlaid 6 checker 0 | layout 202.8s | stuck: all built; digging what the core has least of
+BENCH [siege-0] siege atlas stell 2 | model 1:12 game 1:04 | 113% | built 3/3 model 1:12 game 0:13 | nets unlaid 0 checker 0 | layout 0.4s
+BENCH [crossroads-0] crossroads atlas locus 1 | model 1:49 game 1:33 | 116% | built 6/7 model 1:49 game - | nets unlaid 0 checker 0 | layout 0.9s
+BENCH [karst-0] karst atlas locus 1 | model 2:04 game 2:40 | 77% | built 13/13 model 2:05 game 2:01 | nets unlaid 0 checker 0 | layout 1.9s
+BENCH [origin-0] origin atlas locus 1 | model never game never | - | built 4/4 model 180:00 game 0:31 | nets unlaid 0 checker 0 | layout 2.2s | stuck: all built; digging what the core has least of
+
+  aegis            1 of 1 runs at 90% or better; got the unit in 1, on average at 119% of the model time
+  atlas            1 of 1 runs at 90% or better; got the unit in 1, on average at 104% of the model time
+  basin            1 of 1 runs at 90% or better; got the unit in 1, on average at 105% of the model time
+  caldera-erekir   1 of 1 runs at 90% or better; got the unit in 1, on average at 107% of the model time
+  crevice          0 of 1 runs at 90% or better; got the unit in 0, on average at 0% of the model time
+  crossroads       1 of 1 runs at 90% or better; got the unit in 1, on average at 116% of the model time
+  intersect        1 of 1 runs at 90% or better; got the unit in 1, on average at 101% of the model time
+  karst            0 of 1 runs at 90% or better; got the unit in 1, on average at 77% of the model time
+  lake             1 of 1 runs at 90% or better; got the unit in 1, on average at 109% of the model time
+  marsh            0 of 1 runs at 90% or better; got the unit in 1, on average at 84% of the model time
+  onset            1 of 1 runs at 90% or better; got the unit in 1, on average at 93% of the model time
+  origin           0 of 1 runs at 90% or better; got the unit in 0, on average at 0% of the model time
+  peaks            1 of 1 runs at 90% or better; got the unit in 1, on average at 104% of the model time
+  ravine           1 of 1 runs at 90% or better; got the unit in 1, on average at 140% of the model time
+  siege            1 of 1 runs at 90% or better; got the unit in 1, on average at 113% of the model time
+  split            1 of 1 runs at 90% or better; got the unit in 1, on average at 116% of the model time
+  stronghold       0 of 1 runs at 90% or better; got the unit in 0, on average at 0% of the model time

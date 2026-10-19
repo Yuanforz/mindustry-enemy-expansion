@@ -8,6 +8,7 @@ import expansion.econ.*;
 import mindustry.*;
 import mindustry.content.*;
 import mindustry.game.*;
+import mindustry.entities.*;
 import mindustry.game.EventType.*;
 import mindustry.gen.*;
 import mindustry.io.*;
@@ -67,6 +68,22 @@ public class EconRun{
         return stack / (2f * d / tilesPerSecond + 4f);
     }
 
+    /** What stands in an area asked for (-Dxp.dump=x0,y0,x1,y1): each building's block, facing and what it holds. */
+    static void dumpArea(String when){
+        String d = System.getProperty("xp.dump");
+        if(d == null) return;
+        String[] a = d.split(",");
+        int x0 = Integer.parseInt(a[0]), y0 = Integer.parseInt(a[1]), x1 = Integer.parseInt(a[2]), y1 = Integer.parseInt(a[3]);
+        System.out.println("  what stands " + when + ":");
+        for(int y = y1; y >= y0; y--){
+            for(int x = x0; x <= x1; x++){
+                Building b = Vars.world.build(x, y);
+                if(b == null || b.tileX() != x || b.tileY() != y) continue;
+                System.out.println(String.format("    %d,%d %s r%d %s", x, y, b.block.name, b.rotation, b.items == null ? "" : b.items.toString()));
+            }
+        }
+    }
+
     public static void main(String[] args){
         Boot.boot(args[0]);
         String sector = args[2], unitName = args[3];
@@ -124,6 +141,7 @@ public class EconRun{
         for(Item item : Vars.content.items()) core.items.set(item, before[item.id]);
         Vars.state.tick = 0;
 
+        dumpArea("at the start");
         //the plan
         Catalog cat = Recipes.read(blocks, (CoreBlock)core.block, rules.buildSpeed(me));
         cat.logistics(allowed);
@@ -287,6 +305,7 @@ public class EconRun{
             if(e.unit.team == me && !firstMade.containsKey(e.unit.type.name)) firstMade.put(e.unit.type.name, (float)(Vars.state.tick / 60.0));
         });
         Unit builder = null;
+        Timeline shadow = new Timeline(cat, field, new ArrayList<>(model.order));
         String wa = System.getProperty("xp.watchat");
         int[] watchAt = wa == null ? null : new int[]{Integer.parseInt(wa.split(",")[0]), Integer.parseInt(wa.split(",")[1])};
         int frames = (int)(minutes * 3600);
@@ -300,11 +319,20 @@ public class EconRun{
             if(f % (60 * 30) == 0 && f > 0){
                 System.out.println(String.format("  %s: %d of %d begun; core %s; %s", EconLab.time(f / 60f), hand.next, model.order.size(), holds(core),
                     hand.machine != null ? "building " + hand.machine.recipe.name : "digging " + (builder.mineTile == null ? "nothing" : builder.mineTile.wallDrop().name)));
+                //the model at the same time, for set against it
+                shadow.runUntil(f / 60f);
+                StringBuilder ms = new StringBuilder();
+                for(int k = 0; k < cat.size(); k++) if(cat.get(k).kind == Res.Kind.item && shadow.stock[k] >= 1f) ms.append(cat.get(k).name).append('=').append((int)shadow.stock[k]).append(' ');
+                System.out.println(String.format("        model: %d of %d begun; core %s", shadow.next, model.order.size(), ms.toString().trim()));
             }
             //one building watched closely, asked for: -Dxp.watchat=x,y
             if(watchAt != null && f % 300 == 0){
                 Building wb = Vars.world.build(watchAt[0], watchAt[1]);
-                if(wb != null) System.out.println(String.format("    watch %s %s: efficiency %.2f, items %s, liquids %s, core %s", EconLab.time(f / 60f), wb.block.name, wb.efficiency, wb.items, wb.liquids == null ? "-" : wb.liquids.currentAmount(), holds(core)));
+                String pay = "";
+                if(wb instanceof mindustry.world.blocks.payloads.PayloadBlock.PayloadBlockBuild<?> pb && pb.payload != null){
+                    pay = " payload " + pb.payload + (pb.payload instanceof mindustry.world.blocks.payloads.UnitPayload up ? " cancreate " + Units.canCreate(me, up.unit.type) + " cap " + Units.getCap(me) + " count " + me.data().countType(up.unit.type) : "");
+                }
+                if(wb != null) System.out.println(String.format("    watch %s %s: efficiency %.2f, items %s, liquids %s, core %s%s", EconLab.time(f / 60f), wb.block.name, wb.efficiency, wb.items, wb.liquids == null ? "-" : wb.liquids.currentAmount(), holds(core), pay));
             }
             if(firstMade.containsKey(unitName) && f % 600 == 0) break;
             //no job begun or finished for three minutes, and no unit: it is stuck, and says where
@@ -351,6 +379,11 @@ public class EconRun{
         boolean[] on = new boolean[all.size()];
         Arrays.fill(on, true);
         steady.solve(all, on, true);
+        dumpArea("at the end");
+        //each line of the plan's as it stands at the end: how many of its pieces stand, and what they hold (-Dxp.lines)
+        if(Boolean.getBoolean("xp.lines")){
+            System.out.print(works.linesNow());
+        }
         //where things sit that are not in the core: what holds the most of each (a sink the plan does not know of shows here)
         {
             Map<String, List<String>> held = new TreeMap<>();
@@ -365,6 +398,11 @@ public class EconRun{
                 List<String> l = e.getValue();
                 System.out.println("  held outside the core: " + e.getKey() + ": " + l.size() + " buildings; " + String.join(" ", l.subList(0, Math.min(6, l.size()))));
             }
+        }
+        for(Item item : Vars.content.items()){
+            if(hand.digSeconds[item.id] < 5f) continue;
+            int id = cat.id(item.name);
+            System.out.println(String.format("  hand calibration: %s dug %.0f in %.0f s of digging = %.2f/s (model %.2f/s)", item.name, hand.delivered[item.id], hand.digSeconds[item.id], hand.delivered[item.id] / hand.digSeconds[item.id], field.handRate(cat, id)));
         }
         System.out.println("  calibration: machine, what it makes, model at full speed / model in the plant / game on average / game in the last minute / game at best");
         for(var e : hand.watch.rates.entrySet()){

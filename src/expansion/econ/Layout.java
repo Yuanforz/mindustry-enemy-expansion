@@ -48,7 +48,7 @@ public final class Layout{
      * docks are routers, once nothing still to build costs what it carries; from then on the machines get all of it.
      */
     public final Map<Integer, Seq<Part>> cuts = new HashMap<>();
-    List<Router.Net> nets = new ArrayList<>();
+    public List<Router.Net> nets = new ArrayList<>();
     final Map<Machine, Seq<Part>> lines = new HashMap<>(), wires = new HashMap<>();
     public final StringBuilder log = new StringBuilder();
     public final List<String> problems = new ArrayList<>();
@@ -164,6 +164,11 @@ public final class Layout{
             for(Part p : n.all()) a.linesCost += Router.price(p.block);
         }
         a.note = String.format("%d cells placed (cost %.0f), %d tiles kept for later fields, %d nets with %d pieces, %d not laid", cellMachines.size(), cells.best, keptTiles, a.nets.size(), pieces, a.failed);
+        //(what of the map's own each line is laid over, asked for: -Dxp.routerlog)
+        if(Router.DEBUG) for(Router.Net n : a.nets) for(Part p : n.all()){
+            mindustry.gen.Building old = Vars.world.build(p.x, p.y);
+            if(old != null && !(old.block == p.block && old.rotation == p.rotation)) log.append(String.format("%s of %s laid over the map's %s at %d,%d (facing %d)\n", n.kind, cat.get(n.res).name, old.block.name, p.x, p.y, old.rotation));
+        }
         return a;
     }
 
@@ -331,9 +336,11 @@ public final class Layout{
         return out;
     }
 
-    static boolean buildableBefore(List<Machine> order, Machine m, int at){
+    boolean buildableBefore(List<Machine> order, Machine m, int at){
         for(int k = 0; k < m.cost.length; k++){
             if(m.cost[k] <= 0) continue;
+            //(what the core starts with or its unit digs is there from the start)
+            if(field.stock[k] >= m.cost[k] || field.handRate(cat, k) > 0f) continue;
             boolean madeBefore = false, madeAtAll = false;
             for(int i = 0; i < order.size(); i++){
                 Machine o = order.get(i);
@@ -344,6 +351,27 @@ public final class Layout{
             if(madeAtAll && !madeBefore) return false;
         }
         return true;
+    }
+
+    /** Each line as it stands in the world now: how many of its pieces stand, and what they hold. */
+    public String linesNow(){
+        StringBuilder out = new StringBuilder();
+        for(Router.Net n : nets){
+            StringBuilder b = new StringBuilder();
+            int standing = 0, pieces = 0;
+            for(Part p : n.all()){
+                pieces++;
+                mindustry.gen.Building at = Vars.world.build(p.x, p.y);
+                if(at == null || at.block != p.block){
+                    b.append(String.format(" %d,%d:missing", p.x, p.y));
+                    continue;
+                }
+                standing++;
+                if(at.items != null && at.items.total() > 0) b.append(String.format(" %d,%d:%s", p.x, p.y, at.items));
+            }
+            out.append(String.format("  line %s of %s to %s: %d of %d standing;%s\n", n.kind, cat.get(n.res).name, n.to, standing, pieces, b));
+        }
+        return out.toString();
     }
 
     /** The takers no line could be laid to, with what they lack: for the planner to give them makers of their own. */
@@ -464,11 +492,30 @@ public final class Layout{
             }
             lines.computeIfAbsent(owner, x -> new Seq<>()).addAll(n.trunk);
             int ownerAt = index.getOrDefault(owner, -1);
+            Map<Machine, Machine> branchOwner = new HashMap<>();
             for(var e : n.branch.entrySet()){
                 Machine m = index.containsKey(e.getKey()) ? e.getKey() : owner;
                 if(n.liquid && index.getOrDefault(m, -1) < ownerAt) m = owner;
-                lines.computeIfAbsent(m, x -> new Seq<>()).addAll(e.getValue());
+                branchOwner.put(e.getKey(), m);
             }
+            //a branch that runs on into another maker's branch needs that one built with it, or what it carries stops at
+            //the gap: the one it runs into goes up with the earlier of the two
+            if(!n.liquid) for(int guard = 0; guard < 10; guard++){
+                boolean changed = false;
+                for(var e : n.branch.entrySet()){
+                    Seq<Part> mine = e.getValue();
+                    if(mine.isEmpty()) continue;
+                    Machine into = branchInto(n, mine.peek());
+                    if(into == null || into == e.getKey()) continue;
+                    Machine a = branchOwner.get(e.getKey()), b = branchOwner.get(into);
+                    if(a != null && b != null && index.getOrDefault(a, -1) < index.getOrDefault(b, -1)){
+                        branchOwner.put(into, a);
+                        changed = true;
+                    }
+                }
+                if(!changed) break;
+            }
+            for(var e : n.branch.entrySet()) lines.computeIfAbsent(branchOwner.get(e.getKey()), x -> new Seq<>()).addAll(e.getValue());
         }
         //where a bus with router docks is cut, and after which job
         cuts.clear();
@@ -482,6 +529,21 @@ public final class Layout{
             for(int i = 0; i < order.size(); i++) if(realCost(order.get(i))[n.res] > 0) after = i;
             cuts.computeIfAbsent(after, x -> new Seq<>()).add(cut);
         }
+    }
+
+    /** Whose branch of a net the last piece of a branch hands on to (by the piece's facing, or a bridge's link), or null. */
+    Machine branchInto(Router.Net n, Part last){
+        int tx, ty;
+        int[] link = last.block instanceof DirectionBridge ? grid.bridgeLink(last.x, last.y) : null;
+        if(link != null){
+            tx = link[0];
+            ty = link[1];
+        }else{
+            tx = last.x + Geometry.d4x(last.rotation);
+            ty = last.y + Geometry.d4y(last.rotation);
+        }
+        for(var e : n.branch.entrySet()) for(Part p : e.getValue()) if(p.x == tx && p.y == ty) return e.getKey();
+        return null;
     }
 
     /** The plan in a new order (the same machines, matched by kind and place): who powers whom and who owns what are done again. */
@@ -597,7 +659,13 @@ public final class Layout{
         }
         float reach = cat.buildRange;
         float span = x0 > x1 ? 0f : Math.max(0f, (x1 - x0) + (y1 - y0) - 2 * reach);
-        return ticks / (cat.buildSpeed * cat.buildRule) / 60f + span / cat.flySpeed;
+        //and the way there from where it digs (by the core) and back, beyond building range: no digging meanwhile
+        float away = 0f;
+        if(x0 <= x1){
+            float dx = Math.max(0, Math.max(x0 - field.coreX, field.coreX - x1)), dy = Math.max(0, Math.max(y0 - field.coreY, field.coreY - y1));
+            away = 2f * Math.max(0f, (float)Math.hypot(dx, dy) - reach) / cat.flySpeed;
+        }
+        return ticks / (cat.buildSpeed * cat.buildRule) / 60f + (span + 0f) / cat.flySpeed + away;
     }
 
     // ---------------------------------------------------------------- the checker
@@ -630,7 +698,7 @@ public final class Layout{
                         int sx = p.x + Geometry.d4x(side), sy = p.y + Geometry.d4y(side);
                         Block o = grid.block(sx, sy);
                         if(o != null && Grid.isLine(o) && grid.net[grid.pos(sx, sy)] != n.id && Router.accepts(o, grid.rotation(sx, sy), (side + 2) % 4, b)
-                            && !(grid.net[grid.pos(sx, sy)] < 0 && o instanceof Duct && grid.reachesCore(grid.pos(sx, sy)))) problems.add(String.format("dock at %d,%d hands %s into another line at %d,%d", p.x, p.y, cat.get(n.res).name, sx, sy));
+                            && !(grid.net[grid.pos(sx, sy)] < 0 && o instanceof Duct && grid.safeToCore(grid.pos(sx, sy)))) problems.add(String.format("dock at %d,%d hands %s into another line at %d,%d", p.x, p.y, cat.get(n.res).name, sx, sy));
                     }
                 }
                 int fx = p.x + Geometry.d4x(p.rotation), fy = p.y + Geometry.d4y(p.rotation);
@@ -680,7 +748,7 @@ public final class Layout{
         if(Grid.isLine(b)){
             //its own net, a running line of the map's carrying the same, or another net's piece carrying the same (a tap's dock on such a line)
             //(or a piece of the map's own line, as a tap hands what it does not take on to the line it was put in)
-            boolean ours = grid.net[q] == n.id || (grid.planned(fx, fy) == null && (grid.running.get(q, -1) == n.res || from.block instanceof OverflowDuct || from.block instanceof DuctRouter || grid.reachesCore(q))) || (grid.planned(fx, fy) != null && grid.carry[q] == n.res);
+            boolean ours = grid.net[q] == n.id || (grid.planned(fx, fy) == null && (grid.running.get(q, -1) == n.res || from.block instanceof OverflowDuct || from.block instanceof DuctRouter || grid.safeToCore(q))) || (grid.planned(fx, fy) != null && grid.carry[q] == n.res);
             return ours && Router.accepts(b, grid.rotation(fx, fy), (from.rotation + 2) % 4, from.block);
         }
         return grid.uses(b, n.res);

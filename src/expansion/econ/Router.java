@@ -72,7 +72,7 @@ final class Router{
             this.kind = kind;
         }
 
-        Seq<Part> all(){
+        public Seq<Part> all(){
             Seq<Part> out = new Seq<>(trunk);
             for(Seq<Part> b : branch.values()) out.addAll(b);
             return out;
@@ -118,7 +118,12 @@ final class Router{
     // ---------------------------------------------------------------- all nets together
 
     /** Routes every net, negotiating over shared tiles; then puts them on the grid. Returns how many could not be laid whole. */
+    /** What the plan takes off the map's lines. */
+    final IntSet tapped = new IntSet();
+
     int routeAll(List<Net> nets){
+        tapped.clear();
+        for(Net n : nets) if(n.kind == Kind.tap) tapped.add(n.res);
         boolean clean = false;
         for(int it = 0; it < iterations && !clean; it++){
             for(Net n : nets){
@@ -501,7 +506,7 @@ final class Router{
                 if(!grid.in(qx, qy)) continue;
                 Block across = grid.block(qx, qy);
                 //(unless it is a line of the map's that ends in the core: what spills into it goes there anyway, as it would have)
-                if(across != null && Grid.takesItems(across) && !(across instanceof Duct && grid.reachesCore(grid.pos(qx, qy)))) continue;
+                if(across != null && Grid.takesItems(across) && !(across instanceof Duct && grid.safeToCore(grid.pos(qx, qy)))) continue;
                 if(across == null && !grid.free(qx, qy) && grid.ground[grid.pos(qx, qy)]) continue;
                 Start s = new Start(tx, ty, side, new Part(dock, tx, ty, rot, null));
                 s.quiet = across == null && grid.free(qx, qy) ? grid.pos(qx, qy) : -1;
@@ -716,9 +721,13 @@ final class Router{
         //(only a line that gets there: the map's own lines may end nowhere. Whatever such a line carries: a duct takes any
         //item, the core every one, and what stands along it takes only what it uses, so a core walled in by the map's own
         //base is got into this way)
+        //(but not one carrying something the plan taps off it: what this net brings would go into the taps as well, and
+        //stop up a taker that does not take it)
         if(!n.liquid) for(int i = 0; i < grid.mapLines().size; i++){
             int t = grid.mapLines().get(i);
-            if(!grid.reachesCore(t)) continue;
+            if(!grid.safeToCore(t)) continue;
+            int carries = grid.running.get(t, -1);
+            if(carries >= 0 && carries != n.res && tapped.contains(carries)) continue;
             lines.add(t);
             if(sample.size < 48) sample.add(t);
         }

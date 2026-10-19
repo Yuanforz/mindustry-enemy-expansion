@@ -186,8 +186,14 @@ public final class Hand extends mindustry.entities.units.AIController{
         if(unit.stack.amount < 6 && !carrying) return;
         carrying = false;
         int accepted = core.acceptStack(unit.item(), unit.stack.amount, unit);
-        if(accepted > 0) Call.transferItemTo(unit, unit.item(), accepted, unit.x, unit.y, core);
+        if(accepted > 0){
+            if(!carrying) delivered[unit.item().id] += accepted;
+            Call.transferItemTo(unit, unit.item(), accepted, unit.x, unit.y, core);
+        }
     }
+
+    /** For calibration: items dug and handed to the core, and seconds spent digging, by item id. */
+    public final float[] delivered = new float[256], digSeconds = new float[256];
 
     /** What the layout meant, to which what the hand and the watch are doing now is added for showing; null for none. */
     public Intent intent;
@@ -450,6 +456,9 @@ public final class Hand extends mindustry.entities.units.AIController{
         return true;
     }
 
+    /** What it dug last. */
+    Item lastPick;
+
     /** Whether what it holds was taken from a machine, to be handed to the core however little it is. */
     boolean carrying;
 
@@ -518,6 +527,14 @@ public final class Hand extends mindustry.entities.units.AIController{
             }
             return;
         }
+        //what it was digging, it goes on with while the core is still short of it (as the model has it): changing walls
+        //costs the way between them
+        if(cost != null && lastPick != null && lastPick != pick){
+            int id = works.cat.id(lastPick.name);
+            int carried = unit.stack.amount > 0 && unit.item() == lastPick ? unit.stack.amount : 0;
+            if(unit.canMine(lastPick) && cost[id] - core.items.get(lastPick) - carried > 0) pick = lastPick;
+        }
+        lastPick = pick;
         Tile wall = wall(pick, core);
         if(wall == null) return;
         //a full stack, or one of something else, goes to the core first: the game hands over only near it
@@ -534,6 +551,7 @@ public final class Hand extends mindustry.entities.units.AIController{
             else unit.clearItem();
         }
         if(unit.mineTile != wall) unit.mineTile = wall;
+        digSeconds[pick.id] += arc.util.Time.delta / 60f;
         moveTo(wall, unit.type.mineRange * 0.6f);
     }
 

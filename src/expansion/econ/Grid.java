@@ -463,6 +463,61 @@ public final class Grid{
         return mapLines;
     }
 
+    final IntIntMap safe = new IntIntMap();
+
+    /**
+     * Whether whatever is put onto the map's line at this tile can only end in the core: every duct ahead leads on (a
+     * duct pushes into what is in front of it, and waits there for ever if that does not take it), and every duct a
+     * router or overflow ahead may hand to does too (a router hands to any duct beside it). Stricter than
+     * {@link #reachesCore}, which asks only that some way gets there.
+     */
+    public boolean safeToCore(int start){
+        int known = safe.get(start, -1);
+        if(known >= 0) return known == 1;
+        IntSet seen = new IntSet();
+        IntQueue queue = new IntQueue();
+        queue.addLast(start);
+        boolean ok = true;
+        while(!queue.isEmpty() && ok){
+            int p = queue.removeFirst();
+            if(!seen.add(p)) continue;
+            if(seen.size > 3000){ ok = false; break; }
+            Building at = Vars.world.build(p % w, p / w);
+            if(at == null || at.team != team){ ok = false; break; }
+            if(at.block instanceof CoreBlock) continue;
+            if(!isLine(at.block) || isConduit(at.block)){ ok = false; break; }
+            if(at.block instanceof Duct){
+                Building f = at.front();
+                if(f == null){ ok = false; break; }
+                queue.addLast(f.tileX() + f.tileY() * w);
+            }else if(at instanceof DirectionBridge.DirectionBridgeBuild br){
+                Building link = br.findLink(), f = link != null ? link : at.front();
+                if(f == null){ ok = false; break; }
+                queue.addLast(f.tileX() + f.tileY() * w);
+            }else if(isOneWay(at.block)){
+                //(it hands only to what takes the thing: lines take anything, machines only what they use)
+                boolean any = false;
+                for(int d = 0; d < 4; d++){
+                    if(d == (at.rotation + 2) % 4 && !(at.block instanceof DuctRouter)) continue;
+                    Building n = at.nearby(d);
+                    if(n == null || n.team != team) continue;
+                    if(n.block instanceof CoreBlock || isLine(n.block)){
+                        //(a line pointing back into it does not take from it)
+                        if(isLine(n.block) && n.block instanceof Duct && n.front() == at) continue;
+                        queue.addLast(n.tileX() + n.tileY() * w);
+                        any = true;
+                    }
+                }
+                if(!any){ ok = false; break; }
+            }else{
+                ok = false;
+                break;
+            }
+        }
+        safe.put(start, ok ? 1 : 0);
+        return ok;
+    }
+
     /** Whether a running line of the map's at this tile gets what it carries to the core, followed forward (1 yes, 0 no). */
     public boolean reachesCore(int start){
         int known = reaches.get(start, -1);
