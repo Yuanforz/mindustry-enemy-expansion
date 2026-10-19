@@ -1,0 +1,17 @@
+BENCH onset onset stell 2 | model 3:34 game 3:55 | 91% | built 15/15 model 3:56 game 5:06 | nets unlaid 0 checker 0 | layout 0.9s
+BENCH aegis aegis stell 3 | model 3:15 game 3:16 | 100% | built 16/16 model 3:58 game 3:42 | nets unlaid 0 checker 0 | layout 9.1s
+BENCH lake lake stell 2 | model 3:48 game never | - | built 6/9 model 5:02 game - | nets unlaid 0 checker 0 | layout 4.9s | stuck: all built; digging what the core has least of
+BENCH intersect intersect stell 2 | model 2:18 game 2:25 | 95% | built 11/11 model 2:21 game 2:15 | nets unlaid 1 checker 0 | layout 5.3s
+BENCH atlas atlas locus 1 | model 5:27 game never | - | built 6/15 model 5:27 game - | nets unlaid 0 checker 0 | layout 2.8s | stuck: saving up for #8 electrolyzer: tungsten 0/80
+BENCH split atlas locus 1 | model never game never | - | built 0/3 model 180:00 game - | nets unlaid 0 checker 0 | layout 0.5s | stuck: saving up for #1 tank-refabricator:locus: tungsten 0/80
+BENCH basin atlas locus 1 | model 13:58 game never | - | built 2/9 model 13:58 game - | nets unlaid 3 checker 0 | layout 7.0s | stuck: saving up for #5 electrolyzer: tungsten 0/80
+BENCH marsh atlas locus 1 | model 3:33 game 3:58 | 89% | built 9/9 model 5:50 game 4:55 | nets unlaid 0 checker 0 | layout 1.7s
+BENCH peaks atlas locus 1 | model never game never | - | built 3/3 model 180:00 game 1:41 | nets unlaid 0 checker 0 | layout 0.3s
+BENCH ravine atlas locus 1 | model 3:48 game 3:49 | 100% | built 5/5 model 3:48 game 2:51 | nets unlaid 0 checker 0 | layout 1.1s
+BENCH caldera-erekir atlas locus 1 | model 5:28 game never | - | built 4/8 model 93:10 game - | nets unlaid 1 checker 0 | layout 17.2s | stuck: saving up for #5 tank-refabricator:locus: tungsten 0/80
+BENCH stronghold atlas locus 1 | model never game never | - | built 4/5 model 180:00 game - | nets unlaid 0 checker 0 | layout 1.8s | stuck: all built; digging what the core has least of
+BENCH crevice atlas locus 1 | model 3:41 game never | - | built 6/11 model 3:41 game - | nets unlaid 2 checker 1 | layout 21.6s | stuck: all built; digging what the core has least of
+BENCH siege atlas locus 1 | model never game never | - | built 4/4 model 180:00 game 0:20 | nets unlaid 0 checker 0 | layout 0.6s
+BENCH crossroads atlas locus 1 | model 1:47 game 2:14 | 80% | built 7/8 model 2:16 game - | nets unlaid 0 checker 0 | layout 0.8s | stuck: all built; digging what the core has least of
+BENCH karst atlas locus 1 | model 2:44 game 6:14 | 44% | built 9/10 model 2:44 game - | nets unlaid 1 checker 0 | layout 4.0s | stuck: all built; digging what the core has least of
+BENCH origin atlas locus 1 | model never game never | - | built 5/5 model 180:00 game 0:36 | nets unlaid 0 checker 0 | layout 3.7s

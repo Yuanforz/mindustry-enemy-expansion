@@ -133,7 +133,7 @@ public final class Sites{
 
     /**
      * Leaves out of the map's own machines those whose item does not get to the core as the model would count it: for
-     * each item, if what the core was seen to get (a second, watched over a while) is well short of what those machines
+     * each item, if what the core was seen to get (a second, watched over a while) is under a tenth of what those machines
      * would make, they stand idle or feed something else, and the plan may not count on them. What was left out, in words.
      */
     public static String prune(Catalog cat, Field field, Map<String, Float> income){
@@ -149,8 +149,12 @@ public final class Sites{
                 makers.add(m);
             }
             if(made <= 0.05f) continue;
+            //what feeds the map's own crafters is not meant for the core: those makers are kept
+            boolean used = false;
+            for(Machine m : field.existing) if(m.recipe.in[k] > 0f) used = true;
+            if(used) continue;
             float got = income.getOrDefault(r.name, 0f);
-            if(got >= made * 0.3f) continue;
+            if(got >= made * 0.1f) continue;
             field.existing.removeAll(makers);
             out.append(String.format("%d makers of %s left out (they would make %.2f/s, the core got %.2f/s); ", makers.size(), r.name, made, got));
         }
@@ -164,7 +168,7 @@ public final class Sites{
         for(int y = 0; y < h; y++){
             for(int x = 0; x < w; x++){
                 Tile t = Vars.world.tile(x, y);
-                open[x + y * w] = !t.block().isStatic() && !t.floor().isDeep() && t.floor().placeableOn && Vars.world.isInMapArea(x, y) && Vars.world.getDarkness(x, y) < 3;
+                open[x + y * w] = !t.block().isStatic() && (t.block() == mindustry.content.Blocks.air || t.block().alwaysReplace || t.build != null) && !t.floor().isDeep() && t.floor().placeableOn && Vars.world.isInMapArea(x, y) && Vars.world.getDarkness(x, y) < 3;
             }
         }
         IntQueue queue = new IntQueue();
