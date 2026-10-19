@@ -11,6 +11,7 @@ import mindustry.content.*;
 import mindustry.game.*;
 import mindustry.game.EventType.*;
 import mindustry.gen.*;
+import mindustry.entities.*;
 import mindustry.io.*;
 import mindustry.type.*;
 import mindustry.world.*;
@@ -159,6 +160,12 @@ public class Match{
                 //each stage may name ways to go, the first that can be done is taken: "locus:1|merui:2"
                 for(String way : stages[stage].split("\\|")){
                     st = way.split(":");
+                    //units that can't get to the Brain's base are not worth making (tanks, where deep water parts the bases)
+                    mindustry.type.UnitType kind = Vars.content.unit(st[0]);
+                    if(kind != null && !expansion.army.Reach.toFoe(kind, us, them)){
+                        System.out.println("  stage " + (stage + 1) + ": " + way + " passed over, " + kind.name + " can't get to the Brain's cores from ours");
+                        continue;
+                    }
                     Plan p = new Plan(System.out);
                     p.gate = !Boolean.getBoolean("match.allblocks");
                     p.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
@@ -211,6 +218,16 @@ public class Match{
                 if(!tb.hasAmmo()) drySeconds++;
             }
             if(f % 3600 == 0 && f > 0) System.out.println(report(f / 60f, hand, stage));
+            if(f % 3600 == 0 && f > 0 && army != null){
+                int commanded = 0, fighters = 0;
+                for(Unit u : us.data().units){
+                    if(u.spawnedByCore || !(u.controller() instanceof mindustry.ai.types.CommandAI ai)) continue;
+                    fighters++;
+                    if(ai.hasCommand() || ai.attackTarget != null) commanded++;
+                }
+                System.out.println(String.format("    army: go %b (strength %.2f of theirs), cap %d, %d fighting units, %d with orders; %s%s", army.allot.go, army.allot.lastRatio, Units.getCap(us), fighters, commanded,
+                    army.push.report(), army.push.target == null ? "" : " (now " + army.push.target.block.name + " at " + army.push.target.tileX() + "," + army.push.target.tileY() + ")"));
+            }
             if(f % (3600 * 3) == 0 && f > 0 && hand != null && Boolean.getBoolean("match.watch")) System.out.print(hand.watch.report(hand.works.cat));
             if(f % 3600 == 0 && us.core() != null) for(Item item : Vars.content.items()) lastMinute.put(item.name, us.core().items.get(item));
             if(f == 600 || (f % 3600 == 0 && Boolean.getBoolean("match.brainlog"))) System.out.println("  the Brain: active " + brain.active() + "; " + brain.status().replace("\n", "; "));
