@@ -131,7 +131,7 @@ case "$what" in
     # ./test.sh econbench [jobs]   the plan laid out and played on many maps; a table of the model against the game
     mkdir -p build/test-maps build/bench
     [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
-    jobs="${1:-3}"
+    jobs="${1:-4}"
     snap=build/bench/snap; rm -rf $snap; mkdir -p $snap; cp -r build/classes $snap/classes; cp -r build/test-classes $snap/test-classes
     CP="$GAME_JAR:$snap/classes:$snap/test-classes"
     # map sector unit machines minutes [radius]   (split, peaks and siege have no tungsten in reach: a T1 goal there, of a

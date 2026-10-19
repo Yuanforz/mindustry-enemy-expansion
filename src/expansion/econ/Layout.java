@@ -278,6 +278,21 @@ public final class Layout{
         return false;
     }
 
+    /** The takers no line could be laid to, with what they lack: for the planner to give them makers of their own. */
+    public List<Object[]> unfed(){
+        List<Object[]> out = new ArrayList<>();
+        for(Router.Net n : nets){
+            if(n.ok) continue;
+            for(Machine c : n.to){
+                if(c.existing || order.indexOf(c) < 0) continue;
+                String how = n.feeds.get(c);
+                //a taker nothing reaches: the tap or the line to it was not laid
+                if(n.trunk.isEmpty() || how == null || how.startsWith("not")) out.add(new Object[]{n.res, c});
+            }
+        }
+        return out;
+    }
+
     // ---------------------------------------------------------------- power, and whose job is what
 
     void wire(){

@@ -32,6 +32,7 @@ public class EconRun{
     };
 
     static final Map<String, Float> firstMade = new LinkedHashMap<>();
+    static int lastProgress = -1, lastProgressAt;
 
     /** The lines and power a sector has, and every one before it. */
     static Set<String> logisticsOf(String sector){
@@ -95,7 +96,7 @@ public class EconRun{
             //which of the map's ducts carry anything: a line seen empty all the while is not fed (or goes nowhere)
             if(f % 20 == 0) for(Building b : me.data().buildings) if(b.block instanceof mindustry.world.blocks.distribution.Duct && b.items != null && b.items.total() > 0) live.add(b.tileX() + b.tileY() * Vars.world.width());
         }
-        Grid.live = live;
+        //(not used: a duct holds its item a moment only, and sampling misses most lines that run)
         for(Item item : Vars.content.items()) income.put(item.name, (core.items.get(item) - before[item.id]) / watched);
         for(Item item : Vars.content.items()) core.items.set(item, before[item.id]);
         Vars.state.tick = 0;
@@ -119,6 +120,26 @@ public class EconRun{
         long l0 = System.nanoTime();
         Layout works = new Layout(cat, field, me, allowed);
         works.prepare(model.order);
+        //takers the layout could not feed get makers of their own, and it is all done again
+        for(int round = 0; round < 2; round++){
+            List<Object[]> unfed = works.unfed();
+            if(unfed.isEmpty()) break;
+            List<Machine> more = new ArrayList<>(model.order);
+            Set<String> asked = new HashSet<>();
+            for(Object[] u : unfed){
+                int res = (Integer)u[0];
+                Machine c = (Machine)u[1];
+                if(!asked.add(res + "@" + System.identityHashCode(c))) continue;
+                Machine m = planner.makerNear(res, c);
+                if(m != null) more.add(m);
+            }
+            if(more.size() == model.order.size()) break;
+            System.out.println("  the layout could not feed " + unfed.size() + " machine(s); makers of their own added: " + planner.notes.toString().trim().replace("\n", "; "));
+            planner.extras = 0;
+            model = planner.order(more, unit);
+            works = new Layout(cat, field, me, allowed);
+            works.prepare(model.order);
+        }
         long l1 = System.nanoTime();
         System.out.println(String.format("  laid out in %.1fs: %s", (l1 - l0) / 1e9, works.summary()));
         //what it all really costs (and how long each job takes) goes back to the planner, which orders it again; who owns
@@ -188,7 +209,15 @@ public class EconRun{
                 System.out.println(String.format("  %s: %d of %d begun; core %s; %s", EconLab.time(f / 60f), hand.next, model.order.size(), holds(core),
                     hand.machine != null ? "building " + hand.machine.recipe.name : "digging " + (builder.mineTile == null ? "nothing" : builder.mineTile.wallDrop().name)));
             }
-            if(hand.next >= model.order.size() && firstMade.containsKey(unitName) && f % 600 == 0) break;
+            if(firstMade.containsKey(unitName) && f % 600 == 0) break;
+            //no job begun or finished for three minutes, and no unit: it is stuck, and says where
+            if(f % 600 == 0){
+                int now = hand.next * 1000 + hand.watch.repaired;
+                if(now != lastProgress){
+                    lastProgress = now;
+                    lastProgressAt = f;
+                }else if(f - lastProgressAt > 3 * 3600) break;
+            }
         }
 
         System.out.println("  machine                          model begun/done     game begun/done   parts cost (model cost)");
@@ -298,7 +327,7 @@ public class EconRun{
         System.out.println(String.format("BENCH %s %s %s %d | model %s game %s | %s | built %d/%d model %s game %s | nets unlaid %d checker %d | layout %.1fs",
             mapName, sector, unitName, machines, EconLab.time(model.first[unit]), made == null ? "never" : EconLab.time(made),
             made == null ? "-" : String.format("%.0f%%", 100f * model.first[unit] / made), done, model.order.size(), EconLab.time(model.t), done == model.order.size() ? EconLab.time(lastDone) : "-",
-            works.failed, works.problems.size(), (l1 - l0) / 1e9) + (done < model.order.size() ? " | stuck: " + hand.doing : ""));
+            works.failed, works.problems.size(), (l1 - l0) / 1e9) + (made == null ? " | stuck: " + hand.doing : ""));
         System.exit(0);
     }
 

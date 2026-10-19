@@ -133,6 +133,34 @@ public final class Planner{
         return plan;
     }
 
+    /**
+     * A maker of a thing on the free place nearest a machine that takes it: for when the layout found no way to feed that
+     * machine from what the plan (or the map) makes. Null if no place gives it.
+     */
+    public Machine makerNear(int res, Machine taker){
+        Field.Site best = null;
+        Recipe bestRecipe = null;
+        double bestD = Double.MAX_VALUE;
+        for(Recipe r : cat.recipes){
+            if(r.ground == Recipe.Ground.none) continue;
+            boolean gives = r.out[res] > 0f || r.perFactor[res] > 0f;
+            if(!gives) continue;
+            for(Field.Site s : free){
+                if(s.ground != r.ground || (r.perFactor[res] > 0f && s.item != res)) continue;
+                double d = Math.hypot(s.x - taker.x, s.y - taker.y) - (r.perFactor[res] > 0f ? r.perFactor[res] * s.factor : r.out[res]) * 2;
+                if(d < bestD){
+                    bestD = d;
+                    best = s;
+                    bestRecipe = r;
+                }
+            }
+        }
+        if(best == null) return null;
+        free.remove(best);
+        notes.append(String.format("%s at %d,%d could not be fed %s: a %s of its own at %d,%d\n", taker.recipe.name, taker.x, taker.y, cat.get(res).name, bestRecipe.name, best.x, best.y));
+        return machine(bestRecipe, best);
+    }
+
     /** How far a liquid is worth leading (tiles); beyond it a machine is given a maker of its own. */
     public float localLiquid = 25f;
 

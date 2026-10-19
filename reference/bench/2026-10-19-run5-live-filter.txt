@@ -1,0 +1,17 @@
+BENCH onset onset stell 2 | model 3:34 game 3:55 | 91% | built 15/15 model 3:56 game 5:06 | nets unlaid 0 checker 0 | layout 1.1s
+BENCH aegis aegis stell 3 | model 2:42 game 2:50 | 96% | built 14/14 model 4:00 game 3:48 | nets unlaid 0 checker 0 | layout 2.4s
+BENCH lake lake stell 2 | model 2:03 game 3:20 | 61% | built 7/8 model 2:03 game - | nets unlaid 1 checker 0 | layout 4.0s | stuck: saving up for #8 tank-fabricator:stell: silicon 36/200
+BENCH intersect intersect stell 2 | model 2:21 game 4:15 | 55% | built 10/11 model 2:27 game - | nets unlaid 0 checker 0 | layout 1.8s | stuck: saving up for #11 tank-fabricator:stell: silicon 134/200
+BENCH atlas atlas locus 1 | model 3:57 game never | - | built 4/12 model 3:57 game - | nets unlaid 0 checker 0 | layout 9.4s | stuck: saving up for #5 electrolyzer: tungsten 0/80
+BENCH split atlas merui 2 | model never game never | - | built 0/2 model 180:00 game - | nets unlaid 2 checker 0 | layout 1.4s | stuck: saving up for #1 mech-fabricator:merui: tungsten 0/10
+BENCH basin atlas locus 1 | model never game never | - | built 0/3 model 180:00 game - | nets unlaid 3 checker 0 | layout 1.0s | stuck: saving up for #1 tank-refabricator:locus: tungsten 0/80
+BENCH marsh atlas locus 1 | model 3:27 game 3:38 | 95% | built 12/12 model 4:49 game 3:53 | nets unlaid 2 checker 0 | layout 6.9s
+BENCH peaks atlas elude 2 | model 2:04 game never | - | built 8/8 model 2:10 game 2:19 | nets unlaid 0 checker 0 | layout 0.3s
+BENCH ravine atlas locus 1 | model 3:50 game never | - | built 5/5 model 3:50 game 2:52 | nets unlaid 2 checker 0 | layout 4.5s
+BENCH caldera-erekir atlas locus 1 | model 4:43 game 8:58 | 53% | built 9/9 model 5:21 game 7:35 | nets unlaid 2 checker 0 | layout 5.0s
+BENCH stronghold atlas locus 1 | model never game never | - | built 4/4 model 180:00 game 0:18 | nets unlaid 1 checker 0 | layout 1.8s
+BENCH crevice atlas locus 1 | model 2:24 game never | - | built 9/9 model 2:25 game 2:26 | nets unlaid 2 checker 0 | layout 22.7s
+BENCH siege atlas stell 2 | model 0:52 game 1:12 | 73% | built 4/4 model 0:52 game 0:13 | nets unlaid 1 checker 0 | layout 1.2s
+BENCH crossroads atlas locus 1 | model 1:25 game never | - | built 7/7 model 1:25 game 0:46 | nets unlaid 0 checker 0 | layout 0.5s
+BENCH karst atlas locus 1 | model 1:52 game 2:06 | 89% | built 13/13 model 1:53 game 2:07 | nets unlaid 0 checker 0 | layout 1.6s
+BENCH origin atlas locus 1 | model never game never | - | built 4/4 model 180:00 game 0:28 | nets unlaid 1 checker 0 | layout 9.7s
