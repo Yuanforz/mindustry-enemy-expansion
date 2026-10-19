@@ -252,6 +252,24 @@ public class Match{
         }
         float t = (float)(Vars.state.tick / 60.0);
         System.out.println(report(t, hand, stage));
+        if(hand != null) for(String tr : hand.trouble) System.out.println("  could not put down: " + tr);
+        if(hand != null && Boolean.getBoolean("match.grids")) for(int i = 0; i < hand.order.size(); i++){
+            StringBuilder nodes = new StringBuilder();
+            for(var p : hand.works.job(hand.order.get(i))) if(p.block.name.equals("beam-node")) nodes.append(" ").append(p.x).append(",").append(p.y).append(Vars.world.tile(p.x, p.y).block() == p.block ? "" : "(missing)");
+            System.out.println("    job #" + (i + 1) + " " + hand.order.get(i).recipe.name + (i < hand.next ? "" : " (not begun)") + ": nodes" + nodes);
+        }
+        if(hand != null && Boolean.getBoolean("match.grids")) for(Machine m : hand.order){
+            var part = hand.works.at.get(m);
+            Building b = part == null ? null : Vars.world.build(part.x, part.y);
+            if(b == null || b.power == null) continue;
+            var g = b.power.graph;
+            if(g.getSatisfaction() < 0.5f && g.all.size < 10) for(Building o : g.all){
+                StringBuilder ln = new StringBuilder();
+                if(o instanceof mindustry.world.blocks.power.BeamNode.BeamNodeBuild bn) for(int i = 0; i < 4; i++) ln.append(" ").append(bn.links[i] == null ? "-" : bn.links[i].block.name + "@" + bn.links[i].tileX() + "," + bn.links[i].tileY());
+                System.out.println("      on it: " + o.block.name + " at " + o.tileX() + "," + o.tileY() + ln);
+            }
+            System.out.println(String.format("    grid of %s at %d,%d: #%d, %d buildings, made %.1f wanted %.1f a second, satisfaction %.2f", m.recipe.name, part.x, part.y, System.identityHashCode(g) % 10000, g.all.size, g.getLastPowerProduced() * 60f, g.getLastPowerNeeded() * 60f, g.getSatisfaction()));
+        }
         System.out.println(String.format("RESULT %s %s winner=%s at %s; units made us %d them %d, lost us %d them %d; blocks lost us %d them %d; planning took %.0fs; our turrets dry %d of %d turret-seconds",
             map.nameWithoutExtension(), mode, winner, Plan.time(t), count("us "), count("them "), lostUnits.get("us"), lostUnits.get("them"), blocksLostUs, blocksLostThem, planSeconds, drySeconds, turretSeconds));
         System.exit(0);

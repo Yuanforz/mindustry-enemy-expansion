@@ -144,6 +144,17 @@ final class Wiring{
         return false;
     }
 
+    /**
+     * For a side as it stands: the beam nodes that put a building no generator reaches back on the biggest grid, worked out
+     * on the map as it is now (a beam taken by a machine put up later in its way, a node lost to a raid); null if there is
+     * no way.
+     */
+    static Seq<Part> mend(Catalog cat, mindustry.game.Team team, mindustry.gen.Building cut){
+        Wiring w = new Wiring(new Grid(cat, team), new StringBuilder());
+        if(w.tree.isEmpty()) return null;
+        return w.connect(new Part(cut.block, cut.tileX(), cut.tileY(), cut.rotation, null));
+    }
+
     /** Joins a machine to the tree with the fewest new nodes; the nodes, or null if there is no way. */
     Seq<Part> connect(Part p){
         int self = grid.pos(p.x, p.y);

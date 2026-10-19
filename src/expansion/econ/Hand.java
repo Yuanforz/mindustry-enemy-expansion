@@ -55,6 +55,41 @@ public final class Hand extends mindustry.entities.units.AIController{
         return next >= order.size() && job == null && skipped.isEmpty() && pending == null;
     }
 
+    float mendAt;
+    /** Machines seen cut off from every generator at the last look, by position: twice running, and they are mended. */
+    final arc.struct.IntSet cutOff = new arc.struct.IntSet();
+    public int mended;
+
+    /**
+     * Every so often: a machine of the plan's, built, on a grid with no generator (its node's beam taken by something put up
+     * later in the way, or a node lost) gets nodes that join it to the main grid again, put up like anything that went
+     * missing. Seen so on basin: the furnace and a bore beside it on a grid of their own, and no silicon all game.
+     */
+    void mendPower(){
+        if(now() < mendAt) return;
+        mendAt = now() + 10f;
+        arc.struct.IntSet now = new arc.struct.IntSet();
+        for(int i = 0; i < Math.min(next, order.size()); i++){
+            Part self = works.at.get(order.get(i));
+            if(self == null) continue;
+            Building b = Vars.world.build(self.x, self.y);
+            if(b == null || b.block != self.block || b.power == null || b.block.consPower == null || !b.power.graph.producers.isEmpty()) continue;
+            if(b.power.graph.batteries.size > 0) continue;
+            int pos = b.pos();
+            now.add(pos);
+            if(!cutOff.contains(pos)) continue;
+            Seq<Part> nodes = Wiring.mend(works.cat, unit.team, b);
+            if(nodes == null || nodes.isEmpty()) continue;
+            for(Part p : nodes) if(!watch.repairs.contains(p, true)) watch.repairs.add(p);
+            mended++;
+            trouble.add(String.format("%s at %d,%d had no power: %d nodes to join it to the grid", b.block.name, b.tileX(), b.tileY(), nodes.size));
+            //(one at a time: the next look sees whether that did it for the others on the same island)
+            break;
+        }
+        cutOff.clear();
+        cutOff.addAll(now);
+    }
+
     /** Whether it has nothing at all to do: all built, nothing to put back or to cut. */
     public boolean idle(){
         return done() && watch.repairs.isEmpty() && deferred.isEmpty() && cuts.isEmpty();
@@ -70,6 +105,7 @@ public final class Hand extends mindustry.entities.units.AIController{
         offload();
         tell();
         watch.update(next);
+        mendPower();
         //parts left for want of anyone to see their ground: once seen, they go up; until then a unit goes to look
         if(job == null && !deferred.isEmpty()){
             Seq<Part> now = new Seq<>();
