@@ -311,7 +311,7 @@ final class Router{
             Machine c = farthestTaker(n, takers);
             takers.remove(c);
             takers.add(c);
-            end = into(at.get(c));
+            end = into(n, at.get(c));
             endAt = new int[]{at.get(c).x, at.get(c).y};
         }else{
             return;
@@ -422,7 +422,7 @@ final class Router{
                 starts.add(st);
             }
         }
-        Path path = starts.isEmpty() ? null : search(n, starts, List.of(), into(cp), new int[]{cp.x, cp.y});
+        Path path = starts.isEmpty() ? null : search(n, starts, List.of(), into(n, cp), new int[]{cp.x, cp.y});
         if(path == null){
             n.ok = false;
             n.why.add(cat.get(n.res).name + " on a spur off its spine to " + c.recipe.name + " at " + cp.x + "," + cp.y);
@@ -449,7 +449,7 @@ final class Router{
         if(n.from.isEmpty()) return;
         Machine c = n.to.isEmpty() ? null : n.to.get(0);
         if(c != null && at.get(c) == null) return;
-        Goal end = c == null ? core(n) : into(at.get(c));
+        Goal end = c == null ? core(n) : into(n, at.get(c));
         int[] endAt = c == null ? new int[]{grid.team.core().tileX(), grid.team.core().tileY()} : new int[]{at.get(c).x, at.get(c).y};
         //makers that touch the taker and hand it straight over have nothing to lay
         List<Machine> makers = new ArrayList<>();
@@ -518,7 +518,7 @@ final class Router{
             n.why.add("no running line of " + cat.get(n.res).name + " to take it off");
             return;
         }
-        Path path = search(n, starts, List.of(), into(cp), new int[]{cp.x, cp.y});
+        Path path = search(n, starts, List.of(), into(n, cp), new int[]{cp.x, cp.y});
         if(path == null){
             n.ok = false;
             n.why.add(cat.get(n.res).name + " off a running line to " + c.recipe.name);
@@ -563,7 +563,7 @@ final class Router{
                 continue;
             }
             //onto the line, or (when the line ends in a taker) straight into that taker
-            Goal goal = end == null ? joinGoal(n) : either(joinGoal(n), into(end));
+            Goal goal = end == null ? joinGoal(n) : either(joinGoal(n), into(n, end));
             Path path = search(n, starts(n, next), List.of(), goal, null);
             if(path == null){
                 n.ok = false;
@@ -577,6 +577,7 @@ final class Router{
 
     /** Whether a maker stands against a piece of its net that takes from it. */
     boolean touches(Net n, Machine m){
+        if(ports.containsKey(m)) return false;
         Part p = at.get(m);
         for(int[] t : Grid.around(p)){
             Part q = join.get(grid.pos(t[0], t[1]));
@@ -588,11 +589,14 @@ final class Router{
     /** Whether a maker gives the net's thing out of one of its sides. */
     boolean pushesOn(Net n, Machine m, int side){
         if(!n.liquid) return m.out(n.res) > 1e-4f;
+        //a pump hands what it pumps out of every side
+        if(m.recipe.ground == Recipe.Ground.liquidFloor) return m.item == n.res;
         Part p = at.get(m);
         return grid.liquidOut(p.block, p.rotation, side) == n.res;
     }
 
     boolean touchFeeds(Net n, Machine m, Machine c){
+        if(ports.containsKey(m) || ports.containsKey(c)) return false;
         Part p = at.get(m), q = at.get(c);
         if(p == null || q == null) return false;
         int[] tq = grid.tiles(q);
@@ -689,6 +693,42 @@ final class Router{
 
         /** Some of its tiles, for the estimate. */
         IntSeq sample();
+    }
+
+    /** For each design placed: its ports on the map {in, liquid, x, y, turn, res} (see {@link Layout#placeDesign}). */
+    final Map<Machine, List<int[]>> ports = new HashMap<>();
+
+    /** The design a part stands for, or null. */
+    Machine designOf(Part p){
+        if(p == null) return null;
+        for(var e : ports.entrySet()) if(at.get(e.getKey()) == p) return e.getKey();
+        return null;
+    }
+
+    /**
+     * Into a machine: anywhere along its edge; into a design only at its input for this net's thing, into the router
+     * there from behind (a duct router takes only from behind; a liquid router from any side).
+     */
+    Goal into(Net n, Part machine){
+        Machine m = designOf(machine);
+        if(m == null) return into(machine);
+        IntSeq sample = new IntSeq();
+        List<int[]> mine = new ArrayList<>();
+        for(int[] port : ports.get(m)){
+            if(port[0] != 1 || port[5] != n.res) continue;
+            mine.add(port);
+            sample.add(grid.pos(port[2], port[3]));
+        }
+        return new Goal(){
+            public boolean hit(int q, int d){
+                for(int[] port : mine) if(q == grid.pos(port[2], port[3]) && (port[1] == 1 || port[4] < 0 || d == port[4])) return true;
+                return false;
+            }
+
+            public IntSeq sample(){
+                return sample;
+            }
+        };
     }
 
     Goal into(Part machine){
@@ -795,6 +835,14 @@ final class Router{
     List<Start> starts(Net n, Machine m){
         Part p = at.get(m);
         List<Start> out = new ArrayList<>();
+        //a design: from its outputs of this thing only, the first piece on the output's tile, facing away
+        if(ports.containsKey(m)){
+            for(int[] port : ports.get(m)){
+                if(port[0] != 0 || port[5] != n.res || port[4] < 0) continue;
+                out.add(new Start(port[2] - Geometry.d4x(port[4]), port[3] - Geometry.d4y(port[4]), port[4], null));
+            }
+            return out;
+        }
         for(int[] t : Grid.around(p)){
             if(!pushesOn(n, m, t[2])) continue;
             //(x, y) is where the first piece goes; the virtual piece before it is the machine, pushing outwards
@@ -870,6 +918,25 @@ final class Router{
     }
 
     /** Whether a piece put on tile q facing rot gets nothing it should not from what stands or is planned round it. */
+    /** Why a piece on q would not be clean, each way it could face (for the log). */
+    String why(int q, Block piece, Net n){
+        StringBuilder b = new StringBuilder();
+        int x = q % grid.w, y = q / grid.w;
+        if(!grid.free(x, y)) b.append("; not free (" + (grid.block(x, y) == null ? "?" : grid.block(x, y).name) + ")");
+        if(grid.quiet[q]) b.append("; quiet");
+        for(int rot = 0; rot < 4; rot++){
+            for(int j = 0; j < 4; j++){
+                int mx = x + Geometry.d4x(j), my = y + Geometry.d4y(j);
+                if(!grid.in(mx, my)) continue;
+                Block from = grid.block(mx, my);
+                if(from == null || !accepts(piece, rot, j, from)) continue;
+                int v = grid.pushes(mx, my, x, y, n.liquid);
+                if(v != -1 && v != n.res) b.append(String.format("; facing %d gets %d from %s at %d,%d", rot, v, from.name, mx, my));
+            }
+        }
+        return b.toString();
+    }
+
     boolean clean(int q, Block piece, int rot, Net n){
         int x = q % grid.w, y = q / grid.w;
         for(int j = 0; j < 4; j++){
@@ -1013,6 +1080,7 @@ final class Router{
                     }
                 }
             }
+            if(DEBUG && expanded <= 2) log.append(String.format("router: %s from %d,%d: %s at %d,%d open %b%s\n", cat.get(n.res).name, px, py, piece.name, qx, qy, open(q, piece, n), why(q, piece, n)));
             if(!open(q, piece, n)) continue;
             //a conduit takes from a machine only when it points straight away from it
             int hk = how.get(key, 0);

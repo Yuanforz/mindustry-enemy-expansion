@@ -91,6 +91,10 @@ public final class Layout{
         tryNotes = best.note;
         at.clear();
         at.putAll(best.at);
+        bodies.clear();
+        bodies.putAll(best.bodies);
+        ports.clear();
+        ports.putAll(best.ports);
         nets = best.nets;
         failed = best.failed;
         for(Router.Net n : nets) if(!n.ok) log.append("not laid: ").append(String.join("; ", n.why)).append('\n');
@@ -107,7 +111,13 @@ public final class Layout{
         float cost, linesCost;
         String note = "";
         List<String> cellNotes = new ArrayList<>();
+        final Map<Machine, Seq<Part>> bodies = new HashMap<>();
+        final Map<Machine, List<int[]>> ports = new HashMap<>();
     }
+
+    /** For each design placed: all its blocks (what its job puts up), and its ports on the map {in, liquid, x, y, turn, res}. */
+    public final Map<Machine, Seq<Part>> bodies = new HashMap<>();
+    public final Map<Machine, List<int[]>> ports = new HashMap<>();
 
     Attempt attempt(int seed, Map<Integer, Float> stress){
         Attempt a = new Attempt();
@@ -142,6 +152,10 @@ public final class Layout{
         for(var e : cells.result().entrySet()){
             Machine m = e.getKey();
             int[] p = e.getValue();
+            if(m.recipe.module != null){
+                placeDesign(a, m, p);
+                continue;
+            }
             Part part = new Part(block(m), p[0], p[1], p[2], null);
             a.at.put(m, part);
             g.plan(part, -1, -1, dumpOf(m));
@@ -156,6 +170,7 @@ public final class Layout{
         //3. the nets
         Router router = new Router(g, cat, a.at, allowed, log);
         router.order = order;
+        router.ports.putAll(a.ports);
         a.nets = nets(router, a.at);
         a.failed = router.routeAll(a.nets);
         int pieces = 0;
@@ -170,6 +185,119 @@ public final class Layout{
             if(old != null && !(old.block == p.block && old.rotation == p.rotation)) log.append(String.format("%s of %s laid over the map's %s at %d,%d (facing %d)\n", n.kind, cat.get(n.res).name, old.block.name, p.x, p.y, old.rotation));
         }
         return a;
+    }
+
+    /**
+     * Puts a design down whole at p (its corner, turned p[2] times): every block as drawn, a router on each input (the line
+     * comes into it from behind), and the tile each output's line starts on kept free. What each block hands out is put on
+     * the grid, so lines laid beside it know; the piece that hands to an output carries that output's thing.
+     */
+    void placeDesign(Attempt a, Machine m, int[] p){
+        Design d = m.recipe.module;
+        int o = p[2];
+        Grid g = a.grid;
+        Seq<Part> body = new Seq<>();
+        mindustry.game.Schematic.Stile mainTile = d.main(o);
+        Part main = null;
+        for(mindustry.game.Schematic.Stile t : d.parts(o)){
+            Part part = new Part(t.block, p[0] + t.x, p[1] + t.y, t.rotation, t.config);
+            body.add(part);
+            if(t == mainTile) main = part;
+        }
+        int[][] at = d.portsAt(o);
+        List<int[]> world = new ArrayList<>();
+        Block itemRouter = Vars.content.block("duct-router"), liquidRouter = Vars.content.block("reinforced-liquid-router");
+        IntIntMap carries = new IntIntMap();
+        for(int i = 0; i < at.length; i++){
+            Design.Port port = d.ports.get(i);
+            int wx = p[0] + at[i][2], wy = p[1] + at[i][3], turn = at[i][4];
+            int res = cat.id(port.what);
+            if(port.in){
+                Part router = new Part(port.liquid ? liquidRouter : itemRouter, wx, wy, port.liquid || turn < 0 ? 0 : turn, null);
+                body.add(router);
+                carries.put(g.pos(wx, wy), res);
+            }else if(turn >= 0){
+                carries.put(g.pos(wx - Geometry.d4x(turn), wy - Geometry.d4y(turn)), res);
+            }
+            world.add(new int[]{port.in ? 1 : 0, port.liquid ? 1 : 0, wx, wy, turn, res});
+        }
+        for(Part part : body){
+            int q = g.pos(part.x, part.y);
+            g.plan(part, -1, carries.get(q, -1), dumpOf(part.block, part.config));
+        }
+        //what each line piece of it carries, followed from where things come in (its input routers, what its machines
+        //hand out); a piece that gets several things carries "something" (-2)
+        Map<Integer, Part> byTile = new HashMap<>();
+        for(Part part : body) for(int t : g.tiles(part)) byTile.put(t, part);
+        Map<Part, IntSet> got = new HashMap<>();
+        ArrayDeque<Object[]> queue = new ArrayDeque<>();
+        for(Part part : body){
+            int q = g.pos(part.x, part.y);
+            int in = carries.get(q, -1);
+            if(in >= 0 && Grid.isLine(part.block)) queue.add(new Object[]{part, in, -1});
+            int dump = dumpOf(part.block, part.config);
+            boolean pours = part.block.outputsLiquid;
+            if(dump < 0 && !pours) continue;
+            for(int[] t : Grid.around(part)){
+                Part next = byTile.get(g.pos(t[0], t[1]));
+                if(next == null || !Grid.isLine(next.block)) continue;
+                if(dump >= 0 && !Grid.isConduit(next.block)) queue.add(new Object[]{next, dump, t[2]});
+                if(pours){
+                    int liquid = g.liquidOut(part.block, part.rotation, t[2]);
+                    if(liquid >= 0) queue.add(new Object[]{next, liquid, t[2]});
+                }
+            }
+        }
+        for(int guard = 0; !queue.isEmpty() && guard < 20000; guard++){
+            Object[] e = queue.poll();
+            Part part = (Part)e[0];
+            int res = (Integer)e[1], came = (Integer)e[2];
+            if(!got.computeIfAbsent(part, x -> new IntSet()).add(res)) continue;
+            List<Integer> outs = new ArrayList<>();
+            Block b = part.block;
+            if(b instanceof DirectionBridge){
+                int[] link = g.bridgeLink(part.x, part.y);
+                if(link != null){
+                    Part to = byTile.get(g.pos(link[0], link[1]));
+                    if(to != null) queue.add(new Object[]{to, res, part.rotation});
+                    continue;
+                }
+                outs.add(part.rotation);
+            }else if(Grid.isOneWay(b)){
+                outs.add(part.rotation);
+                outs.add((part.rotation + 1) % 4);
+                outs.add((part.rotation + 3) % 4);
+            }else if(b instanceof LiquidRouter){
+                for(int dir = 0; dir < 4; dir++) outs.add(dir);
+            }else if(b instanceof LiquidJunction){
+                if(came >= 0) outs.add(came);
+            }else{
+                outs.add(part.rotation);
+            }
+            for(int dir : outs){
+                Part to = byTile.get(g.pos(part.x + Geometry.d4x(dir), part.y + Geometry.d4y(dir)));
+                if(to != null && Grid.isLine(to.block)) queue.add(new Object[]{to, res, dir});
+            }
+        }
+        for(var e : got.entrySet()){
+            Part part = e.getKey();
+            int carry = e.getValue().size == 1 ? e.getValue().first() : -2;
+            //(what hands to an output, and an input's router, carry what the lab saw pass there)
+            carry = carries.get(g.pos(part.x, part.y), carry);
+            g.plan(part, -1, carry, dumpOf(part.block, part.config));
+        }
+        //an output's first tile stays free of anything solid: the line starts there
+        for(int[] w : world) if(w[0] == 0) g.noSolid[g.pos(w[2], w[3])] = true;
+        a.at.put(m, main);
+        a.bodies.put(m, body);
+        a.ports.put(m, world);
+    }
+
+    /** What a block of a design hands out to its neighbours: a crafter's one item, an unloader's item; -1 if none or not known. */
+    int dumpOf(Block b, Object config){
+        if(config instanceof mindustry.type.Item item) return cat.id(item.name);
+        if(b instanceof mindustry.world.blocks.production.GenericCrafter gc && gc.outputItems != null && gc.outputItems.length == 1) return cat.id(gc.outputItems[0].item.name);
+        return -1;
     }
 
     /** The one item a machine hands to its neighbours, if it makes one (a drill's ore, a crafter's single item). */
@@ -231,6 +359,19 @@ public final class Layout{
                 //see Catalog.coreShare): only worth it for what building costs, which the core must get; anything else goes
                 //whole to its takers
                 boolean dockable = router.dock != null && (router.underflow() || buildsWith(k) || takers.isEmpty());
+                //a design takes only at its input's router: a direct line of its own, never a dock on a bus
+                List<Machine> designs = new ArrayList<>();
+                for(Machine c : takers) if(c.recipe.module != null) designs.add(c);
+                if(dockable && !designs.isEmpty()){
+                    takers.removeAll(designs);
+                    Router.Net n = new Router.Net(id++, k, false, Router.Kind.bus);
+                    n.from.addAll(makers);
+                    n.to.addAll(takers);
+                    n.toCore = router.underflow() || takers.isEmpty() || buildsWith(k);
+                    out.add(n);
+                    takers = designs;
+                    dockable = false;
+                }
                 if(dockable){
                     Router.Net n = new Router.Net(id++, k, false, Router.Kind.bus);
                     n.from.addAll(makers);
@@ -588,7 +729,8 @@ public final class Layout{
         Seq<Part> parts = new Seq<>();
         Part self = at.get(m);
         if(self == null) return parts;
-        parts.add(self);
+        if(bodies.containsKey(m)) parts.addAll(bodies.get(m));
+        else parts.add(self);
         parts.addAll(lines.getOrDefault(m, new Seq<>()));
         parts.addAll(wires.getOrDefault(m, new Seq<>()));
         return parts;
@@ -801,7 +943,23 @@ public final class Layout{
         for(Machine m : order){
             if(m.recipe.ground != Recipe.Ground.none) continue;
             Part p = at.get(m);
-            if(p != null) in.block(Intent.Layer.cells, p.x, p.y, p.block.size, Intent.violet, m.recipe.name);
+            if(p == null) continue;
+            if(bodies.containsKey(m)){
+                //a design: every block of it, and its ports (in: where the line comes into its router; out: where it starts)
+                for(Part b : bodies.get(m)) in.block(Intent.Layer.cells, b.x, b.y, b.block.size, Intent.violet, null);
+                in.text(Intent.Layer.cells, p.x, p.y + 2, Intent.violet, m.recipe.name);
+                for(int[] port : ports.get(m)){
+                    String what = cat.get(port[5]).name;
+                    if(port[0] == 1){
+                        int bx = port[2] - (port[4] < 0 ? 0 : Geometry.d4x(port[4])), by = port[3] - (port[4] < 0 ? 0 : Geometry.d4y(port[4]));
+                        in.arrow(Intent.Layer.cells, bx, by, port[2], port[3], Intent.white, "in " + what);
+                    }else{
+                        in.arrow(Intent.Layer.cells, port[2], port[3], port[2] + (port[4] < 0 ? 0 : Geometry.d4x(port[4])), port[3] + (port[4] < 0 ? 0 : Geometry.d4y(port[4])), Intent.yellow, "out " + what);
+                    }
+                }
+                continue;
+            }
+            in.block(Intent.Layer.cells, p.x, p.y, p.block.size, Intent.violet, m.recipe.name);
         }
         for(String n : cellNotes) in.note(Intent.Layer.cells, n);
         in.note(Intent.Layer.cells, "kept: " + tryNotes);

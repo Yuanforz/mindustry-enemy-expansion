@@ -108,6 +108,46 @@ public final class Design{
         return turned[o].height;
     }
 
+    private final int[][][] foot = new int[4][][];
+
+    /**
+     * The tiles it covers turned o times, from its corner: every tile of every block, and the tiles of its ports (the
+     * router an input becomes, the first piece of an output's line), {dx, dy} each.
+     */
+    public int[][] footprint(int o){
+        if(foot[o] != null) return foot[o];
+        arc.struct.IntSet seen = new arc.struct.IntSet();
+        List<int[]> out = new ArrayList<>();
+        for(Stile t : turned[o].tiles){
+            boolean port = sandbox(t.block);
+            int size = port ? 1 : t.block.size, off = (size - 1) / 2;
+            for(int dx = 0; dx < size; dx++){
+                for(int dy = 0; dy < size; dy++){
+                    int x = t.x - off + dx, y = t.y - off + dy;
+                    if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+                }
+            }
+        }
+        //and the tile a line comes into an input from (behind its router), and the one an output's line goes on to
+        for(int[] port : portsAt(o)){
+            if(port[4] < 0) continue;
+            int dx = arc.math.geom.Geometry.d4x(port[4]), dy = arc.math.geom.Geometry.d4y(port[4]);
+            int x = port[0] == 1 ? port[2] - dx : port[2] + dx, y = port[0] == 1 ? port[3] - dy : port[3] + dy;
+            if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+        }
+        return foot[o] = out.toArray(new int[0][]);
+    }
+
+    /** The block that stands for the whole design where only one can (the biggest that uses power, else the biggest), turned o times. */
+    public Stile main(int o){
+        Stile best = null;
+        for(Stile t : parts(o)){
+            boolean powered = t.block.consPower != null, bp = best != null && best.block.consPower != null;
+            if(best == null || (powered && !bp) || (powered == bp && t.block.size > best.block.size)) best = t;
+        }
+        return best;
+    }
+
     /** The design's blocks turned o times, without its sources and voids: what is built. */
     public Seq<Stile> parts(int o){
         return turned[o].tiles.select(t -> !sandbox(t.block));

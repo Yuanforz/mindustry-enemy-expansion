@@ -24,6 +24,9 @@ public final class Sites{
     /** At most this many places are kept for each kind of ground and item, the best first. */
     public static int keep = 40;
 
+    static final boolean DEBUG = Boolean.getBoolean("xp.sitelog");
+    static final int[] dbg = new int[4];
+
     public static Field scan(Catalog cat, Team team, int radius){
         Field field = new Field(cat);
         CoreBlock.CoreBuild core = team.core();
@@ -55,9 +58,13 @@ public final class Sites{
                     Tile tile = Vars.world.tile(x, y);
                     if(tile == null || dst(field, x, y) > radius) continue;
                     for(int rot = 0; rot < (block.rotate ? 4 : 1); rot++){
+                        boolean liq = DEBUG && r.ground == Recipe.Ground.liquidFloor && tile.floor().liquidDrop != null;
+                        if(liq) dbg[0]++;
                         if(!Build.validPlace(block, team, x, y, rot) || occupied(block, x, y)) continue;
+                        if(liq) dbg[1]++;
                         Field.Site site = site(cat, field, r.ground, block, x, y, rot);
                         if(site != null) all.add(site);
+                        if(liq && site != null) dbg[2]++;
                     }
                 }
             }
@@ -77,6 +84,11 @@ public final class Sites{
             }
             return true;
         });
+        if(DEBUG){
+            int left = 0;
+            for(Field.Site st : all) if(st.ground == Recipe.Ground.liquidFloor) left++;
+            System.out.println("  sites: liquid floor tiles " + dbg[0] + ", placeable " + dbg[1] + ", sites " + dbg[2] + ", left after reach/danger " + left);
+        }
         Vars.state.rules.fog = fog;
         //what the side has seen so far: the game works its fog out on a thread of its own, which this makes it do now
         if(fog && Vars.state.rules.staticFog){
@@ -317,6 +329,22 @@ public final class Sites{
                 if(best == null) return null;
                 item = cat.id(best.name);
                 factor = ores.get(best, 0);
+            }
+            case liquidFloor -> {
+                //one liquid under all of it (the game's rule), so much a tile
+                Liquid[] drop = {null};
+                float[] amount = {0f};
+                boolean[] mixed = {false};
+                Vars.world.tile(x, y).getLinkedTilesAs(block, other -> {
+                    Liquid l = other.floor().liquidDrop;
+                    if(l == null) return;
+                    if(drop[0] != null && drop[0] != l) mixed[0] = true;
+                    drop[0] = l;
+                    amount[0] += other.floor().liquidMultiplier;
+                });
+                if(drop[0] == null || mixed[0]) return null;
+                item = cat.id(drop[0].name);
+                factor = amount[0];
             }
             default -> {
                 return null;

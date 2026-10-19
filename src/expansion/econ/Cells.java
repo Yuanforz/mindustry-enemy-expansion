@@ -77,8 +77,38 @@ final class Cells{
         coreSize = grid.team.core().block.size;
     }
 
+    /** The block a machine is; for a design, the block that stands for it (see {@link Design#main}). */
     static Block block(Machine m){
+        if(m.recipe.module != null) return m.recipe.module.main(0).block;
         return Vars.content.block(m.recipe.block);
+    }
+
+    static boolean design(Machine m){
+        return m.recipe.module != null;
+    }
+
+    /** The tiles a machine covers at p (a block: about its centre; a design: from its corner, turned p[2] times). */
+    int[] tiles(Machine m, int[] p){
+        if(!design(m)) return grid.tiles(block(m), p[0], p[1]);
+        int[][] f = m.recipe.module.footprint(p[2]);
+        int[] out = new int[f.length];
+        for(int i = 0; i < f.length; i++){
+            int x = p[0] + f[i][0], y = p[1] + f[i][1];
+            out[i] = grid.in(x, y) ? grid.pos(x, y) : -1;
+        }
+        return out;
+    }
+
+    /** Whether a machine fits at p on the ground as it is planned so far. */
+    boolean fits(Machine m, int[] p){
+        if(!design(m)) return grid.fits(block(m), p[0], p[1]);
+        for(int[] t : m.recipe.module.footprint(p[2])){
+            int x = p[0] + t[0], y = p[1] + t[1];
+            if(!grid.free(x, y)) return false;
+            int q = grid.pos(x, y);
+            if(grid.noSolid[q] || grid.quiet[q]) return false;
+        }
+        return true;
     }
 
     /** Who makes and takes what, from the machines of the order and those that stand. */
@@ -125,7 +155,7 @@ final class Cells{
             Unit u = new Unit();
             u.ms.add(m);
             u.rel.add(new int[]{0, 0, 0});
-            u.electrolyzer = m.recipe.out[hydrogen()] > 0f;
+            u.electrolyzer = !design(m) && m.recipe.out[hydrogen()] > 0f;
             units.add(u);
         }
         //the big ones first, for the first placing
@@ -142,7 +172,7 @@ final class Cells{
 
     static int area(Unit u){
         int a = 0;
-        for(Machine m : u.ms) a += block(m).size * block(m).size;
+        for(Machine m : u.ms) a += design(m) ? m.recipe.module.width(0) * m.recipe.module.height(0) : block(m).size * block(m).size;
         return a;
     }
 
@@ -172,10 +202,9 @@ final class Cells{
         if(Math.hypot(x - field.coreX, y - field.coreY) > radius) return false;
         for(int i = 0; i < u.ms.size(); i++){
             Machine m = u.ms.get(i);
-            Block b = block(m);
             int[] p = member(u, i, x, y, o);
-            if(!grid.fits(b, p[0], p[1])) return false;
-            for(int t : grid.tiles(b, p[0], p[1])){
+            if(!fits(m, p)) return false;
+            for(int t : tiles(m, p)){
                 int f = foot.get(t, 0), e = exit.get(t, 0);
                 if((f != 0 && f != ui + 1) || (e != 0 && e != ui + 1)) return false;
                 if(coreRing(t % grid.w, t / grid.w)) return false;
@@ -195,7 +224,7 @@ final class Cells{
     /** The tiles in front of a member that makes units and hands them to nothing of its own unit. */
     int[] exitOf(Unit u, int i, int[] p){
         Machine m = u.ms.get(i);
-        if(!m.recipe.makesUnits()) return null;
+        if(!m.recipe.makesUnits() || design(m)) return null;
         //a factory whose refabricator stands in front of it hands its units straight in
         if(i == 0 && u.ms.size() > 1 && u.ms.get(1).recipe.unitIn == m.recipe.unitOut) return null;
         return grid.front(block(m), p[0], p[1], p[2], 2);
@@ -207,7 +236,7 @@ final class Cells{
             int[] p = member(u, i, u.x, u.y, u.o);
             Machine m = u.ms.get(i);
             where.put(m, p);
-            for(int t : grid.tiles(block(m), p[0], p[1])) foot.put(t, ui + 1);
+            for(int t : tiles(m, p)) if(t >= 0) foot.put(t, ui + 1);
             int[] ex = exitOf(u, i, p);
             if(ex != null) for(int t : ex) if(t >= 0) exit.put(t, ui + 1);
         }
@@ -219,7 +248,7 @@ final class Cells{
             Machine m = u.ms.get(i);
             int[] p = where.remove(m);
             if(p == null) continue;
-            for(int t : grid.tiles(block(m), p[0], p[1])) if(foot.get(t, 0) == ui + 1) foot.remove(t, 0);
+            for(int t : tiles(m, p)) if(t >= 0 && foot.get(t, 0) == ui + 1) foot.remove(t, 0);
             int[] ex = exitOf(u, i, p);
             if(ex != null) for(int t : ex) if(t >= 0 && exit.get(t, 0) == ui + 1) exit.remove(t, 0);
         }
@@ -229,6 +258,10 @@ final class Cells{
 
     int[] rect(Machine m){
         int[] p = where.get(m);
+        if(design(m)){
+            Design d = m.recipe.module;
+            return new int[]{p[0], p[1], p[0] + d.width(p[2]) - 1, p[1] + d.height(p[2]) - 1};
+        }
         int s = block(m).size, off = -(s - 1) / 2;
         return new int[]{p[0] + off, p[1] + off, p[0] + off + s - 1, p[1] + off + s - 1};
     }
@@ -257,6 +290,8 @@ final class Cells{
 
     /** Whether maker p, as it stands, hands thing k straight to the machine c it touches. */
     boolean feeds(Machine p, Machine c, int k){
+        //a design hands over and takes only at its ports, which lines go to
+        if(design(p) || design(c)) return false;
         int s = side(rect(p), rect(c));
         if(s < 0) return false;
         if(cat.get(k).kind == Res.Kind.liquid) return grid.liquidOut(block(p), where.get(p)[2], s) == k;
@@ -306,16 +341,31 @@ final class Cells{
                         if(side(r, rect(o)) >= 0 && feedsAny(m, o, k) && grid.uses(block(o), k)) c += 30f;
                     }
                 }
-                //room round it for its lines
-                int need = ports.getOrDefault(m, 0), free = 0;
-                for(int[] t : Grid.around(block(m).size, where.get(m)[0], where.get(m)[1])){
+                //room round it for its lines (a design's ports are its own)
+                int need = design(m) ? 0 : ports.getOrDefault(m, 0), free = 0;
+                if(!design(m)) for(int[] t : Grid.around(block(m).size, where.get(m)[0], where.get(m)[1])){
                     if(!grid.free(t[0], t[1])) continue;
                     int q = grid.pos(t[0], t[1]);
                     if(foot.get(q, 0) != 0) continue;
                     free++;
                 }
-                if(free < need * 2 + 1) c += 8f * (need * 2 + 1 - free);
-                for(int t : grid.tiles(block(m), where.get(m)[0], where.get(m)[1])) c += grid.kept[t];
+                if(!design(m) && free < need * 2 + 1) c += 8f * (need * 2 + 1 - free);
+                //a liquid that comes out of one side only (an electrolyzer's hydrogen and ozone): that side needs a free
+                //tile, or something touching there that takes it
+                if(!design(m)) for(NetModel n : nets){
+                    if(!n.liquid || !n.from.contains(m)) continue;
+                    boolean open = false, directional = false;
+                    for(int[] t : Grid.around(block(m).size, where.get(m)[0], where.get(m)[1])){
+                        if(grid.liquidOut(block(m), where.get(m)[2], t[2]) != n.res) continue;
+                        directional = true;
+                        int q = grid.pos(t[0], t[1]);
+                        if(grid.free(t[0], t[1]) && foot.get(q, 0) == 0) open = true;
+                    }
+                    boolean touching = false;
+                    for(Machine o : n.to) if(where.containsKey(o) && feeds(m, o, n.res)) touching = true;
+                    if(directional && !open && !touching) c += 40f;
+                }
+                for(int t : tiles(m, where.get(m))) if(t >= 0) c += grid.kept[t];
                 c += 0.08f * gap(r, core);
             }
         }
@@ -323,6 +373,7 @@ final class Cells{
     }
 
     boolean feedsAny(Machine p, Machine c, int k){
+        if(design(p) || design(c)) return false;
         int s = side(rect(p), rect(c));
         if(s < 0) return false;
         if(cat.get(k).kind == Res.Kind.liquid) return grid.liquidOut(block(p), where.get(p)[2], s) == k;
@@ -561,7 +612,7 @@ final class Cells{
                     b.append(String.format(" %s %s %s;", maker ? "makes" : "takes", cat.get(n.res).name, how));
                 }
                 int free = 0;
-                for(int[] t : Grid.around(block(m).size, p[0], p[1])) if(grid.free(t[0], t[1]) && foot.get(grid.pos(t[0], t[1]), 0) == 0) free++;
+                if(!design(m)) for(int[] t : Grid.around(block(m).size, p[0], p[1])) if(grid.free(t[0], t[1]) && foot.get(grid.pos(t[0], t[1]), 0) == 0) free++;
                 b.append(String.format(" %d free tiles round it for %d lines", free, lines));
                 out.add(b.toString());
             }
@@ -575,7 +626,7 @@ final class Cells{
         for(Unit u : units){
             for(Machine m : u.ms){
                 int[] p = where.get(m).clone();
-                if(!block(m).rotate) p[2] = 0;
+                if(!design(m) && !block(m).rotate) p[2] = 0;
                 out.put(m, p);
             }
         }

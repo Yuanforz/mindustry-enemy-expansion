@@ -159,7 +159,14 @@ public class EconRun{
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
         final float wanted = making != null ? machines / making.unitSeconds : machines;
         List<Machine> plant = planner.balance(unit, wanted);
-        if(Boolean.getBoolean("xp.chains")) System.out.print(planner.chains.describe());
+        if(Boolean.getBoolean("xp.chains")){
+            System.out.print(planner.chains.describe());
+            Map<String, Integer> kinds = new TreeMap<>();
+            for(Field.Site st : field.sites) kinds.merge(st.ground + "/" + (st.item >= 0 ? cat.get(st.item).name : "-"), 1, Integer::sum);
+            System.out.println("  places: " + kinds + " (of " + field.candidates + " looked at)");
+            for(Recipe r : cat.recipes) if(r.ground != Recipe.Ground.none) System.out.print(" [" + r.name + " " + r.ground + "]");
+            System.out.println();
+        }
         if(!planner.notes.toString().isEmpty()) System.out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
         Timeline model = planner.order(plant, unit);
         System.out.println("######## " + new Fi(args[1]).nameWithoutExtension() + ": " + unitName + " from " + machines + "; the model has it done by " + EconLab.time(model.t)

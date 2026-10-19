@@ -320,6 +320,7 @@ public final class Grid{
             return -1;
         }
         if(b instanceof ThermalGenerator tg && tg.outputLiquid != null) return cat.id(tg.outputLiquid.liquid.name);
+        if(b instanceof ConsumeGenerator cg && cg.outputLiquid != null) return cat.id(cg.outputLiquid.liquid.name);
         return -1;
     }
 

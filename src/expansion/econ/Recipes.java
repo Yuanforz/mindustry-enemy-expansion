@@ -6,6 +6,7 @@ import mindustry.type.*;
 import mindustry.world.*;
 import mindustry.world.blocks.power.*;
 import mindustry.world.blocks.production.*;
+import mindustry.world.blocks.liquid.*;
 import mindustry.world.blocks.storage.*;
 import mindustry.world.blocks.units.*;
 import mindustry.world.consumers.*;
@@ -112,6 +113,11 @@ public final class Recipes{
                 boostUse = liquid.amount * 60f;
                 boostMultiplier = drill.liquidBoostIntensity;
             }
+        }else if(block instanceof Pump pump){
+            //by the tile of liquid floor under it (a floor's multiplier counts, as in the game)
+            ground = Recipe.Ground.liquidFloor;
+            for(Liquid liquid : Vars.content.liquids()) perFactor[cat.id(liquid.name)] = pump.pumpAmount * 60f;
+            inputs(cat, block, in, 0f);
         }else if(block instanceof WallCrafter crusher){
             ground = Recipe.Ground.sandWall;
             perFactor[cat.id(crusher.output.name)] = 60f / crusher.drillTime;

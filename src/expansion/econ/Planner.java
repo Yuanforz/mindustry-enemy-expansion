@@ -76,7 +76,11 @@ public final class Planner{
     /** What each thing costs to make, the cheapest way: for choosing between recipes and modules. */
     public Chains chains;
 
+    /** What could not be made enough of in the balance. */
+    final Set<Integer> stuck = new HashSet<>();
+
     List<Machine> balanceRest(List<Machine> plan){
+        stuck.clear();
         //what everything takes, until there is enough of all of it
         for(int guard = 0; guard < 400; guard++){
             List<Machine> all = new ArrayList<>(field.existing);
@@ -91,11 +95,12 @@ public final class Planner{
                 powerWant += m.recipe.powerUse;
                 powerHave += m.powerOut();
             }
-            //the thing most short of, as a share of what is wanted
+            //the thing most short of, as a share of what is wanted (what nothing more can make is left as it is: the rest is
+            //still balanced)
             int worst = -1;
             float worstShare = 0f;
             for(int k = 0; k < cat.size(); k++){
-                if(cat.get(k).kind == Res.Kind.unit || want[k] <= have[k] + 1e-4f) continue;
+                if(cat.get(k).kind == Res.Kind.unit || want[k] <= have[k] + 1e-4f || stuck.contains(k)) continue;
                 float share = (want[k] - have[k]) / want[k];
                 if(share > worstShare){
                     worstShare = share;
@@ -108,12 +113,13 @@ public final class Planner{
                 add = maker(worst, want[worst] - have[worst], powerWant > powerHave);
                 if(add == null){
                     notes.append("no way to make enough ").append(cat.get(worst).name).append(" (").append(String.format("%.2f", want[worst] - have[worst])).append("/s short)\n");
-                    return plan;
+                    stuck.add(worst);
+                    continue;
                 }
             }else if(powerWant > powerHave + 1e-3f){
                 add = powerMaker();
                 if(add == null){
-                    notes.append(String.format("not enough vents for the power: %.0f/s wanted, %.0f/s made\n", powerWant, powerHave));
+                    notes.append(String.format("no way to make enough power: %.0f/s wanted, %.0f/s made\n", powerWant, powerHave));
                     return plan;
                 }
             }else{
@@ -220,6 +226,12 @@ public final class Planner{
     Machine maker(int res, float short_, boolean powerShort){
         //water comes from vents, as power does: where power is short too a turbine gives both, else a condenser gives far more water
         if(cat.get(res).kind == Res.Kind.liquid){
+            //from a liquid floor (slag, arkycite), by a pump on the best free place, when that is the cheapest way
+            if(chains != null && chains.by[res] != null && chains.by[res].ground == Recipe.Ground.liquidFloor){
+                Recipe pump = chains.by[res];
+                Field.Site site = take(pump.ground, res);
+                if(site != null) return machine(pump, site);
+            }
             Recipe best = null;
             for(Recipe r : cat.recipes){
                 if(r.out[res] <= 0f) continue;
@@ -293,13 +305,27 @@ public final class Planner{
     }
 
     Machine powerMaker(){
+        //a turbine on a free vent first (power and water for nothing but itself)
         for(Recipe r : cat.recipes){
             if(r.powerOut > 0f && r.ground == Recipe.Ground.vent){
                 Field.Site site = take(Recipe.Ground.vent, -1);
-                return site == null ? null : machine(r, site);
+                if(site != null) return machine(r, site);
             }
         }
-        return null;
+        //else the generator whose power, with what it burns, costs least (combustion chambers, pyrolysis)
+        Recipe best = null;
+        float bestCost = Float.POSITIVE_INFINITY;
+        for(Recipe r : cat.recipes){
+            if(r.powerOut <= 0f || r.ground != Recipe.Ground.none) continue;
+            float spent = r.totalCost();
+            for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f) spent += r.in[k] * (chains == null ? 0f : chains.cost[k]);
+            float c = spent / r.powerOut;
+            if(c < bestCost){
+                bestCost = c;
+                best = r;
+            }
+        }
+        return best == null || Float.isInfinite(bestCost) ? null : machine(best, null);
     }
 
     static float cost(Recipe r){
@@ -709,7 +735,7 @@ public final class Planner{
         for(Field.Site s : n.pool){
             if(!kinds.add(s.ground + "/" + s.item)) continue;
             for(Recipe r : cat.recipes){
-                boolean fits = r.ground == s.ground && (s.ground == Recipe.Ground.vent ? r.powerOut > 0f : r.perFactor[s.item] > 0f && noInputs(r));
+                boolean fits = r.ground == s.ground && (s.ground == Recipe.Ground.vent ? r.powerOut > 0f : s.item >= 0 && r.perFactor[s.item] > 0f && noInputs(r));
                 if(!fits) continue;
                 list.add(List.of(extra(r, s, false)));
                 if(r.boostRes >= 0 && made[r.boostRes]) list.add(List.of(extra(r, s, true)));

@@ -18,7 +18,9 @@ public final class Recipe{
         /** Facing rock that gives sand (cliff crushers). */
         sandWall,
         /** Standing on ore (impact drills). */
-        floorOre
+        floorOre,
+        /** Standing on a liquid floor (pumps: slag, arkycite, water). */
+        liquidFloor
     }
 
     public final String name, block;
