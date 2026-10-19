@@ -54,6 +54,8 @@ public final class Layout{
     public final List<String> problems = new ArrayList<>();
     public List<Machine> order = new ArrayList<>();
     public int failed, tries = 3;
+    /** Whether trying again stops once a try lays no more than the best before it (-Dxp.alltries=true: all tries). */
+    public static boolean triesPatience = !Boolean.getBoolean("xp.alltries");
     /** Where the random choices start from (the bench runs each map from several, to see how sure a result is). */
     public static long seed = Long.getLong("xp.seed", 0L);
     Wiring wiring;
@@ -79,11 +81,16 @@ public final class Layout{
         Map<Integer, Float> stress = new HashMap<>();
         Attempt best = null;
         for(int t = 0; t < tries; t++){
+            long t0 = Took.start();
             Attempt a = attempt(t, stress);
+            Took.end("layout: attempt", t0);
             log.append(String.format("try %d: %s\n", t + 1, a.note));
+            int bestFailed = best == null ? Integer.MAX_VALUE : best.failed;
             //fewest nets left unlaid, then the fewest items the lines take
             if(best == null || a.failed < best.failed || (a.failed == best.failed && a.linesCost < best.linesCost)) best = a;
             if(a.failed == 0) break;
+            //a try that laid no more than the best before it: the stress it put on the cells did not help, nor will more of it
+            if(triesPatience && t > 0 && a.failed >= bestFailed) break;
             for(Router.Net n : a.nets) if(!n.ok) stress.merge(n.res, 2f, (x, y) -> x * y);
         }
         grid = best.grid;
@@ -98,9 +105,17 @@ public final class Layout{
         nets = best.nets;
         failed = best.failed;
         for(Router.Net n : nets) if(!n.ok) log.append("not laid: ").append(String.join("; ", n.why)).append('\n');
+        long t1 = Took.start();
+        //(what stands is looked up afresh from here on: the grid goes on serving the builder in the game)
+        grid.thaw();
         wire();
+        Took.end("layout: wire", t1);
+        t1 = Took.start();
         own();
+        Took.end("layout: own", t1);
+        t1 = Took.start();
         check();
+        Took.end("layout: check", t1);
     }
 
     static final class Attempt{
@@ -121,7 +136,11 @@ public final class Layout{
 
     Attempt attempt(int seed, Map<Integer, Float> stress){
         Attempt a = new Attempt();
+        long t0 = Took.start();
         a.grid = new Grid(cat, team);
+        a.grid.freeze();
+        Took.end("attempt: grid", t0);
+        t0 = Took.start();
         Grid g = a.grid;
         //1. the ground
         Set<Field.Site> used = new HashSet<>();
@@ -134,7 +153,11 @@ public final class Layout{
             for(Field.Site s : field.sites) if(s.x == m.x && s.y == m.y && s.rotation == m.rotation && s.ground == m.recipe.ground && s.fits(m.recipe)) used.add(s);
         }
         for(Machine m : field.existing) a.at.put(m, new Part(block(m), m.x, m.y, m.rotation, null));
+        Took.end("attempt: ground", t0);
+        t0 = Took.start();
         int keptTiles = Packing.reserve(g, cat, field.sites, used, 3f);
+        Took.end("attempt: packing", t0);
+        t0 = Took.start();
         //(designs whose place is given go down where they were put, before the cells look for room)
         for(Machine m : order) if(m.pinned != null && m.recipe.module != null) placeDesign(a, m, m.pinned);
         //2. the cells
@@ -144,7 +167,12 @@ public final class Layout{
         cells.stress.putAll(stress);
         cells.model(order, field.existing);
         cells.group(cellMachines);
-        if(!cellMachines.isEmpty() && !cells.place()){
+        Took.end("attempt: cells model", t0);
+        t0 = Took.start();
+        boolean placed = cellMachines.isEmpty() || cells.place();
+        Took.end("attempt: cells place", t0);
+        t0 = Took.start();
+        if(!placed){
             a.failed = 100;
             a.note = "no room for the cells";
             return a;
@@ -184,8 +212,13 @@ public final class Layout{
                 }
             }
         }
+        Took.end("attempt: after cells", t0);
+        t0 = Took.start();
         a.nets = nets(router, a.at);
+        Took.end("attempt: nets", t0);
+        t0 = Took.start();
         a.failed = router.routeAll(a.nets);
+        Took.end("attempt: route", t0);
         int pieces = 0;
         for(Router.Net n : a.nets){
             pieces += n.all().size;

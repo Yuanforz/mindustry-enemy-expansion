@@ -55,6 +55,8 @@ final class Router{
         final Seq<Part> trunk = new Seq<>();
         final Map<Machine, Seq<Part>> branch = new LinkedHashMap<>();
         final IntSeq quiet = new IntSeq();
+        /** Rounds of the negotiation in a row it came out not laid, for the same reasons. */
+        int lostRounds;
         /** The machine whose line is the trunk. */
         Machine first;
         /** Whether its makers are listed in the order they are built, the first to be the trunk (else the furthest is). */
@@ -121,26 +123,64 @@ final class Router{
     /** What the plan takes off the map's lines. */
     final IntSet tapped = new IntSet();
 
+    /** Rounds of negotiation with no fewer tiles fought over before it stops (0: all {@link #iterations}). */
+    public static int patience = Integer.getInteger("xp.negpatience", 0);
+    /** Rounds a net may come out not laid, the same way, before it is left as it is for the rest of the negotiation (0: never). */
+    public static int lostAfter = Integer.getInteger("xp.lostnets", 0);
+
     int routeAll(List<Net> nets){
         tapped.clear();
         for(Net n : nets) if(n.kind == Kind.tap) tapped.add(n.res);
         boolean clean = false;
+        int rounds = 0, fewestContested = Integer.MAX_VALUE, stale = 0;
         for(int it = 0; it < iterations && !clean; it++){
+            rounds++;
             for(Net n : nets){
                 //after the first round only the nets that share a tile with another are ripped up
                 if(it > 0 && n.ok && !contested(n)) continue;
+                //one not laid the same way round after round is not laid again in this negotiation: as the others move,
+                //what it was short of has not come
+                if(it > 0 && !n.ok && lostAfter > 0 && n.lostRounds >= lostAfter) continue;
+                boolean wasOk = n.ok;
+                String whyBefore = n.ok ? null : String.join("; ", n.why);
+                long tr = Took.on ? Took.start() : 0L;
                 rip(n);
                 route(n);
                 claim(n);
+                if(Took.on) Took.end(it == 0 ? "route: first round" : wasOk ? "route: again, contested" : "route: again, not laid before", tr);
+                if(n.ok) n.lostRounds = 0;
+                else if(whyBefore != null && whyBefore.equals(String.join("; ", n.why))) n.lostRounds++;
+                else n.lostRounds = 1;
             }
             clean = true;
+            int contestedTiles = 0;
             for(int p = 0; p < use.length; p++){
                 if(use[p] > 1){
                     clean = false;
+                    contestedTiles++;
                     hist[p] += 1f;
                 }
             }
             pres *= 1.7f;
+            //no fewer tiles fought over for a few rounds: it will not settle, and the nets are laid one by one below
+            if(contestedTiles < fewestContested){
+                fewestContested = contestedTiles;
+                stale = 0;
+            }else if(patience > 0 && ++stale >= patience) break;
+        }
+        if(Boolean.getBoolean("xp.contested") && !clean){
+            StringBuilder b = new StringBuilder("router: still contested:");
+            for(int p = 0; p < use.length; p++){
+                if(use[p] <= 1) continue;
+                b.append(String.format(" %d,%d(%d:", p % grid.w, p / grid.w, use[p]));
+                for(Net n : nets) if(n.tiles.contains(p)) b.append(' ').append(cat.get(n.res).name).append('/').append(n.kind).append(n.quiet.contains(p) ? "q" : "");
+                b.append(')');
+            }
+            System.out.println(b);
+        }
+        if(Took.on){
+            Took.count(clean ? "negotiations settled" : "negotiations not settled", 1);
+            Took.count("negotiation rounds", rounds);
         }
         if(!clean) log.append("router: some tiles still wanted by two nets after ").append(iterations).append(" rounds; those nets are laid again one by one\n");
         //on to the grid, in turn; a net that would now overlap or break a rule against what is there is laid again on its own
@@ -962,6 +1002,42 @@ final class Router{
         return b.toString();
     }
 
+    /**
+     * {@link #open} and {@link #clean} as one search asks them, again and again of the same tiles: what they look at (the
+     * grid, the lanes, what the net has laid so far, what it is shut out of) does not change while it searches, so each
+     * answer is kept for the rest of the search. which: 0 for the line piece, 1 for the bridge.
+     */
+    int[] openStamp, cleanStamp;
+    boolean[] openVal, cleanVal;
+
+    boolean openHere(int q, Block piece, int which, Net n){
+        int size = grid.w * grid.h;
+        if(openStamp == null || openStamp.length != size * 2){
+            openStamp = new int[size * 2];
+            openVal = new boolean[size * 2];
+        }
+        int i = which * size + q;
+        if(openStamp[i] == searchStamp) return openVal[i];
+        boolean v = open(q, piece, n);
+        openStamp[i] = searchStamp;
+        openVal[i] = v;
+        return v;
+    }
+
+    boolean cleanHere(int q, Block piece, int which, int rot, Net n){
+        int size = grid.w * grid.h;
+        if(cleanStamp == null || cleanStamp.length != size * 8){
+            cleanStamp = new int[size * 8];
+            cleanVal = new boolean[size * 8];
+        }
+        int i = (which * size + q) * 4 + rot;
+        if(cleanStamp[i] == searchStamp) return cleanVal[i];
+        boolean v = clean(q, piece, rot, n);
+        cleanStamp[i] = searchStamp;
+        cleanVal[i] = v;
+        return v;
+    }
+
     boolean clean(int q, Block piece, int rot, Net n){
         int x = q % grid.w, y = q / grid.w;
         for(int j = 0; j < 4; j++){
@@ -976,7 +1052,47 @@ final class Router{
     }
 
     /** No bridge of this kind between two tiles, none ahead of the end that it would link on to, none behind the start that would take it as its link. */
+    /** Counts searches, so that what one search works out once is known to be its own. */
+    int searchStamp;
+    int crossStamp = -1, crossRange;
+    Block crossBlock;
+    boolean[] cross;
+    final IntSeq crossMarked = new IntSeq();
+
+    /**
+     * Whether a bridge of this kind (planned, standing, or of the line being laid) is within its range of a tile along a
+     * row or column: where none is near either end, nothing {@link #bridgeClear} looks for is there. Worked out once a search.
+     */
+    boolean bridgeNear(Block b, int sx, int sy, int ex, int ey, int range){
+        if(crossStamp != searchStamp || crossBlock != b || crossRange != range){
+            if(cross == null || cross.length != grid.w * grid.h) cross = new boolean[grid.w * grid.h];
+            for(int i = 0; i < crossMarked.size; i++) cross[crossMarked.get(i)] = false;
+            crossMarked.clear();
+            arc.func.Intc mark = q -> {
+                int x = q % grid.w, y = q / grid.w;
+                for(int d = 0; d < 4; d++){
+                    for(int i = 0; i <= range; i++){
+                        int mx = x + Geometry.d4x(d) * i, my = y + Geometry.d4y(d) * i;
+                        if(!grid.in(mx, my)) break;
+                        int m = grid.pos(mx, my);
+                        if(!cross[m]){
+                            cross[m] = true;
+                            crossMarked.add(m);
+                        }
+                    }
+                }
+            };
+            grid.eachAt(b, mark);
+            for(var e : own) if(e.value.block == b) mark.get(e.key);
+            crossStamp = searchStamp;
+            crossBlock = b;
+            crossRange = range;
+        }
+        return cross[grid.pos(sx, sy)] || cross[grid.pos(ex, ey)];
+    }
+
     boolean bridgeClear(Block b, int sx, int sy, int ex, int ey, int rot, int range){
+        if(!bridgeNear(b, sx, sy, ex, ey, range)) return true;
         int dx = Geometry.d4x(rot), dy = Geometry.d4y(rot);
         for(int x = sx + dx, y = sy + dy; x != ex || y != ey; x += dx, y += dy) if(grid.block(x, y) == b || own.containsKey(grid.pos(x, y)) && own.get(grid.pos(x, y)).block == b) return false;
         for(int i = 1; i <= range; i++){
@@ -1046,12 +1162,14 @@ final class Router{
     }
 
     Path searchOnce(Net n, List<Start> starts, List<Stage> stages, Goal goal, int[] endAt){
+        searchStamp++;
+        long tookFrom = Took.on ? Took.start() : 0L;
         Block piece = n.liquid ? conduit : duct, jump = n.liquid ? pipeBridge : bridge;
         float pieceCost = price(piece), jumpCost = price(jump), dockCost = price(dock);
         int N = grid.w * grid.h, S = stages.size() + 1;
         int range = jump instanceof DirectionBridge db ? db.range : 0;
-        IntFloatMap g = new IntFloatMap();
-        IntIntMap parent = new IntIntMap(), how = new IntIntMap();
+        States g = states;
+        g.reset(S * N * 4);
         Heap open = new Heap();
         //estimates: distance to the stage's targets, plus what is left of the tour
         IntSeq[] targets = new IntSeq[S];
@@ -1063,17 +1181,15 @@ final class Router{
             Start st = starts.get(i);
             int key = (st.y * grid.w + st.x) * 4 + st.d;
             float h0 = st.cost;
-            if(!g.containsKey(key) || g.get(key, 0f) > h0){
-                g.put(key, h0);
-                parent.put(key, -1);
-                how.put(key, -1 - i);
+            if(!g.has(key) || g.g(key, 0f) > h0){
+                g.set(key, h0, -1, -1 - i);
                 open.add(key, h0 + estimate(key, 0, targets, tail, N));
             }
         }
         int expanded = 0, done = -1;
         while(open.size > 0){
             int key = open.poll();
-            float gk = g.get(key, Float.MAX_VALUE);
+            float gk = g.g(key, Float.MAX_VALUE);
             if(open.lastF > gk + estimate(key, (key / 4) / N, targets, tail, N) + 1e-3f) continue;
             if(++expanded > budget) break;
             int d = key % 4, cell = key / 4, s = cell / N, p = cell % N;
@@ -1084,7 +1200,7 @@ final class Router{
             if(s == S - 1){
                 //(straight from the machine, with no piece of its own between: what it hands on to must take from a machine
                 //on that side, which a conduit does only at its back)
-                int hk0 = how.get(key, 0);
+                int hk0 = g.how(key, 0);
                 boolean bare = hk0 < 0 && starts.get(-1 - hk0).first == null;
                 Part jq = join.get(q);
                 Block onq = jq != null ? jq.block : grid.block(qx, qy), self = grid.block(px, py);
@@ -1101,40 +1217,46 @@ final class Router{
                         int quiet = ways.get(w + 1);
                         if(quiet >= 0 && (own.containsKey(quiet) || ownQuiet.contains(quiet))) continue;
                         int next = ((s + 1) * N + q) * 4 + d;
-                        relax(g, parent, how, open, key, next, gk + step(q, dockCost), DOCK | (quiet + 1), targets, tail, N);
+                        relax(g, open, key, next, gk + step(q, dockCost), DOCK | (quiet + 1), targets, tail, N);
                     }
                 }
             }
             if(DEBUG && expanded <= 2) log.append(String.format("router: %s from %d,%d: %s at %d,%d open %b%s\n", cat.get(n.res).name, px, py, piece.name, qx, qy, open(q, piece, n), why(q, piece, n)));
-            if(!open(q, piece, n)) continue;
+            if(!openHere(q, piece, 0, n)) continue;
             //a conduit takes from a machine only when it points straight away from it
-            int hk = how.get(key, 0);
+            int hk = g.how(key, 0);
             boolean fromMachine = hk < 0 && starts.get(-1 - hk).first == null;
             for(int turn : new int[]{0, 1, 3}){
                 if(turn != 0 && n.liquid && fromMachine) continue;
                 int r = (d + turn) % 4;
-                if(clean(q, piece, r, n)){
+                if(cleanHere(q, piece, 0, r, n)){
                     int next = (s * N + q) * 4 + r;
-                    relax(g, parent, how, open, key, next, gk + step(q, pieceCost) + (turn == 0 ? 0f : 0.15f), 0, targets, tail, N);
+                    relax(g, open, key, next, gk + step(q, pieceCost) + (turn == 0 ? 0f : 0.15f), 0, targets, tail, N);
                 }
-                if(jump != null && open(q, jump, n) && clean(q, jump, r, n)){
+                if(jump != null && openHere(q, jump, 1, n) && cleanHere(q, jump, 1, r, n)){
                     for(int k = 2; k <= range; k++){
                         int ex = qx + Geometry.d4x(r) * k, ey = qy + Geometry.d4y(r) * k;
                         if(!grid.in(ex, ey)) break;
                         int e = grid.pos(ex, ey);
-                        if(!open(e, jump, n) || !bridgeClear(jump, qx, qy, ex, ey, r, range)) continue;
+                        if(!openHere(e, jump, 1, n) || !bridgeClear(jump, qx, qy, ex, ey, r, range)) continue;
                         int next = (s * N + e) * 4 + r;
-                        relax(g, parent, how, open, key, next, gk + step(q, jumpCost) + step(e, jumpCost), BRIDGE + k, targets, tail, N);
+                        relax(g, open, key, next, gk + step(q, jumpCost) + step(e, jumpCost), BRIDGE + k, targets, tail, N);
                     }
                 }
             }
         }
         lastExpanded = expanded;
+        if(Took.on){
+            String kind = (done >= 0 ? "found" : expanded > budget ? "out of budget" : "no way") + (stages.isEmpty() ? "" : ", with docks");
+            Took.count("searches " + kind, 1);
+            Took.count("states " + kind, expanded);
+            Took.end("search " + kind, tookFrom);
+        }
         lastStarts = starts.size();
         if(done < 0 && endAt != null && Boolean.getBoolean("xp.searchmap")){
             //what the search got to round its goal: * reached, o taken, # not ground, . open, G the goal
             IntSet reached = new IntSet();
-            for(var e : g) reached.add((e.key / 4) % N);
+            for(int i = 0; i < g.touched.size; i++) reached.add((g.touched.get(i) / 4) % N);
             StringBuilder b = new StringBuilder();
             int[][] centres = {endAt, {starts.get(0).x, starts.get(0).y}};
             for(int[] at : centres){
@@ -1159,7 +1281,7 @@ final class Router{
         List<Integer> docksAt = new ArrayList<>();
         int key = done;
         while(key >= 0){
-            int m = how.get(key, 0), d = key % 4, p = (key / 4) % N;
+            int m = g.how(key, 0), d = key % 4, p = (key / 4) % N;
             int x = p % grid.w, y = p / grid.w;
             if(m < 0){
                 Start st = starts.get(-1 - m);
@@ -1182,7 +1304,7 @@ final class Router{
                 rev.add(new Part(jump, x, y, d, null));
                 rev.add(new Part(jump, x - Geometry.d4x(d) * k, y - Geometry.d4y(d) * k, d, null));
             }
-            key = parent.get(key, -1);
+            key = g.parent(key, -1);
         }
         int size = rev.size();
         Collections.reverse(rev);
@@ -1198,12 +1320,81 @@ final class Router{
 
     static final int DOCK = 1 << 30, BRIDGE = 16;
 
-    void relax(IntFloatMap g, IntIntMap parent, IntIntMap how, Heap open, int from, int to, float cost, int move, IntSeq[] targets, float[] tail, int N){
-        if(cost >= g.get(to, Float.MAX_VALUE)) return;
-        g.put(to, cost);
-        parent.put(to, from);
-        how.put(to, move);
+    void relax(States g, Heap open, int from, int to, float cost, int move, IntSeq[] targets, float[] tail, int N){
+        if(cost >= g.g(to, Float.MAX_VALUE)) return;
+        g.set(to, cost, from, move);
         open.add(to, cost + estimate(to, (to / 4) / N, targets, tail, N));
+    }
+
+    /** What a search has found for each state: its cost so far, the state it came from, the move that led to it. */
+    final States states = new States();
+
+    /**
+     * Kept in arrays that one search after another uses again (marked as this search's by a stamp), where they are not too
+     * big for that; else in maps, as before.
+     */
+    static final class States{
+        static final int most = 1 << 23;
+        int stamp;
+        int[] seen = new int[0], parent = new int[0], how = new int[0];
+        float[] cost = new float[0];
+        boolean big;
+        final IntFloatMap g = new IntFloatMap();
+        final IntIntMap parentMap = new IntIntMap(), howMap = new IntIntMap();
+        /** The states this search has reached, in the order first reached. */
+        final IntSeq touched = new IntSeq();
+
+        void reset(int size){
+            touched.clear();
+            big = size > most;
+            if(big){
+                g.clear();
+                parentMap.clear();
+                howMap.clear();
+                return;
+            }
+            if(seen.length < size){
+                seen = new int[size];
+                parent = new int[size];
+                how = new int[size];
+                cost = new float[size];
+                stamp = 0;
+            }
+            stamp++;
+        }
+
+        boolean has(int k){
+            return big ? g.containsKey(k) : seen[k] == stamp;
+        }
+
+        float g(int k, float otherwise){
+            return big ? g.get(k, otherwise) : seen[k] == stamp ? cost[k] : otherwise;
+        }
+
+        int how(int k, int otherwise){
+            return big ? howMap.get(k, otherwise) : seen[k] == stamp ? how[k] : otherwise;
+        }
+
+        int parent(int k, int otherwise){
+            return big ? parentMap.get(k, otherwise) : seen[k] == stamp ? parent[k] : otherwise;
+        }
+
+        void set(int k, float c, int from, int move){
+            if(big){
+                if(!g.containsKey(k)) touched.add(k);
+                g.put(k, c);
+                parentMap.put(k, from);
+                howMap.put(k, move);
+                return;
+            }
+            if(seen[k] != stamp){
+                seen[k] = stamp;
+                touched.add(k);
+            }
+            cost[k] = c;
+            parent[k] = from;
+            how[k] = move;
+        }
     }
 
     float estimate(int key, int s, IntSeq[] targets, float[] tail, int N){

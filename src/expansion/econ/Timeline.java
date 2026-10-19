@@ -95,6 +95,7 @@ public final class Timeline{
         made = o.made.clone();
         first = o.first.clone();
         goal = o.goal;
+        watched = o.watched;
         begun = o.begun.clone();
         finished = o.finished.clone();
         plant = new Plant(cat);
@@ -124,8 +125,52 @@ public final class Timeline{
     public void runToGoal(int unit, float limit){
         goal = unit;
         while(t < limit && !(done() && made[unit] >= goalAmount(unit))){
+            if(stuckFor(limit)) break;
             if(!step(limit)) break;
         }
+    }
+
+    /**
+     * For a search that only reads when the order is done and when the first of one thing ({@link #watched}) came out:
+     * once the order is stuck for good, the rest is skipped and the clock put at the limit, as if it had run there. -1: off.
+     */
+    public int watched = -1;
+
+    /**
+     * Whether the order can never go on (the next machine wants an item nothing built makes and the core unit can't dig,
+     * or more than the core holds) and the first of what is watched is in, or can never come: then the clock goes to the
+     * limit at once. Nothing is built while it waits, so nothing else could change what is watched.
+     */
+    boolean stuckFor(float limit){
+        if(watched < 0 || building >= 0 || next >= order.size()) return false;
+        Machine m = order.get(next);
+        boolean never = false;
+        for(int k = 0; k < m.cost.length && !never; k++){
+            if(stock[k] + 1e-4f >= m.cost[k]) continue;
+            if(m.cost[k] > cat.coreCap){
+                never = true;
+                break;
+            }
+            if(field.handRate(cat, k) > 0f) continue;
+            boolean makes = false;
+            for(Machine b : built) if(b.out(k) > 0f){
+                makes = true;
+                break;
+            }
+            if(!makes) never = true;
+        }
+        if(!never) return false;
+        if(Float.isInfinite(first[watched])){
+            //still to come from what stands: it is played on until it does
+            boolean can = false;
+            for(Machine b : built) if(b.recipe.unitOut == watched || b.out(watched) > 0f){
+                can = true;
+                break;
+            }
+            if(can) return false;
+        }
+        t = limit;
+        return true;
     }
 
     /**
@@ -142,6 +187,7 @@ public final class Timeline{
     /** Runs until the core unit has started on the machine at this place in the order, or the time is up. */
     public void runToStart(int index, float limit){
         while(t < limit && next <= index){
+            if(stuckFor(limit)) break;
             if(!step(limit)) break;
         }
     }
@@ -284,8 +330,10 @@ public final class Timeline{
                     break;
                 }
             }
+            return true;
         }
-        return true;
+        //a factory that hands its units to no one goes on as it was: what runs, and so the plant's flows, are the same
+        return false;
     }
 
     private void settle(){

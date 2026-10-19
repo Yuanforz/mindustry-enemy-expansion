@@ -92,21 +92,27 @@ public final class Plan{
      */
     public Plan make(Team me, List<String> blocks, Set<String> allowed, List<Design> library, String unitName, float machines, Map<String, Float> income){
         CoreBlock.CoreBuild core = me.core();
+        long t0 = Took.start();
         allowed = read(me, blocks, allowed);
+        Took.end("plan: recipes and sites", t0);
         if(income != null){
             String pruned = Sites.prune(cat, field, income, me);
             if(!pruned.isEmpty()) out.println("  the map's own: " + pruned);
         }
         check("after the scan");
         planner = new Planner(cat, field);
+        t0 = Took.start();
         Recipes.modules(cat, library, allowed);
+        Took.end("plan: modules", t0);
         check("after the modules");
         Recipe making = null;
         unit = cat.id(unitName);
         if(unit < 0) return null;
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
         wanted = making != null ? machines / making.unitSeconds : machines;
+        t0 = Took.start();
         List<Machine> plant = planner.balance(unit, wanted);
+        Took.end("plan: balance", t0);
         if(Boolean.getBoolean("xp.chains")){
             out.print(planner.chains.describe());
             Map<String, Integer> kinds = new TreeMap<>();
@@ -114,7 +120,9 @@ public final class Plan{
             out.println("  places: " + kinds + " (of " + field.candidates + " looked at)");
         }
         if(!planner.notes.toString().isEmpty()) out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
+        t0 = Took.start();
         model = planner.order(plant, unit);
+        Took.end("plan: order", t0);
         out.println("######## " + label + unitName + " from " + machines + "; the model has it done by " + time(model.t)
             + ", first " + unitName + " at " + time(model.first[unit]) + "; " + model.order.size() + " machines");
         //never got to: nothing laid out (a later stage may ask for something the map has no way to make)
@@ -125,13 +133,17 @@ public final class Plan{
         check("after the balance");
         works = new Layout(cat, field, me, allowed);
         check("after a new layout");
+        t0 = Took.start();
         works.prepare(model.order);
+        Took.end("plan: layout (1st)", t0);
         check("after the layout");
         Set<String> noTap = new HashSet<>();
         //takers the layout could not feed get makers of their own, and it is all done again
         for(int round = 0; round < 3; round++){
+            t0 = Took.start();
             List<Object[]> unfed = works.unfed();
             List<Machine> cut = works.cutOff();
+            Took.end("plan: unfed", t0);
             //a tap dearer than a maker of the taker's own near it: the maker instead (the map's line goes on to the core)
             List<Machine> instead = new ArrayList<>();
             //(off unless asked, -Dxp.deartap: the maker is often built late, and the line from it ends up slower than the tap)
@@ -205,7 +217,9 @@ public final class Plan{
             model = planner.order(more, unit);
             works = new Layout(cat, field, me, allowed);
             works.noTap.addAll(noTap);
+            t0 = Took.start();
             works.prepare(model.order);
+            Took.end("plan: layout (again)", t0);
         }
         long l1 = System.nanoTime();
         layoutNanos = l1 - l0;
@@ -216,6 +230,7 @@ public final class Plan{
         for(Machine m : model.order) for(int c : m.cost) modelSpent += c;
         planner.extras = 0;
         float firstModel = model.first[unit], doneModel = model.t;
+        t0 = Took.start();
         for(int round = 0; round < 3; round++){
             for(Machine m : model.order){
                 int[] real = works.realCost(m);
@@ -246,6 +261,8 @@ public final class Plan{
         Timeline settled = new Timeline(cat, field, model.order);
         settled.runToGoal(unit, planner.limit);
         model = settled;
+        Took.end("plan: reorder on real costs", t0);
+        if(Boolean.getBoolean("xp.time")) out.print("  where the time went:\n" + Took.report());
         out.println(String.format("  the plan cost %d in items, the layout %d; ordered again on what it really costs: done by %s, first %s at %s (was %s, %s)",
             modelSpent, realSpent, time(model.t), unitName, time(model.first[unit]), time(doneModel), time(firstModel)));
         for(String p : works.problems) out.println("  checker: " + p);

@@ -153,6 +153,12 @@ public class Match{
             if((hand == null || over) && stage + 1 < stages.length && us.core() != null){
                 if(hand != null && !hand.done()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 stage++;
+                //(the world as it stands when a stage is planned, kept for planning it again by itself: -Dmatch.save=dir, xtest.PlanAt)
+                if(System.getProperty("match.save") != null){
+                    Fi to = new Fi(System.getProperty("match.save")).child(map.nameWithoutExtension() + "-stage" + (stage + 1) + ".msav");
+                    SaveIO.save(to);
+                    System.out.println("  saved the world as it stands to " + to);
+                }
                 stageFrom = f;
                 long p0 = System.nanoTime();
                 Plan plan = null;
@@ -185,6 +191,8 @@ public class Match{
                     System.out.println("  stage " + (stage + 1) + ": " + way + " can't be done here");
                 }
                 planSeconds += (System.nanoTime() - p0) / 1e9f;
+                System.out.println(String.format("  stage %d planned in %.1f s (wall)", stage + 1, (System.nanoTime() - p0) / 1e9f));
+                if(Boolean.getBoolean("xp.time")) System.out.print(expansion.econ.Took.report());
                 if(plan != null && plan.model != null){
                     if(hand != null) before.add(hand);
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
