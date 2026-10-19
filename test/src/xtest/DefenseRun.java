@@ -27,9 +27,13 @@ import java.util.*;
  *
  * Usage: DefenseRun data-dir map.msav [first wave] [last wave]
  *   -Ddef.sector=name     the tech of this sector (default: the map's name)
- *   -Ddef.units=stell*4   on a map without waves: the first wave, sent from the enemy cores, one more unit of each every two waves
+ *   -Ddef.units=stell:4   on a map without waves: the first wave, sent from the enemy cores, one more unit of each every two
+ *                         waves (stell*4 also works); several joined by +
  *   -Ddef.keep=true       keep the turrets the map gives us (by default they are taken away, so only the plan is tested)
  *   -Ddef.budget=loadout  plan within the starting items instead of without a limit
+ *   -Ddef.repair=false    nothing rebuilt or mended between waves
+ *   -Ddef.trace=true      what we lose, and which units come within 30 tiles of the core
+ *   -Ddef.draw=true       a picture of each defended place; -Ddef.probe=x,y the planner's flags for one tile
  */
 public class DefenseRun{
     public static void main(String[] args){

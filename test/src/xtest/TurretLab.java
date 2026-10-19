@@ -88,14 +88,19 @@ public class TurretLab{
                         liquids.clear();
                         return;
                     }
-                    float most = cap.get(this, 0f);
-                    float have = liquids.get(source);
-                    if(most <= 0f) liquids.set(source, liquidCapacity);
-                    else liquids.add(source, Math.min(most / 60f, liquidCapacity - have));
-                    float before = liquids.get(source);
-                    dumpLiquid(source, 1f);
-                    given(this)[source.id] += before - liquids.get(source);
-                    if(most <= 0f) liquids.set(source, liquidCapacity);
+                    //handed straight to the neighbours that take it, no more than the line brings a tick (the game's own
+                    //dumping evens out how full each is, which a source holding a trickle hardly passes on)
+                    float most = cap.get(this, 0f), budget = most <= 0f ? 1e6f : most / 60f;
+                    liquids.set(source, liquidCapacity);
+                    for(Building other : proximity){
+                        if(budget <= 0f) break;
+                        if(other.team != team || other.liquids == null || !other.acceptLiquid(this, source)) continue;
+                        float give = Math.min(budget, other.block.liquidCapacity - other.liquids.get(source));
+                        if(give <= 0.0001f) continue;
+                        other.handleLiquid(this, source, give);
+                        budget -= give;
+                        given(this)[source.id] += give;
+                    }
                 }
             };
         }};
@@ -348,6 +353,7 @@ public class TurretLab{
         given.clear();
         cap.clear();
         Probe probe = new Probe();
+        ObjectFloatMap<Building> rates = new ObjectFloatMap<>();
         current = probe;
         Result r = probe.result;
 
@@ -394,7 +400,7 @@ public class TurretLab{
             @Override
             public void configure(Building built, Placement port){
                 GameData.sources.configure(built, port);
-                cap.put(built, port.liquid ? run.liquid : run.supply);
+                rates.put(built, port.liquid ? run.liquid : run.supply);
             }
         };
         List<Placement> failed = GameData.place(plan, us, ports);
@@ -410,7 +416,9 @@ public class TurretLab{
         r.turrets = probe.turrets.size;
         if(Boolean.getBoolean("lab.draw")) System.out.println(picture(coreX - 6, laneY - run.width / 2 - 1, postX + 30, laneY + run.width / 2 + 1));
         //stores fill and turrets load before the first wave
+        //(with all the supply they take: a store is full when the first wave comes, as it fills in the minutes before)
         Boot.frames(20 * 60);
+        for(var e : rates) cap.put(e.key, e.value);
         Map<String, Float> stockBefore = stock(), givenBefore = givenTotals();
 
         //the waves
