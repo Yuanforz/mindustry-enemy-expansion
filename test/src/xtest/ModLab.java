@@ -211,6 +211,7 @@ public class ModLab{
                         }
                     }
                     if(count == 1){
+                        for(int d = 0; d < 4 && !done; d++){
                                     if(d == only) continue;
                             int qx = px + Geometry.d4x(d), qy = py + Geometry.d4y(d);
                             Tile q = Vars.world.tile(qx, qy);

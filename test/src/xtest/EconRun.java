@@ -153,7 +153,10 @@ public class EconRun{
         if(!pruned.isEmpty()) System.out.println("  the map's own: " + pruned);
         Planner planner = new Planner(cat, field);
         //the modules of the library that may be built here (-Dxp.modules=blueprints/own for our own)
-        Recipes.modules(cat, Design.load(new Fi(System.getProperty("xp.modules", "blueprints/modules"))), allowed);
+        //(our own designs first; the community's, where they are here locally, after)
+        List<Design> library = new ArrayList<>();
+        for(String dir : System.getProperty("xp.modules", "blueprints/own,blueprints/modules").split(",")) library.addAll(Design.load(new Fi(dir)));
+        Recipes.modules(cat, library, allowed);
         Recipe making = null;
         int unit = cat.id(unitName);
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;

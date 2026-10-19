@@ -30,6 +30,8 @@ public final class Design{
     public final List<Port> ports = new ArrayList<>();
     public final ObjectFloatMap<String> units = new ObjectFloatMap<>();
     public final float power;
+    /** Power it makes a second (a power plant), as measured; 0 if none. */
+    public float powerMade;
     /** Built of, by item name (without its sources and voids). */
     public final ObjectIntMap<String> cost = new ObjectIntMap<>();
     public float buildTicks;
@@ -264,6 +266,7 @@ public final class Design{
             }
             repair(s);
             Design m = new Design(id, f[col.get("name")], s, Float.parseFloat(f[col.get("power")]));
+            if(col.containsKey("power_made") && !f[col.get("power_made")].isEmpty()) m.powerMade = Float.parseFloat(f[col.get("power_made")]);
             ports(m, f[col.get("inputs")], true);
             ports(m, f[col.get("outputs")], false);
             boolean found = true;

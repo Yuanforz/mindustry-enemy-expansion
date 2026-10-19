@@ -187,7 +187,9 @@ public final class Recipes{
                 n = cat.size();
                 cost = java.util.Arrays.copyOf(cost, n);
             }
-            Recipe r = new Recipe("module:" + m.id, "module:" + m.id, Math.max(m.width(0), m.height(0)), Recipe.Ground.none, cost, m.buildTicks, m.power, 0f,
+            //(a power plant's own machines' use is taken off what it makes)
+            float use = Math.max(0f, m.power - m.powerMade), made = Math.max(0f, m.powerMade - m.power);
+            Recipe r = new Recipe("module:" + m.id, "module:" + m.id, Math.max(m.width(0), m.height(0)), Recipe.Ground.none, cost, m.buildTicks, use, made,
                 in, out, new float[n], -1, 0f, 1f, unitOut, -1, unitSeconds);
             r.module = m;
             cat.recipes.add(r);
