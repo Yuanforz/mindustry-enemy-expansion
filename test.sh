@@ -134,30 +134,30 @@ case "$what" in
     jobs="${1:-3}"
     snap=build/bench/snap; rm -rf $snap; mkdir -p $snap; cp -r build/classes $snap/classes; cp -r build/test-classes $snap/test-classes
     CP="$GAME_JAR:$snap/classes:$snap/test-classes"
-    # map sector unit machines minutes
+    # map sector unit machines minutes [radius]   (split, peaks and siege have no tungsten in reach: a T1 goal there)
     cat > build/bench/list <<LIST
 onset onset stell 2 8
 aegis aegis stell 3 8
 lake lake stell 2 8
 intersect intersect stell 2 8
 atlas atlas locus 1 12
-split atlas locus 1 12
+split atlas stell 2 12
 basin atlas locus 1 12
 marsh atlas locus 1 12
-peaks atlas locus 1 12
+peaks atlas stell 2 12
 ravine atlas locus 1 12
 caldera-erekir atlas locus 1 12
-stronghold atlas locus 1 12
+stronghold atlas locus 1 12 200
 crevice atlas locus 1 12
-siege atlas locus 1 12
+siege atlas stell 2 12
 crossroads atlas locus 1 12
 karst atlas locus 1 12
-origin atlas locus 1 12
+origin atlas locus 1 12 200
 LIST
     started=$(date +%s)
-    while read map sector unit n minutes; do
+    while read map sector unit n minutes radius; do
       while [ $(ps ax | grep -c "[x]test.EconRun") -ge $jobs ]; do sleep 2; done
-      ( java $RUN_OPTS -cp "$CP" xtest.EconRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$sector" "$unit" "$n" "$minutes" > build/bench/$map.log 2> build/bench/$map.err; \
+      ( java $RUN_OPTS -Dxp.radius=${radius:-110} -cp "$CP" xtest.EconRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$sector" "$unit" "$n" "$minutes" > build/bench/$map.log 2> build/bench/$map.err; \
         grep -q "^BENCH" build/bench/$map.log || echo "BENCH $map $sector $unit $n | failed: $(grep -m1 -E 'Exception|Error' build/bench/$map.err)" >> build/bench/$map.log ) &
     done < build/bench/list
     while [ $(ps ax | grep -c "[x]test.EconRun") -gt 0 ]; do sleep 2; done

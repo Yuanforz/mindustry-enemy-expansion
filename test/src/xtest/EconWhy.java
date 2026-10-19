@@ -32,7 +32,7 @@ public class EconWhy{
         CoreBlock.CoreBuild core = me.core();
         Catalog cat = Recipes.read(blocks, (CoreBlock)core.block, rules.buildSpeed(me));
         cat.logistics(EconRun.logisticsOf(sector));
-        Field field = Sites.scan(cat, me, 110);
+        Field field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
         Planner planner = new Planner(cat, field);
         int unit = cat.id(unitName);
         Recipe making = null;

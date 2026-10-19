@@ -50,7 +50,7 @@ public class EconLab{
         long t0 = System.nanoTime();
         Catalog cat = Recipes.read(blocks, (CoreBlock)core.block, rules.buildSpeed(me));
         cat.logistics(EconRun.logisticsOf(sector));
-        Field field = Sites.scan(cat, me, 110);
+        Field field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
         //on landing, the game empties the core and fills it with the sector's loadout (Erekir allows no launch loadout)
         if(rules.loadout != null && rules.loadout.size > 0){
             java.util.Arrays.fill(field.stock, 0f);

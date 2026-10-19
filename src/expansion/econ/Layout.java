@@ -548,7 +548,8 @@ public final class Layout{
         int q = grid.pos(fx, fy);
         if(Grid.isLine(b)){
             //its own net, a running line of the map's carrying the same, or another net's piece carrying the same (a tap's dock on such a line)
-            boolean ours = grid.net[q] == n.id || (grid.planned(fx, fy) == null && grid.running.get(q, -1) == n.res) || (grid.planned(fx, fy) != null && grid.carry[q] == n.res);
+            //(or a piece of the map's own line, as a tap hands what it does not take on to the line it was put in)
+            boolean ours = grid.net[q] == n.id || (grid.planned(fx, fy) == null && (grid.running.get(q, -1) == n.res || from.block instanceof OverflowDuct || from.block instanceof DuctRouter)) || (grid.planned(fx, fy) != null && grid.carry[q] == n.res);
             return ours && Router.accepts(b, grid.rotation(fx, fy), (from.rotation + 2) % 4, from.block);
         }
         return grid.uses(b, n.res);

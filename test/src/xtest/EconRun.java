@@ -71,6 +71,8 @@ public class EconRun{
             for(ItemStack stack : rules.loadout) core.items.set(stack.item, stack.amount);
         }
         rules.coreIncinerates = true;
+        //the mod plays the enemy, which the game lets see the whole map: so does the test, unless asked (xp.fog)
+        if(!Boolean.getBoolean("xp.fog")) rules.fog = false;
         rules.infiniteResources = false;
         //the enemy is kept still: this is about the economy alone
         enemy.rules().rtsAi = false;
@@ -97,7 +99,7 @@ public class EconRun{
         //the plan
         Catalog cat = Recipes.read(blocks, (CoreBlock)core.block, rules.buildSpeed(me));
         cat.logistics(allowed);
-        Field field = Sites.scan(cat, me, 110);
+        Field field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
         String pruned = Sites.prune(cat, field, income);
         if(!pruned.isEmpty()) System.out.println("  the map's own: " + pruned);
         Planner planner = new Planner(cat, field);
