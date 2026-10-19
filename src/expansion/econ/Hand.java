@@ -55,6 +55,11 @@ public final class Hand extends mindustry.entities.units.AIController{
         return next >= order.size() && job == null && skipped.isEmpty() && pending == null;
     }
 
+    /** Whether it has nothing at all to do: all built, nothing to put back or to cut. */
+    public boolean idle(){
+        return done() && watch.repairs.isEmpty() && deferred.isEmpty() && cuts.isEmpty();
+    }
+
     static float now(){
         return (float)(Vars.state.tick / 60.0);
     }

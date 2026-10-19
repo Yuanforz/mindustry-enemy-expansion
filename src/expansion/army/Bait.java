@@ -82,7 +82,7 @@ public class Bait{
             Unit unit = army.team.data().units.get(i);
             if(!coreUnit(unit)) continue;
             if(unit.controller() instanceof BaitAI bait){
-                boolean lent = bait.previous instanceof expansion.ExpansionAI;
+                boolean lent = bait.previous instanceof expansion.ExpansionAI || bait.previous instanceof expansion.econ.Hand;
                 if(lent && (!wanted || army.clock - bait.since > lendTime || core == null || core.items.get(Items.beryllium) < lendStock / 2)){
                     unit.controller(bait.previous);
                     restUntil = army.clock + restTime;
@@ -94,6 +94,9 @@ public class Bait{
             //busy with something of its own side's: let be
             if(unit.controller() instanceof expansion.ExpansionAI ai){
                 if(!ai.idle() || army.clock < restUntil || core == null || core.items.get(Items.beryllium) < lendStock) continue;
+            }else if(unit.controller() instanceof expansion.econ.Hand hand){
+                //(the economy executor's builder: the same, lent only with all its work done)
+                if(!hand.idle() || army.clock < restUntil || core == null || core.items.get(Items.beryllium) < lendStock) continue;
             }else if(unit.plans().size > 0) continue;
             BaitAI bait = new BaitAI(this);
             bait.previous = unit.controller();

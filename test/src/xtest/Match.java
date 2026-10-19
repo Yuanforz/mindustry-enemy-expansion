@@ -96,6 +96,12 @@ public class Match{
         //the squad AI, which the game runs for its AI sides only: run here for ours by hand
         us.rules().rtsAi = true;
         mindustry.ai.RtsAI squads = new mindustry.ai.RtsAI(us.data());
+        //and our army layer over it (-Dmatch.us=rts for the squad AI alone, or army:parts); the Brain is played as the main
+        //line has it, without the layer (-Dmatch.brainarmy=true to give it the layer too)
+        String ours = System.getProperty("match.us", "army");
+        expansion.army.Army army = ours.startsWith("army") ? new expansion.army.Army(us, expansion.army.Army.Flags.parse(ours)) : null;
+        if(!Boolean.getBoolean("match.brainarmy")) System.setProperty("xp.noarmy", "true");
+        System.out.println("  our units: " + (army == null ? "the squad AI alone" : "the squad AI with the army layer: " + army.flags.toString().trim()));
         Time.setDeltaProvider(() -> 1f);
         Vars.logic.play();
         Vars.state.tick = 0;
@@ -198,6 +204,7 @@ public class Match{
             }
             Boot.frames(1);
             squads.update();
+            if(army != null) army.update();
             if(f % 60 == 0) for(Building b : us.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild tb){
                 turretSeconds++;
                 if(!tb.hasAmmo()) drySeconds++;
