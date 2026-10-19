@@ -19,6 +19,8 @@ public final class Plant{
     /** Per second: made, used, and left over for the core, by {@link Res#id}. Power is the last entry of supply and used. */
     public float[] supply, used, toCore;
     public float powerMet = 1f;
+    /** For each thing, the share of it that goes past the machines to the core regardless (see Catalog.coreShare); null for none. */
+    public float[] share;
 
     private final int power;
 
@@ -95,7 +97,8 @@ public final class Plant{
                 int[] in = ins[i];
                 for(int j = 0; j < in.length; j++){
                     int k = in[j];
-                    if(u[k] > s[k] + 1e-6f) limit = Math.min(limit, s[k] / u[k]);
+                    float have = avail(k, s);
+                    if(u[k] > have + 1e-6f) limit = Math.min(limit, have / u[k]);
                 }
                 //held back by what it is short of; with nothing short it goes back up towards what it could do
                 float target = limit < 1f ? eff[i] * limit : Math.min(cap[i], eff[i] + 0.3f * (cap[i] - eff[i]) + 0.01f);
@@ -121,8 +124,14 @@ public final class Plant{
     }
 
     private boolean feasible(float[] s, float[] u){
-        for(int k = 0; k <= power; k++) if(u[k] > s[k] * 1.0001f + 1e-5f) return false;
+        for(int k = 0; k <= power; k++) if(u[k] > avail(k, s) * 1.0001f + 1e-5f) return false;
         return true;
+    }
+
+    /** What of a thing the machines can have: all that is made, but for the share that goes past them to the core. */
+    private float avail(int k, float[] s){
+        if(k >= power || share == null) return s[k];
+        return s[k] * (1f - share[k]);
     }
 
     private void add(List<Machine> machines, int m, int[][] ins, float[][] inAmt, int[][] outs, float[][] outAmt, int[] boostRes, float[] s, float[] u, boolean countBoost){

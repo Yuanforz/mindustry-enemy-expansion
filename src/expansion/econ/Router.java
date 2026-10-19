@@ -57,6 +57,8 @@ final class Router{
         final IntSeq quiet = new IntSeq();
         /** The machine whose line is the trunk. */
         Machine first;
+        /** Whether its makers are listed in the order they are built, the first to be the trunk (else the furthest is). */
+        boolean byOrder;
         /** How each taker is fed: "dock", "spur", "touching", "end of the line", "tap". */
         final Map<Machine, String> feeds = new LinkedHashMap<>();
         boolean ok;
@@ -448,7 +450,9 @@ final class Router{
         List<Machine> makers = new ArrayList<>();
         for(Machine m : n.from) if(at.get(m) != null && !(c != null && touchFeeds(n, m, c))) makers.add(m);
         if(makers.isEmpty()) return;
-        makers.sort(Comparator.comparingDouble(m -> -(Math.abs(at.get(m).x - endAt[0]) + Math.abs(at.get(m).y - endAt[1]))));
+        //the trunk from the furthest maker, so the others join on the way; or, where the order matters (a pipe goes up with
+        //the later of its ends), from the first maker to be built
+        if(!n.byOrder) makers.sort(Comparator.comparingDouble(m -> -(Math.abs(at.get(m).x - endAt[0]) + Math.abs(at.get(m).y - endAt[1]))));
         Machine first = makers.get(0);
         n.first = first;
         Path trunk = search(n, starts(n, first), List.of(), end, endAt);

@@ -57,6 +57,11 @@ public final class Hand extends mindustry.entities.units.AIController{
         offload();
         tell();
         watch.update(next);
+        //a line to the core that is no longer wanted is cut
+        if(job == null && !cuts.isEmpty()){
+            cut();
+            return;
+        }
         //something built that went missing is put back before anything new
         if(job == null && !watch.repairs.isEmpty()){
             job = watch.repairs;
@@ -68,9 +73,10 @@ public final class Hand extends mindustry.entities.units.AIController{
             Machine m = order.get(next);
             //its place not yet seen: a unit goes to have a look (the core unit sees nothing), and meanwhile it digs
             Part where = works.at.get(m);
-            if(where != null && !Vars.fogControl.isDiscovered(unit.team, where.x, where.y)){
+            if(where != null && unseen(where) != null){
                 doing = String.format("a unit is sent to see %d,%d for #%d %s (ground not seen can't be built on); digging meanwhile", where.x, where.y, next + 1, m.recipe.name);
-                scout(where);
+                Tile dark = unseen(where);
+                scout(new Part(where.block, dark.x, dark.y, 0, null));
                 dig(m.cost);
                 return;
             }
@@ -120,7 +126,7 @@ public final class Hand extends mindustry.entities.units.AIController{
     public Intent intent;
     float toldAt;
     /** What it is doing, in words: set where it decides. */
-    String doing = "";
+    public String doing = "";
 
     /** Puts what it is doing now, and how each machine runs, into the intent being shown. */
     void tell(){
@@ -158,6 +164,24 @@ public final class Hand extends mindustry.entities.units.AIController{
         if(watch.repaired > 0) watching.add(watch.repaired + " parts put back so far");
         words.put(Intent.Layer.watch, watching);
         intent.live(marks, words);
+    }
+
+    /** Pieces to take up. */
+    final Seq<Part> cuts = new Seq<>();
+
+    void cut(){
+        Part p = cuts.first();
+        Tile t = Vars.world.tile(p.x, p.y);
+        doing = String.format("cutting the line to the core at %d,%d: what it carries goes all to the machines now", p.x, p.y);
+        if(t == null || t.build == null || t.build.team != unit.team){
+            cuts.remove(0);
+            unit.plans.clear();
+            return;
+        }
+        boolean planned = false;
+        for(BuildPlan plan : unit.plans) if(plan.breaking && plan.x == p.x && plan.y == p.y) planned = true;
+        if(!planned) unit.addBuild(new BuildPlan(p.x, p.y));
+        moveTo(t, unit.type.buildRange * 0.6f);
     }
 
     boolean cut, repairing;
@@ -204,11 +228,14 @@ public final class Hand extends mindustry.entities.units.AIController{
             for(Part p : job){
                 Tile tile = Vars.world.tile(p.x, p.y);
                 //ground not yet seen: a unit goes to look, and the part waits
-                if(tile != null && !Vars.fogControl.isDiscovered(unit.team, p.x, p.y) && tile.block() != p.block){
-                    scout(p);
+                Tile dark = tile == null ? null : unseen(p);
+                if(dark != null && tile.block() != p.block){
+                    scout(new Part(p.block, dark.x, dark.y, 0, null));
                     continue;
                 }
                 if(tile == null || unit.dst(tile.worldx(), tile.worldy()) > Vars.tilesize * 4f) continue;
+                //units standing where it goes keep it from going down: they are sent off, and it waits
+                if(tile.block() != p.block && !(tile.build instanceof ConstructBuild) && !Build.validPlace(p.block, unit.team, p.x, p.y, p.rotation) && shoo(p)) continue;
                 if(tile.block() != p.block && !(tile.build instanceof ConstructBuild) && !Build.validPlace(p.block, unit.team, p.x, p.y, p.rotation)){
                     trouble.add(String.format("%s at %d,%d for %s (there: %s)", p.block.name, p.x, p.y, machine == null ? "a repair" : machine.recipe.name, tile.block().name));
                     job.remove(p);
@@ -225,6 +252,12 @@ public final class Hand extends mindustry.entities.units.AIController{
         }
         if(all){
             finished[next] = now();
+            //the lines to the core that nothing still to be built needs any more are cut
+            Seq<Part> due = works.cuts.get(next);
+            if(due != null) for(Part p : due){
+                cuts.add(p);
+                watch.taken.add(p);
+            }
             next++;
             job = null;
             machine = null;
@@ -237,6 +270,32 @@ public final class Hand extends mindustry.entities.units.AIController{
             boolean placeable = tt.build instanceof ConstructBuild || Build.validPlace(target.block, unit.team, target.x, target.y, target.rotation);
             moveTo(tt, placeable ? unit.type.buildRange * 0.7f : Vars.tilesize * 2f);
         }
+    }
+
+    /** A tile of a part's ground the side has not seen yet (the game will not let anything go on one), or null. */
+    Tile unseen(Part p){
+        Tile[] out = {null};
+        Tile t = Vars.world.tile(p.x, p.y);
+        if(t == null) return null;
+        t.getLinkedTilesAs(p.block, o -> { if(out[0] == null && !Vars.fogControl.isDiscovered(unit.team, o.x, o.y)) out[0] = o; });
+        return out[0];
+    }
+
+    /** Sends the side's units off the ground a part is to go on; whether there were any. */
+    boolean shoo(Part p){
+        float t = Vars.tilesize, size = p.block.size * t;
+        float x = p.x * t + p.block.offset - size / 2f, y = p.y * t + p.block.offset - size / 2f;
+        boolean[] any = {false};
+        mindustry.entities.Units.nearby(unit.team, x - t, y - t, size + 2 * t, size + 2 * t, u -> {
+            if(u == unit || u.type.flying || !(u.controller() instanceof mindustry.ai.types.CommandAI ai)) return;
+            any[0] = true;
+            //out of the way: a few tiles past the part, away from the core
+            var core = unit.team.core();
+            float angle = core == null ? 0f : arc.math.Angles.angle(core.x, core.y, p.x * t, p.y * t);
+            ai.commandPosition(new arc.math.geom.Vec2(p.x * t, p.y * t).add(arc.math.geom.Vec2.ZERO.cpy().trns(angle, size + 4 * t)));
+        });
+        if(any[0]) doing = String.format("waiting for units to get off %d,%d, where %s goes", p.x, p.y, p.block.name);
+        return any[0];
     }
 
     /** Sends the nearest unit of the side's (not the core unit) to a place, so that the side sees it. */

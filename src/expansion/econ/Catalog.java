@@ -13,6 +13,12 @@ public final class Catalog{
 
     /** How much of each item the core holds at most; more is burned. */
     public int coreCap = 2000;
+    /**
+     * For each thing, the share of what flows past a machine that takes it that goes on to the core regardless: without
+     * underflow ducts a dock is a router, which hands out by turns to the machine and the line on to the core, so a
+     * machine gets at most half of what passes it. Null when docks give the machines all they want first.
+     */
+    public float[] coreShare;
     /** The core unit: build speed, items a second it digs from a wall, how much it carries, how fast it flies (tiles a second). */
     public float buildSpeed = 1f, mineRate = 5f, flySpeed = 40f;
     public int carry = 60;
@@ -52,6 +58,22 @@ public final class Catalog{
     /** Seconds the core unit takes to build it. */
     public float buildSeconds(Recipe recipe){
         return recipe.buildTicks / (buildSpeed * buildRule) / 60f;
+    }
+
+    /** Sets {@link #coreShare} by what may be built: with no underflow duct, half of what building costs goes on to the core. */
+    public void logistics(java.util.Set<String> allowed){
+        if(allowed.contains("underflow-duct")){
+            coreShare = null;
+            return;
+        }
+        coreShare = zeros();
+        for(int k = 0; k < size(); k++){
+            Res r = get(k);
+            if(r.kind != Res.Kind.item || !r.storable) continue;
+            boolean builds = false;
+            for(Recipe rec : recipes) if(rec.cost[k] > 0) builds = true;
+            if(builds) coreShare[k] = 0.5f;
+        }
     }
 
     public float[] zeros(){

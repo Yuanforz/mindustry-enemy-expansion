@@ -41,7 +41,7 @@ public final class Timeline{
     /** When each machine of the order was begun and finished, by its place in the order. */
     public float[] begun, finished;
 
-    final Plant plant;
+    public final Plant plant;
     boolean dirty = true;
 
     public Timeline(Catalog cat, Field field, List<Machine> order){
@@ -253,6 +253,21 @@ public final class Timeline{
         for(int i = 0; i < built.size(); i++){
             Recipe r = built.get(i).recipe;
             active[i] = !(r.unitIn >= 0 && !holding[i]) && !waiting[i];
+        }
+        //while something still to be built costs a thing, the line that takes it on to the core is there (without
+        //underflow ducts a dock gives the core as much as the machine); once nothing does, the line is cut
+        if(cat.coreShare != null){
+            float[] share = new float[cat.size()];
+            for(int k = 0; k < share.length; k++){
+                if(cat.coreShare[k] <= 0f) continue;
+                for(int i = Math.max(0, building >= 0 ? building : next); i < order.size(); i++){
+                    if(order.get(i).cost[k] > 0){
+                        share[k] = cat.coreShare[k];
+                        break;
+                    }
+                }
+            }
+            plant.share = share;
         }
         plant.solve(built, active, false);
         dirty = false;

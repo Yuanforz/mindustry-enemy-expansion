@@ -33,6 +33,16 @@ public class EconRun{
 
     static final Map<String, Float> firstMade = new LinkedHashMap<>();
 
+    /** The lines and power a sector has, and every one before it. */
+    static Set<String> logisticsOf(String sector){
+        Set<String> out = new HashSet<>();
+        for(String[] row : logistics){
+            for(int i = 1; i < row.length; i++) out.add(row[i]);
+            if(row[0].equals(sector)) break;
+        }
+        return out;
+    }
+
     public static void main(String[] args){
         Boot.boot(args[0]);
         String sector = args[2], unitName = args[3];
@@ -72,6 +82,7 @@ public class EconRun{
 
         //the plan
         Catalog cat = Recipes.read(blocks, (CoreBlock)core.block, rules.buildSpeed(me));
+        cat.logistics(allowed);
         Field field = Sites.scan(cat, me, 110);
         Planner planner = new Planner(cat, field);
         Recipe making = null;
@@ -159,6 +170,26 @@ public class EconRun{
         System.out.print(intent.report());
         IntentImage.write(intent, me, field.coreX, field.coreY, new java.io.File("build/intent/" + mapName + "-end.png"));
         if(box != null) IntentImage.write(intent, me, box[0], box[1], box[2], box[3], new java.io.File("build/intent/" + mapName + "-cells-end.png"));
+        //the model against the game, machine by machine: what it makes at full speed, what the model's plant gives it once
+        //all is built, and what the game measured (on average since it first ran, and over the last minute)
+        Plant steady = new Plant(cat);
+        List<Machine> all = new ArrayList<>(field.existing);
+        all.addAll(model.order);
+        boolean[] on = new boolean[all.size()];
+        Arrays.fill(on, true);
+        steady.solve(all, on, true);
+        System.out.println("  calibration: machine, what it makes, model at full speed / model in the plant / game on average / game in the last minute / game at best");
+        for(var e : hand.watch.rates.entrySet()){
+            Machine m = e.getKey();
+            float[] r = e.getValue();
+            int k = m.item >= 0 ? m.item : main(cat, m);
+            float full = k >= 0 ? m.out(k) : m.powerOut() / 60f;
+            int idx = all.indexOf(m);
+            float inPlant = idx >= 0 && idx < steady.eff.length ? full * steady.eff[idx] : Float.NaN;
+            float avg = r[1] > 0 ? r[0] / r[1] : 0f;
+            System.out.println(String.format("    %-30s %-9s %6.2f %6.2f %6.2f %6.2f %6.2f%s", m.recipe.name, k >= 0 ? cat.get(k).name : "power", full, inPlant, avg, r[2], r[3],
+                avg < inPlant * 0.85f ? "   <- short" : r[3] > full * 1.15f ? "   <- more than the model's best" : ""));
+        }
         System.out.println("  how each ran since it was built (watch):");
         System.out.print(hand.watch.report(cat));
         if(hand.watch.repaired > 0) System.out.println("  parts put back: " + hand.watch.repaired);
@@ -194,13 +225,30 @@ public class EconRun{
         }
         if(works.log.length() > 0) System.out.print("  works: " + works.log.toString().replace("\n", "\n  works: ").trim() + "\n");
         for(String t : hand.trouble) System.out.println("  could not put down: " + t);
-        for(int[] c : new int[][]{{127, 145}, {101, 109}}){
-            Block b = Blocks.turbineCondenser;
-            Tile t = Vars.world.tile(c[0], c[1]);
-            System.out.println(String.format("  check %d,%d: valid %b, canPlaceOn %b, seen %b, darkness %.1f, in area %b, enemy core near %b, floor %s, deep %b",
-                c[0], c[1], Build.validPlace(b, me, c[0], c[1], 0), b.canPlaceOn(t, me, 0), Vars.fogControl.isDiscovered(me, c[0], c[1]), (float)Vars.world.getDarkness(c[0], c[1]), Vars.world.isInMapArea(c[0], c[1]),
-                Vars.state.teams.anyEnemyCoresWithinBuildRadius(me, t.worldx(), t.worldy()), t.floor().name, t.floor().isDeep()));
+        //why each part that could not go down was refused, tile by tile
+        for(String t : hand.trouble){
+            String[] w = t.split(" ");
+            Block b = Vars.content.block(w[0]);
+            String[] xy = w[2].split(",");
+            int x = Integer.parseInt(xy[0]), y = Integer.parseInt(xy[1]);
+            StringBuilder why = new StringBuilder(String.format("  why %s at %d,%d was refused: canPlaceOn %b, units on it %b;", b.name, x, y, b.canPlaceOn(Vars.world.tile(x, y), me, 0),
+                mindustry.entities.Units.anyEntities(x * 8 + b.offset - b.size * 4f, y * 8 + b.offset - b.size * 4f, b.size * 8f, b.size * 8f)));
+            Vars.world.tile(x, y).getLinkedTilesAs(b, o -> {
+                if(o.build != null || o.solid() || !Vars.fogControl.isDiscovered(me, o.x, o.y) || o.floor().isDeep() || !o.floor().placeableOn)
+                    why.append(String.format(" %d,%d %s/%s seen %b;", o.x, o.y, o.floor().name, o.block().name, Vars.fogControl.isDiscovered(me, o.x, o.y)));
+            });
+            System.out.println(why);
         }
+        //one line for the benchmark table
+        Float made = firstMade.get(unitName);
+        float lastDone = 0f;
+        for(float f : hand.finished) if(!Float.isNaN(f)) lastDone = Math.max(lastDone, f);
+        int done = 0;
+        for(float f : hand.finished) if(!Float.isNaN(f)) done++;
+        System.out.println(String.format("BENCH %s %s %s %d | model %s game %s | %s | built %d/%d model %s game %s | nets unlaid %d checker %d | layout %.1fs",
+            mapName, sector, unitName, machines, EconLab.time(model.first[unit]), made == null ? "never" : EconLab.time(made),
+            made == null ? "-" : String.format("%.0f%%", 100f * model.first[unit] / made), done, model.order.size(), EconLab.time(model.t), done == model.order.size() ? EconLab.time(lastDone) : "-",
+            works.failed, works.problems.size(), (l1 - l0) / 1e9) + (done < model.order.size() ? " | stuck: " + hand.doing : ""));
         System.exit(0);
     }
 
@@ -271,6 +319,12 @@ public class EconRun{
         for(int x = x0; x <= x1; x++) out.append(x % 5 == 0 ? String.format("%-2d", x % 100) : "  ");
         out.append("\n  ").append(tools.Ascii.legend(used)).append("  (s2 = a wall of 1 point of sand, s4 = 2 points...)");
         return out.toString();
+    }
+
+    /** A machine's main output: the first thing it makes. */
+    static int main(Catalog cat, Machine m){
+        for(int k = 0; k < cat.size(); k++) if(m.recipe.out[k] > 0f && cat.get(k).kind != Res.Kind.unit) return k;
+        return -1;
     }
 
     static String firsts(Catalog cat, Timeline t){

@@ -20,6 +20,8 @@ public final class Watch{
     final List<Machine> order;
     /** Parts to put back, for the hand to take up between jobs. */
     public Seq<Part> repairs = new Seq<>();
+    /** Parts taken up on purpose (a line to the core cut), not to be put back. */
+    public final Set<Part> taken = new HashSet<>();
     /** Seconds each machine of the order spent in each state, once built. */
     public final Map<Machine, float[]> seconds = new LinkedHashMap<>();
     public static final String[] states = {"running", "starved", "blocked", "no power", "missing"};
@@ -27,6 +29,8 @@ public final class Watch{
     /** When each machine's state changed, as "time state" entries. */
     public final Map<Machine, StringBuilder> changes = new LinkedHashMap<>();
     final Map<Machine, Integer> last = new HashMap<>();
+    /** For each machine, its main output a second as the game has it, summed over the samples since it was first seen running. */
+    public final Map<Machine, float[]> rates = new LinkedHashMap<>();
     float at;
     static final float every = 2f;
 
@@ -43,6 +47,7 @@ public final class Watch{
         for(int i = 0; i < Math.min(done, order.size()); i++){
             Machine m = order.get(i);
             for(Part p : layout.job(m)){
+                if(taken.contains(p)) continue;
                 Tile t = Vars.world.tile(p.x, p.y);
                 if(t == null) continue;
                 boolean there = t.block() == p.block || t.build instanceof ConstructBuild;
@@ -57,11 +62,38 @@ public final class Watch{
             Building b = Vars.world.build(self.x, self.y);
             int st = state(b, self);
             s[st] += every;
+            float r = rate(b);
+            if(!Float.isNaN(r)){
+                float[] acc = rates.computeIfAbsent(m, x -> new float[4]);
+                //from the first time it runs: before that it was waiting to be fed, which the rate says nothing about
+                if(r > 0 || acc[1] > 0){
+                    acc[0] += r;
+                    acc[1]++;
+                    //and the last minute on its own, for the steady state
+                    acc[2] = acc[2] * (1f - every / 60f) + r * every / 60f;
+                    acc[3] = Math.max(acc[3], r);
+                }
+            }
             if(last.getOrDefault(m, -1) != st){
                 last.put(m, st);
                 changes.computeIfAbsent(m, x -> new StringBuilder()).append(String.format(" %d:%02d %s", (int)now / 60, (int)now % 60, states[st]));
             }
         }
+    }
+
+    /** The main thing a machine makes, a second, right now, by the game's own counters; NaN for what has none. */
+    static float rate(Building b){
+        if(b == null) return Float.NaN;
+        if(b instanceof mindustry.world.blocks.production.Drill.DrillBuild d) return d.lastDrillSpeed * 60f;
+        if(b instanceof mindustry.world.blocks.production.BeamDrill.BeamDrillBuild d) return d.lastDrillSpeed * 60f;
+        if(b instanceof mindustry.world.blocks.production.WallCrafter.WallCrafterBuild w) return w.lastEfficiency * 60f / ((mindustry.world.blocks.production.WallCrafter)b.block).drillTime;
+        if(b.block instanceof mindustry.world.blocks.production.GenericCrafter gc && b instanceof mindustry.world.blocks.production.GenericCrafter.GenericCrafterBuild g){
+            float per = 60f / gc.craftTime * (g.shouldConsume() ? b.efficiency : 0f);
+            if(gc.outputItems != null && gc.outputItems.length > 0) return per * gc.outputItems[0].amount;
+            if(gc.outputLiquids != null && gc.outputLiquids.length > 0) return (g.shouldConsume() ? b.efficiency : 0f) * gc.outputLiquids[0].amount * 60f;
+        }
+        if(b.block instanceof mindustry.world.blocks.power.ThermalGenerator && b instanceof mindustry.world.blocks.power.PowerGenerator.GeneratorBuild gb) return gb.productionEfficiency * ((mindustry.world.blocks.power.PowerGenerator)b.block).powerProduction * 60f;
+        return Float.NaN;
     }
 
     static String clock(float seconds){

@@ -127,6 +127,47 @@ case "$what" in
     [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
     java $RUN_OPTS -cp "$CP" xtest.EconRun build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "$3" "$4" "$5" 2>build/test-err.log
     ;;
+  econbench)
+    # ./test.sh econbench [jobs]   the plan laid out and played on many maps; a table of the model against the game
+    mkdir -p build/test-maps build/bench
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    jobs="${1:-3}"
+    snap=build/bench/snap; rm -rf $snap; mkdir -p $snap; cp -r build/classes $snap/classes; cp -r build/test-classes $snap/test-classes
+    CP="$GAME_JAR:$snap/classes:$snap/test-classes"
+    # map sector unit machines minutes
+    cat > build/bench/list <<LIST
+onset onset stell 2 8
+aegis aegis stell 3 8
+lake lake stell 2 8
+intersect intersect stell 2 8
+atlas atlas locus 1 12
+split atlas locus 1 12
+basin atlas locus 1 12
+marsh atlas locus 1 12
+peaks atlas locus 1 12
+ravine atlas locus 1 12
+caldera-erekir atlas locus 1 12
+stronghold atlas locus 1 12
+crevice atlas locus 1 12
+siege atlas locus 1 12
+crossroads atlas locus 1 12
+karst atlas locus 1 12
+origin atlas locus 1 12
+LIST
+    started=$(date +%s)
+    while read map sector unit n minutes; do
+      while [ $(jobs -r | wc -l) -ge $jobs ]; do sleep 2; done
+      ( java $RUN_OPTS -cp "$CP" xtest.EconRun build/test-data "build/test-maps/maps/erekir/$map.msav" "$sector" "$unit" "$n" "$minutes" > build/bench/$map.log 2> build/bench/$map.err; \
+        grep -q "^BENCH" build/bench/$map.log || echo "BENCH $map $sector $unit $n | failed: $(grep -m1 -E 'Exception|Error' build/bench/$map.err)" >> build/bench/$map.log ) &
+    done < build/bench/list
+    wait
+    echo "$(( $(date +%s) - started )) s"
+    for map in $(cut -d' ' -f1 build/bench/list); do grep -h "^BENCH" build/bench/$map.log; done | tee build/bench/table.txt
+    ;;
+  econwhy)
+    # ./test.sh econwhy <map> <sector> <unit> <machines> [recipe]   the balanced plant solved, and with one more of a recipe
+    java -cp "$CP" xtest.EconWhy build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "$3" "$4" "$5" 2>build/test-err.log
+    ;;
   econcheck)
     # ./test.sh econcheck   the economy model against sums done by hand
     java -cp "$CP" xtest.EconCheck build/test-data 2>build/test-err.log

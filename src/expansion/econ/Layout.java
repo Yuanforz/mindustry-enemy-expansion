@@ -43,6 +43,11 @@ public final class Layout{
     public final Map<Machine, Part> at = new HashMap<>();
     /** Kept for the hand: lines to cut once building is done (the bus ends in the core and needs none). */
     public final Map<Machine, Part> coreLine = new HashMap<>();
+    /**
+     * Pieces to take up once a job is done (by its place in the order): the first piece past the last dock of a bus whose
+     * docks are routers, once nothing still to build costs what it carries; from then on the machines get all of it.
+     */
+    public final Map<Integer, Seq<Part>> cuts = new HashMap<>();
     List<Router.Net> nets = new ArrayList<>();
     final Map<Machine, Seq<Part>> lines = new HashMap<>(), wires = new HashMap<>();
     public final StringBuilder log = new StringBuilder();
@@ -183,39 +188,36 @@ public final class Layout{
             }
             boolean liquid = r.kind == Res.Kind.liquid;
             if(liquid) for(Machine m : field.existing) if(m.out(k) > 1e-4f) makers.add(m);
+            //the map's own machines that the plan feeds: those whose thing nothing of the map's makes (the model counts
+            //the plan's makers as feeding them)
+            boolean mapMakes = false;
+            for(Machine m : field.existing) if(m.out(k) > 1e-4f) mapMakes = true;
+            if(!mapMakes) for(Machine m : field.existing) if(Cells.takes(m, k) && at.get(m) != null && !makers.isEmpty()) takers.add(m);
             if(makers.isEmpty() && takers.isEmpty()) continue;
+            boolean running = false;
+            if(!liquid) for(var e : router.grid.running) if(e.value == k){ running = true; break; }
             if(!liquid && r.storable){
-                if(makers.isEmpty()){
-                    //nothing new makes it: taken off a line of the map's that carries it
+                //what the map's own machines make, the model counts as there for every taker from the start; those lines
+                //run to the core, so each taker of the plan's is fed off them too (as well as by the new makers)
+                if(running && router.dock != null && mapMakes){
                     for(Machine c : takers){
+                        if(c.existing) continue;
                         Router.Net n = new Router.Net(id++, k, false, Router.Kind.tap);
                         n.to.add(c);
                         out.add(n);
                     }
+                    if(makers.isEmpty()) continue;
+                    log.append(String.format("%s: the takers of the plan are fed off the map's own lines as well\n", r.name));
+                }
+                if(makers.isEmpty()){
+                    if(!takers.isEmpty()) log.append(String.format("%s: nothing makes it for %d takers, and no line of the map's carries it\n", r.name, takers.size()));
                     continue;
                 }
-                //what the new makers give short of what the takers take (the plan counts the map's own drills, whose
-                //lines go to the core): the takers furthest down the order are fed off those lines instead, until it is made up
-                float made = 0f, taken = 0f;
-                for(Machine m : makers) made += m.out(k);
-                for(Machine c : takers) taken += c.recipe.in[k];
-                boolean running = false;
-                for(var e : router.grid.running) if(e.value == k){ running = true; break; }
-                if(taken > made * 1.05f && running && router.dock != null){
-                    List<Machine> tapped = new ArrayList<>(takers);
-                    Collections.reverse(tapped);
-                    float short_ = taken - made;
-                    for(Machine c : tapped){
-                        if(short_ <= 1e-3f || takers.size() <= 1) break;
-                        Router.Net n = new Router.Net(id++, k, false, Router.Kind.tap);
-                        n.to.add(c);
-                        out.add(n);
-                        takers.remove(c);
-                        short_ -= c.recipe.in[k];
-                        log.append(String.format("%s fed %s off a running line: the new makers give %.2f/s of the %.2f/s taken\n", c.recipe.name, r.name, made, taken));
-                    }
-                }
-                if(router.dock != null){
+                //without underflow ducts a dock is a router, which gives the core as much as the taker (the model counts that:
+                //see Catalog.coreShare): only worth it for what building costs, which the core must get; anything else goes
+                //whole to its takers
+                boolean dockable = router.dock != null && (router.underflow() || buildsWith(k) || takers.isEmpty());
+                if(dockable){
                     Router.Net n = new Router.Net(id++, k, false, Router.Kind.bus);
                     n.from.addAll(makers);
                     n.to.addAll(takers);
@@ -234,9 +236,13 @@ public final class Layout{
                 float need = c.recipe.in[k] + (c.boosted && c.recipe.boostRes == k ? c.recipe.boostUse : 0f);
                 Part cp = at.get(c);
                 List<Machine> from = new ArrayList<>(makers);
-                from.sort(Comparator.comparingDouble(m -> at.get(m) == null || cp == null ? 1e9 : Math.abs(at.get(m).x - cp.x) + Math.abs(at.get(m).y - cp.y)));
+                //makers that stand by the time the taker does come first (a line from one built later would wait for it,
+                //and a pipe is laid with the later of its two ends), the nearest of them first
+                int ci = order.indexOf(c);
+                from.sort(Comparator.comparingDouble(m -> (order.indexOf(m) > ci ? 1e6 : 0) + (at.get(m) == null || cp == null ? 1e5 : Math.abs(at.get(m).x - cp.x) + Math.abs(at.get(m).y - cp.y))));
                 Router.Net n = new Router.Net(id++, k, liquid, Router.Kind.direct);
                 n.to.add(c);
+                n.byOrder = true;
                 for(Machine m : from){
                     if(need <= 1e-4f) break;
                     float give = Math.min(need, spare.get(m));
@@ -316,11 +322,39 @@ public final class Layout{
                 }
             }
             if(owner == null) continue;
+            //a pipe whose end has nothing to take it spills what it carries on the ground (a conduit leaks out of an open
+            //front): a liquid line goes up with the last of the machines at its two ends, never before what it runs into
+            if(n.liquid){
+                int last = -1;
+                List<Machine> ends = new ArrayList<>(n.to);
+                if(n.first != null) ends.add(n.first);
+                for(Machine m : ends){
+                    Integer i = index.get(m);
+                    if(i != null && i > last){
+                        last = i;
+                        owner = m;
+                    }
+                }
+            }
             lines.computeIfAbsent(owner, x -> new Seq<>()).addAll(n.trunk);
+            int ownerAt = index.getOrDefault(owner, -1);
             for(var e : n.branch.entrySet()){
                 Machine m = index.containsKey(e.getKey()) ? e.getKey() : owner;
+                if(n.liquid && index.getOrDefault(m, -1) < ownerAt) m = owner;
                 lines.computeIfAbsent(m, x -> new Seq<>()).addAll(e.getValue());
             }
+        }
+        //where a bus with router docks is cut, and after which job
+        cuts.clear();
+        for(Router.Net n : nets){
+            if(n.kind != Router.Kind.bus || !n.toCore || n.trunk.isEmpty()) continue;
+            int lastDock = -1;
+            for(int i = 0; i < n.trunk.size; i++) if(n.trunk.get(i).block instanceof DuctRouter) lastDock = i;
+            if(lastDock < 0 || lastDock + 1 >= n.trunk.size) continue;
+            Part cut = n.trunk.get(lastDock + 1);
+            int after = -1;
+            for(int i = 0; i < order.size(); i++) if(realCost(order.get(i))[n.res] > 0) after = i;
+            cuts.computeIfAbsent(after, x -> new Seq<>()).add(cut);
         }
     }
 
