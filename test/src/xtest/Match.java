@@ -76,6 +76,11 @@ public class Match{
         rules.coreIncinerates = true;
         rules.infiniteResources = false;
         rules.attackMode = true;
+        //a sector of waves has no base of the Brain's to play against
+        if(them.cores().isEmpty() || us.cores().isEmpty()){
+            System.out.println("RESULT " + map.nameWithoutExtension() + " " + mode + " winner=none: " + (them.cores().isEmpty() ? "the Brain has no core on this map (a sector of waves)" : "we have no core"));
+            System.exit(0);
+        }
         if(mode.equals("even")) even();
         else{
             //the rules the campaign lays on the enemy of a sector (the mod keeps its own count of what it has)
@@ -148,7 +153,7 @@ public class Match{
         Collections.sort(blocks);
         Set<String> allowed = new HashSet<>(blocks);
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/modules"));
-        String[] stages = System.getProperty("match.stages", "stell:3,locus:2").split(",");
+        String[] stages = System.getProperty("match.stages", "stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
         //a stage not all up after this long is left as it is, and the next begun
         float stageLimit = Float.parseFloat(System.getProperty("match.stagemin", "6")) * 3600f;
         String sector = expansion.defense.Tech.known(map.nameWithoutExtension()) ? map.nameWithoutExtension() : "atlas";

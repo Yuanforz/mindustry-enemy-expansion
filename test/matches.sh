@@ -9,7 +9,7 @@ GAME_JAR="${GAME_JAR:-../Mindustry.jar}"
 minutes="${1:-25}"; mode="${2:-even}"; shift 2
 MAPS="${*:-onset aegis lake intersect atlas split basin marsh peaks ravine caldera-erekir stronghold crevice siege crossroads karst origin}"
 JOBS="${JOBS:-2}"; TAG="${TAG:-m}"
-STAGES="${STAGES:-stell:2|elude:2,defend,stell:4|elude:4,defend,stell:6|elude:6}"
+STAGES="${STAGES:-stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3}"
 snap="build/match/snap-$TAG"
 rm -rf "$snap"; mkdir -p "$snap"; cp -r build/classes "$snap/classes"; cp -r build/test-classes "$snap/test-classes"
 mkdir -p build/test-maps
@@ -32,4 +32,4 @@ for m in $MAPS; do
   echo "$r" >> "$out"
 done
 cat "$out"
-awk '/winner=us/{w++} /winner=Brain/{l++} /winner=-/{d++} END{printf "TOTAL: won %d, lost %d, drew %d of %d\n", w, l, d, NR}' "$out" | tee -a "$out"
+awk '/winner=us/{w++} /winner=Brain/{l++} /winner=-/{d++} /winner=none/{n++} END{printf "TOTAL: won %d, lost %d, drew %d, not played %d of %d\n", w, l, d, n, NR}' "$out" | tee -a "$out"
