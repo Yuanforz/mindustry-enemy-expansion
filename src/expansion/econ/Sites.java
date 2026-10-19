@@ -64,9 +64,10 @@ public final class Sites{
         }
         //only places a line can get to from the core: over ground that can be built on, or by bridge over up to three
         //tiles of anything else
-        boolean[] reach = reach(field, team);
+        boolean[] reach = reach(field, team), shot = danger(team);
         int w = Vars.world.width();
         all.removeIf(site -> {
+            for(int t : site.tiles) if(shot[t]) return true;
             for(int t : site.tiles){
                 int x = t % w, y = t / w;
                 for(int d = 0; d < 4; d++){
@@ -161,14 +162,35 @@ public final class Sites{
         return out.toString().trim();
     }
 
+    /** Tiles another side's turrets reach (with two tiles to spare): nothing of the plan's goes there, it would be shot down. */
+    public static boolean[] danger(Team team){
+        int w = Vars.world.width(), h = Vars.world.height();
+        boolean[] out = new boolean[w * h];
+        for(var data : Vars.state.teams.active){
+            if(data.team == team || data.team == Team.derelict) continue;
+            for(Building b : data.buildings){
+                if(!(b.block instanceof mindustry.world.blocks.defense.turrets.BaseTurret turret)) continue;
+                int r = (int)Math.ceil(turret.range / Vars.tilesize) + 2, cx = b.tileX(), cy = b.tileY();
+                for(int dx = -r; dx <= r; dx++){
+                    for(int dy = -r; dy <= r; dy++){
+                        int x = cx + dx, y = cy + dy;
+                        if(x < 0 || y < 0 || x >= w || y >= h || dx * dx + dy * dy > r * r) continue;
+                        out[x + y * w] = true;
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
     /** The tiles a line can get to from the core: ground that can be built on, crossing up to three tiles of anything else by bridge. */
     static boolean[] reach(Field field, Team team){
         int w = Vars.world.width(), h = Vars.world.height();
-        boolean[] open = new boolean[w * h], seen = new boolean[w * h];
+        boolean[] open = new boolean[w * h], seen = new boolean[w * h], shot = danger(team);
         for(int y = 0; y < h; y++){
             for(int x = 0; x < w; x++){
                 Tile t = Vars.world.tile(x, y);
-                open[x + y * w] = !t.block().isStatic() && (t.block() == mindustry.content.Blocks.air || t.block().alwaysReplace || t.build != null) && !t.floor().isDeep() && t.floor().placeableOn && Vars.world.isInMapArea(x, y) && Vars.world.getDarkness(x, y) < 3;
+                open[x + y * w] = !shot[x + y * w] && !t.block().isStatic() && (t.block() == mindustry.content.Blocks.air || t.block().alwaysReplace || t.build != null) && !t.floor().isDeep() && t.floor().placeableOn && Vars.world.isInMapArea(x, y) && Vars.world.getDarkness(x, y) < 3;
             }
         }
         IntQueue queue = new IntQueue();

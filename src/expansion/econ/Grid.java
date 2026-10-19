@@ -78,12 +78,13 @@ public final class Grid{
         //what the side can build on is worked out without fog: ground not yet seen is built on once a unit has looked
         boolean fog = Vars.state.rules.fog;
         Vars.state.rules.fog = false;
+        boolean[] shot = Sites.danger(team);
         for(int y = 0; y < h; y++){
             for(int x = 0; x < w; x++){
                 Tile t = Vars.world.tile(x, y);
                 int p = x + y * w;
                 //(rocks and crystals that stand on the floor are in the way too, unless the game clears them for whatever is built)
-                ground[p] = !t.block().isStatic() && (t.block() == mindustry.content.Blocks.air || t.block().alwaysReplace || t.build != null) && !t.floor().isDeep() && t.floor().placeableOn && Vars.world.isInMapArea(x, y) && Vars.world.getDarkness(x, y) < 3
+                ground[p] = !shot[p] && !t.block().isStatic() && (t.block() == mindustry.content.Blocks.air || t.block().alwaysReplace || t.build != null) && !t.floor().isDeep() && t.floor().placeableOn && Vars.world.isInMapArea(x, y) && Vars.world.getDarkness(x, y) < 3
                     && !Vars.state.teams.anyEnemyCoresWithinBuildRadius(team, t.worldx(), t.worldy()) && ours(t.worldx(), t.worldy());
                 if(t.build != null && t.build.team == team && t.build.tile == t){
                     int r = output(t.build.block, t.build);

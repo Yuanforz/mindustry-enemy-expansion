@@ -134,17 +134,18 @@ case "$what" in
     jobs="${1:-3}"
     snap=build/bench/snap; rm -rf $snap; mkdir -p $snap; cp -r build/classes $snap/classes; cp -r build/test-classes $snap/test-classes
     CP="$GAME_JAR:$snap/classes:$snap/test-classes"
-    # map sector unit machines minutes [radius]   (split, peaks and siege have no tungsten in reach: a T1 goal there)
+    # map sector unit machines minutes [radius]   (split, peaks and siege have no tungsten in reach: a T1 goal there, of a
+    # kind the map does not ban)
     cat > build/bench/list <<LIST
 onset onset stell 2 8
 aegis aegis stell 3 8
 lake lake stell 2 8
 intersect intersect stell 2 8
 atlas atlas locus 1 12
-split atlas stell 2 12
+split atlas merui 2 12
 basin atlas locus 1 12
 marsh atlas locus 1 12
-peaks atlas stell 2 12
+peaks atlas elude 2 12
 ravine atlas locus 1 12
 caldera-erekir atlas locus 1 12
 stronghold atlas locus 1 12 200

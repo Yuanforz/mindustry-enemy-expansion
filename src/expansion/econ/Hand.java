@@ -79,10 +79,18 @@ public final class Hand extends mindustry.entities.units.AIController{
         }
         //something built that went missing is put back before anything new
         if(job == null && !watch.repairs.isEmpty()){
-            job = watch.repairs;
-            watch.repairs = new Seq<>();
-            repairing = true;
-            unit.mineTile = null;
+            //paid for first, like any job (building waits on the core for what it lacks, and the hand would wait with it)
+            int[] need = cost(watch.repairs);
+            if(affordable(need)){
+                job = watch.repairs;
+                watch.repairs = new Seq<>();
+                repairing = true;
+                unit.mineTile = null;
+            }else{
+                doing = "saving up to put back what went missing: " + shortOf(need);
+                dig(need);
+                return;
+            }
         }
         if(job == null && next < order.size()){
             Machine m = order.get(next);

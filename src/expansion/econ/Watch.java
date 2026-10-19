@@ -26,6 +26,8 @@ public final class Watch{
     public final Map<Machine, float[]> seconds = new LinkedHashMap<>();
     public static final String[] states = {"running", "starved", "blocked", "no power", "missing"};
     public int repaired;
+    /** What was put back, and when. */
+    public final List<String> what = new ArrayList<>();
     /** When each machine's state changed, as "time state" entries. */
     public final Map<Machine, StringBuilder> changes = new LinkedHashMap<>();
     final Map<Machine, Integer> last = new HashMap<>();
@@ -54,6 +56,7 @@ public final class Watch{
                 if(!there && !repairs.contains(p, true) && Build.validPlace(p.block, layout.team, p.x, p.y, p.rotation)){
                     repairs.add(p);
                     repaired++;
+                    if(what.size() < 20) what.add(String.format("%s at %d,%d (of #%d %s; there: %s) at %s", p.block.name, p.x, p.y, i + 1, m.recipe.name, t.block().name, clock(now)));
                 }
             }
             Part self = layout.at.get(m);

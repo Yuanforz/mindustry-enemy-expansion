@@ -158,6 +158,10 @@ public class EconRun{
         IntentImage.write(intent, me, field.coreX, field.coreY, new java.io.File("build/intent/" + mapName + "-plan.png"));
         int[] box = cellBox(works);
         if(box != null) IntentImage.write(intent, me, box[0], box[1], box[2], box[3], new java.io.File("build/intent/" + mapName + "-cells.png"));
+        List<String> destroyed = new ArrayList<>();
+        Events.on(BlockDestroyEvent.class, e -> {
+            if(e.tile.team() == me && destroyed.size() < 40) destroyed.add(String.format("%s at %d,%d at %s", e.tile.block().name, e.tile.x, e.tile.y, EconLab.time((float)(Vars.state.tick / 60.0))));
+        });
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == me && !firstMade.containsKey(e.unit.type.name)) firstMade.put(e.unit.type.name, (float)(Vars.state.tick / 60.0));
         });
@@ -225,7 +229,7 @@ public class EconRun{
         }
         System.out.println("  how each ran since it was built (watch):");
         System.out.print(hand.watch.report(cat));
-        if(hand.watch.repaired > 0) System.out.println("  parts put back: " + hand.watch.repaired);
+        if(hand.watch.repaired > 0) System.out.println("  parts put back: " + hand.watch.repaired + ": " + String.join("; ", hand.watch.what));
         System.out.println(picture(works, me));
         System.out.println("  the cells close up:");
         System.out.println(cells(works, me));
@@ -264,7 +268,9 @@ public class EconRun{
             Block b = Vars.content.block(w[0]);
             String[] xy = w[2].split(",");
             int x = Integer.parseInt(xy[0]), y = Integer.parseInt(xy[1]);
-            StringBuilder why = new StringBuilder(String.format("  why %s at %d,%d was refused: canPlaceOn %b, units on it %b;", b.name, x, y, b.canPlaceOn(Vars.world.tile(x, y), me, 0),
+            StringBuilder why = new StringBuilder(String.format("  why %s at %d,%d was refused: placeable %b (banned %b), enemy core near %b, polygon rule %b, over the limit %b, valid ignoring units %b, canPlaceOn %b, units on it %b;",
+                b.name, x, y, b.isPlaceable(), Vars.state.rules.isBanned(b), Vars.state.teams.anyEnemyCoresWithinBuildRadius(me, x * 8 + b.offset, y * 8 + b.offset), Vars.state.rules.polygonCoreProtection,
+                b.isOverPlacementLimit(me), Build.validPlaceIgnoreUnits(b, me, x, y, 0, true, true), b.canPlaceOn(Vars.world.tile(x, y), me, 0),
                 mindustry.entities.Units.anyEntities(x * 8 + b.offset - b.size * 4f, y * 8 + b.offset - b.size * 4f, b.size * 8f, b.size * 8f)));
             Vars.world.tile(x, y).getLinkedTilesAs(b, o -> {
                 if(o.build != null || o.solid() || !Vars.fogControl.isDiscovered(me, o.x, o.y) || o.floor().isDeep() || !o.floor().placeableOn)
@@ -272,6 +278,7 @@ public class EconRun{
             });
             System.out.println(why);
         }
+        for(String d : destroyed) System.out.println("  destroyed: " + d);
         //one line for the benchmark table
         Float made = firstMade.get(unitName);
         float lastDone = 0f;

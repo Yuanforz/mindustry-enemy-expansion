@@ -47,6 +47,8 @@ public final class Recipes{
         for(String name : blocks){
             Block block = Vars.content.block(name);
             if(block == null) throw new IllegalArgumentException("no block called " + name);
+            //what the map's rules ban can't be built there
+            if(Vars.state.rules.isBanned(block)) continue;
             list.add(block);
             if(block instanceof UnitFactory factory) for(UnitFactory.UnitPlan plan : factory.plans) unit(cat, plan.unit);
             if(block instanceof Reconstructor rec) for(UnitType[] pair : rec.upgrades){ unit(cat, pair[0]); unit(cat, pair[1]); }
