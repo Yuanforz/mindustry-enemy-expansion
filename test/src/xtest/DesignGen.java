@@ -11,6 +11,7 @@ import mindustry.game.Schematic.*;
 import mindustry.type.*;
 import mindustry.world.*;
 import mindustry.world.blocks.power.*;
+import mindustry.world.blocks.power.ConsumeGenerator;
 import mindustry.world.meta.*;
 
 import java.util.*;
@@ -317,6 +318,11 @@ public class DesignGen{
         out.add(heated("cyanogen", Blocks.cyanogenSynthesizer, "slag", 1, 0, 0, 1));
         out.add(heated("cyanogen", Blocks.cyanogenSynthesizer, "phase", 1, 0, 0, 0));
         out.add(heated("cyanogen", Blocks.cyanogenSynthesizer, "electric", 2, 6, 6, 1));
+        out.add(phaseDirect("carbide", Blocks.carbideCrucible));
+        out.add(phaseDirect("surge-alloy", Blocks.surgeCrucible));
+        out.add(phaseDirect("phase-fabric", Blocks.phaseSynthesizer));
+        out.add(slagDirect("nitrogen", Blocks.atmosphericConcentrator));
+        out.add(slagDirect("cyanogen", Blocks.cyanogenSynthesizer));
         out.add(heatedStack("carbide", Blocks.carbideCrucible, 2, true));
         out.add(heatedStack("surge-alloy", Blocks.surgeCrucible, 2, true));
         out.add(heatedStack("phase-fabric", Blocks.phaseSynthesizer, 2, false));
@@ -347,14 +353,25 @@ public class DesignGen{
     }
 
     /**
-     * Silicon: arc furnaces in a row. Sand comes along a spine of duct routers on top (a router takes only from behind,
-     * so the furnaces can't hand their silicon back into it), graphite along a second line above that, dropped into each
-     * pair's gap by a bridge over the sand and handed to both by a router; the silicon goes out of the gap the other way
-     * and along a duct under the row. A duct carries about 15 a second, so from four furnaces on the sand and the
-     * silicon are split in two halves, each with a port of its own at its end.
+     * An item line along y, from x0 to x1 in the way it goes (dir E or W): ducts, and a duct router at each x in drops,
+     * which hands to the stub beside it (a duct pointing into a machine: a machine can't hand back into a duct's front,
+     * nor into a router, which takes only from behind) as well as on along the line. It ends at its last router.
+     */
+    static void itemLine(Plan p, int y, int x0, int x1, int dir, IntSet drops){
+        int step = x1 >= x0 ? 1 : -1, last = Integer.MIN_VALUE;
+        for(int x = x0; x != x1 + step; x += step) if(drops.contains(x)) last = x;
+        if(last == Integer.MIN_VALUE) return;
+        for(int x = x0; x != last + step; x += step) p.put(drops.contains(x) ? Blocks.ductRouter : Blocks.duct, x, y, dir);
+    }
+
+    /**
+     * Silicon: arc furnaces in a row. Sand comes along a line above them and drops into each through a stub duct; the
+     * graphite comes along a line above that and down into each pair's gap by a bridge over the sand, where a router hands
+     * it to both furnaces; the silicon goes into a duct under the row, which the furnaces touch. A duct carries about 15 a
+     * second, so from four furnaces on the sand and the silicon are split in two halves, each with its own port.
      */
     static Plan silicon(int n){
-        Plan p = new Plan("silicon-" + n, "silicon", "silicon row: " + n + " arc furnaces, sand spine, graphite by bridges into the pair gaps");
+        Plan p = new Plan("silicon-" + n, "silicon", "silicon row: " + n + " arc furnaces, sand line with stubs, graphite by bridges into the pair gaps");
         Block f = Blocks.siliconArcFurnace;
         if(n == 1){
             p.put(f, 1, 0);
@@ -365,30 +382,32 @@ public class DesignGen{
         }
         int[][] r = row(n);
         int w = r[2][0];
-        for(int x : r[0]) p.put(f, x, 0);
-        //the gaps: graphite comes down over the sand spine by a bridge, a router hands it to both furnaces
+        IntSet mids = middles(r[0]), gaps = new IntSet();
+        for(int x : r[0]){
+            p.put(f, x, 0);
+            p.put(Blocks.duct, x + 1, 3, S);
+        }
         for(int g : r[1]){
-            p.put(Blocks.ductBridge, g, 4, S);
+            gaps.add(g);
+            p.put(Blocks.ductBridge, g, 5, S);
             p.put(Blocks.ductBridge, g, 2, S);
             p.put(Blocks.ductRouter, g, 1, S);
         }
         boolean split = n >= 4;
-        //where the west half ends (its last column): after the middle furnace
+        //where the west half ends: after the middle furnace
         int mid = split ? r[0][(n + 1) / 2 - 1] + 2 : w - 1;
-        //sand spine
-        p.in(Items.sand, 0, 3, E);
-        for(int x = 1; x <= mid; x++) p.put(Blocks.ductRouter, x, 3, E);
+        p.in(Items.sand, 0, 4, E);
+        itemLine(p, 4, 1, mid, E, mids);
         if(split){
-            p.in(Items.sand, w, 3, W);
-            for(int x = mid + 1; x < w; x++) p.put(Blocks.ductRouter, x, 3, W);
+            p.in(Items.sand, w, 4, W);
+            itemLine(p, 4, w - 1, mid + 1, W, mids);
         }
-        //graphite: straight into the gap's bridge when there is one gap, else a line of routers along the top
-        int lastGap = r[1][r[1].length - 1];
+        //graphite: straight into the gap's bridge when there is one gap, else along a line on top
         if(r[1].length == 1){
-            p.in(Items.graphite, lastGap, 5, S);
+            p.in(Items.graphite, r[1][0], 6, S);
         }else{
-            p.in(Items.graphite, 0, 5, E);
-            for(int x = 1; x <= lastGap; x++) p.put(Blocks.ductRouter, x, 5, E);
+            p.in(Items.graphite, 0, 6, E);
+            itemLine(p, 6, 1, w - 1, E, gaps);
         }
         //silicon under the row
         if(split){
@@ -405,12 +424,12 @@ public class DesignGen{
     }
 
     /**
-     * Oxide from ozone brought in: oxidation chambers in a row, beryllium along a router spine under them, ozone along a
-     * row of liquid routers over them (a liquid bridge over each gap), the oxide out of each pair's gap upwards to a duct
-     * along the top.
+     * Oxide from ozone brought in: oxidation chambers in a row, beryllium along a line under them with a stub into each,
+     * ozone along a row of liquid routers over them, the oxide out of each pair's gap upwards, by a bridge over the
+     * ozone, to a duct along the top.
      */
     static Plan oxideOzone(int n){
-        Plan p = new Plan("oxide-ozone-" + n, "oxide", "oxide row: " + n + " oxidation chambers, beryllium spine below, ozone routers above, oxide up the pair gaps");
+        Plan p = new Plan("oxide-ozone-" + n, "oxide", "oxide row: " + n + " oxidation chambers, beryllium line with stubs below, ozone routers above, oxide up the pair gaps");
         if(n == 1){
             p.put(Blocks.oxidationChamber, 1, 0, N);
             p.in(Items.beryllium, 0, 0, E);
@@ -430,9 +449,12 @@ public class DesignGen{
         int w = r[2][0];
         IntSet gap = new IntSet();
         for(int g : r[1]) gap.add(g);
-        for(int x : r[0]) p.put(Blocks.oxidationChamber, x, 0, N);
-        p.in(Items.beryllium, 0, -1, E);
-        for(int x = 1; x < w; x++) p.put(Blocks.ductRouter, x, -1, E);
+        for(int x : r[0]){
+            p.put(Blocks.oxidationChamber, x, 0, N);
+            p.put(Blocks.duct, x + 1, -1, N);
+        }
+        p.in(Items.beryllium, 0, -2, E);
+        itemLine(p, -2, 1, w - 1, E, middles(r[0]));
         //ozone: routers all along, so that it goes either way (electrolyzers may feed it from both ends)
         for(int x = 1; x < w; x++) p.put(Blocks.reinforcedLiquidRouter, x, 3);
         //the oxide: into a duct and a bridge in the gap (the chambers hand to both), over the ozone to a bridge that hands
@@ -452,15 +474,15 @@ public class DesignGen{
      * that its left side (ozone) is east, into the line; the east one facing north. The hydrogen out of their right sides
      * has nowhere to go and caps. Water comes in under the west one, and on to the east one by conduits under the row.
      */
-    static void endElectrolyzers(Plan p, int w, int m){
+    static void endElectrolyzers(Plan p, int w, int m, int under){
         Block c = Blocks.reinforcedConduit;
         p.put(Blocks.electrolyzer, -3, 1, S);
         p.in(Liquids.water, -3, 0, E);
         if(m == 2){
             p.put(Blocks.electrolyzer, w, 1, N);
-            p.put(c, -3, -1, S);
-            for(int x = -3; x <= w; x++) p.put(c, x, -2, E);
-            for(int y = -2; y <= 0; y++) p.put(c, w + 1, y, N);
+            for(int y = -1; y > under; y--) p.put(c, -3, y, S);
+            for(int x = -3; x <= w; x++) p.put(c, x, under, E);
+            for(int y = under; y <= 0; y++) p.put(c, w + 1, y, N);
         }
     }
 
@@ -474,7 +496,7 @@ public class DesignGen{
         Plan p = new Plan("oxide-water-" + n, "oxide", "oxide row: " + n + " oxidation chambers, ozone from " + m + " electrolyzer(s) at the row's ends");
         int w = oxideRow(p, n);
         p.put(Blocks.reinforcedLiquidRouter, 0, 3);
-        endElectrolyzers(p, w, m);
+        endElectrolyzers(p, w, m, -3);
         power(p);
         return p;
     }
@@ -590,7 +612,7 @@ public class DesignGen{
         p.in(Liquids.arkycite, 0, -1, E);
         liquidLine(p, -1, 1, 3 * n, middles(at), new IntSet());
         for(int x = 0; x < w; x++) p.put(Blocks.reinforcedLiquidRouter, x, 3);
-        endElectrolyzers(p, w, m);
+        endElectrolyzers(p, w, m, -2);
         power(p);
         return p;
     }
@@ -920,6 +942,127 @@ public class DesignGen{
         return p;
     }
 
+    /**
+     * A heat crafter with three phase heaters straight against it (45 heat), west, south and east, each against two of
+     * its three tiles on that side: no redirector, and the crafter's north side and the corner tiles left on its west and
+     * east sides take its inputs and output. Phase fabric comes in at the south-west corner: a router hands it to the
+     * west heater and on to one that hands it to the south heater, and a duct goes round under the south heater and up
+     * into the east one.
+     */
+    static Plan phaseDirect(String product, Block crafter){
+        Plan p = new Plan(product + "-phase-direct", product, "");
+        Block h = Blocks.phaseHeater, r = Blocks.ductRouter, d = Blocks.duct;
+        p.put(crafter, 0, 0);
+        p.put(h, -2, 0, E);
+        p.put(h, 3, 0, W);
+        p.put(h, 1, -2, N);
+        p.in(Items.phaseFabric, -2, -1, E);
+        p.put(r, -1, -1, E);
+        p.put(r, 0, -1, E);
+        p.put(d, -1, -2, S);
+        p.put(d, -1, -3, E);
+        for(int x = 0; x <= 2; x++) p.put(d, x, -3, E);
+        for(int y = -3; y <= -1; y++) p.put(d, 3, y, N);
+        if(crafter == Blocks.carbideCrucible){
+            p.in(Items.tungsten, 0, 3, S);
+            p.in(Items.graphite, 2, 3, S);
+        }else if(crafter == Blocks.surgeCrucible){
+            p.in(Items.silicon, 1, 3, S);
+            p.in(Liquids.slag, -1, 2, E);
+        }else if(crafter == Blocks.phaseSynthesizer){
+            p.in(Items.thorium, 0, 3, S);
+            p.in(Items.sand, 2, 3, S);
+            p.in(Liquids.ozone, -1, 2, E);
+        }
+        p.out(false, 3, 2, E);
+        float heat = heat(p, p.at(0, 0), new HashSet<>());
+        p.pattern = "phase heaters straight on: " + crafter.name + " with 3 phase heaters against it (" + Strings.autoFixed(heat, 1) + " heat of " + Strings.autoFixed(need(crafter), 0) + ")";
+        checkHeat(p);
+        power(p);
+        return p;
+    }
+
+    /**
+     * A heat crafter with three slag heaters straight against it (24 heat), west, south and east, its north side for its
+     * inputs and output. The slag comes in at a router at the south-west corner, which touches the west and south heaters,
+     * and goes round under the south heater to a router at the south-east corner for the east one. (Neither router touches
+     * the crafter, which may hand out a liquid.)
+     */
+    static Plan slagDirect(String product, Block crafter){
+        Plan p = new Plan(product + "-slag-direct", product, "");
+        Block c = Blocks.reinforcedConduit;
+        p.put(crafter, 0, 0);
+        p.put(Blocks.slagHeater, -3, 0, E);
+        p.put(Blocks.slagHeater, 3, 0, W);
+        p.put(Blocks.slagHeater, 0, -3, N);
+        p.in(Liquids.slag, -1, -1, E);
+        p.put(c, -1, -2, S);
+        p.put(c, -1, -3, S);
+        for(int x = -1; x <= 2; x++) p.put(c, x, -4, E);
+        for(int y = -4; y <= -2; y++) p.put(c, 3, y, N);
+        p.put(Blocks.reinforcedLiquidRouter, 3, -1);
+        if(crafter == Blocks.atmosphericConcentrator){
+            p.out(true, 1, 3, N);
+        }else if(crafter == Blocks.cyanogenSynthesizer){
+            p.in(Items.graphite, 1, 3, S);
+            //arkycite through conduits pointing in (the synthesizer hands its cyanogen to any liquid block beside it that
+            //takes it), its router two tiles out, away from the cyanogen's line
+            p.in(Liquids.arkycite, 0, 5, S);
+            p.put(c, 0, 4, S);
+            p.put(c, 0, 3, S);
+            p.out(true, 2, 3, N);
+        }
+        float heat = heat(p, p.at(0, 0), new HashSet<>());
+        p.pattern = "slag heaters straight on: " + crafter.name + " with 3 slag heaters against it (" + Strings.autoFixed(heat, 1) + " heat of " + Strings.autoFixed(need(crafter), 0) + ")";
+        checkHeat(p);
+        power(p);
+        return p;
+    }
+
+    /**
+     * Fails a design if something of it could hand into the lines that will run to and from its ports on a map: the two
+     * tiles out from each port (the lab puts only a source or a void on the first). A crafter or generator hands what it
+     * makes to anything beside it that takes it, a router to its sides, a duct or conduit to the tile in front; items only
+     * into an item line, liquids only into a liquid one.
+     */
+    static void checkLines(Plan p){
+        for(Stile port : p.tiles){
+            if(!isPort(port.block)) continue;
+            boolean in = port.block == Blocks.itemSource || port.block == Blocks.liquidSource;
+            boolean liquid = port.block == Blocks.liquidSource || port.block == Blocks.liquidVoid;
+            int dx = Geometry.d4x(port.rotation), dy = Geometry.d4y(port.rotation), s = in ? -1 : 1;
+            for(int j = 1; j <= 2; j++){
+                int tx = port.x + s * dx * j, ty = port.y + s * dy * j;
+                for(int d = 0; d < 4; d++){
+                    Stile n = p.at(tx + Geometry.d4x(d), ty + Geometry.d4y(d));
+                    if(n == null || n == port) continue;
+                    Block b = n.block;
+                    boolean items, liquids;
+                    if(b instanceof mindustry.world.blocks.production.GenericCrafter gc){
+                        items = gc.outputItems != null;
+                        liquids = gc.outputLiquids != null;
+                    }else if(b instanceof ConsumeGenerator cg){
+                        items = false;
+                        liquids = cg.outputLiquid != null;
+                    }else if(b instanceof mindustry.world.blocks.distribution.DuctRouter || b == Blocks.itemSource){
+                        items = true;
+                        liquids = false;
+                    }else if(b instanceof mindustry.world.blocks.liquid.LiquidRouter || b == Blocks.liquidSource){
+                        items = false;
+                        liquids = true;
+                    }else if(b.rotate && b.size == 1 && n.x + Geometry.d4x(n.rotation) == tx && n.y + Geometry.d4y(n.rotation) == ty){
+                        //a line piece hands only to its front
+                        items = b.hasItems;
+                        liquids = b.hasLiquids;
+                    }else{
+                        continue;
+                    }
+                    if(liquid ? liquids : items) throw new IllegalStateException(p.id + ": " + b.name + " at " + n.x + "," + n.y + " could hand into the line of the port at " + port.x + "," + port.y);
+                }
+            }
+        }
+    }
+
     // ---------------------------------------------------------------- writing
 
     public static void main(String[] args) throws Exception{
@@ -935,6 +1078,12 @@ public class DesignGen{
             boolean wanted = args.length <= 2;
             for(int i = 2; i < args.length; i++) if(p.id.startsWith(args[i])) wanted = true;
             if(!wanted) continue;
+            try{
+                checkLines(p);
+            }catch(IllegalStateException e){
+                System.out.println("NOT WRITTEN: " + e.getMessage());
+                continue;
+            }
             Schematics.write(p.schematic(), dir.child(p.id + ".msch"));
             String picture = p.id + "  " + p.pattern + "\n" + p.picture();
             dir.child(p.id + ".txt").writeString(picture);

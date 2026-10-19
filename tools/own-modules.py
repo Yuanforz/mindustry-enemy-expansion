@@ -60,6 +60,8 @@ def judge(r, product, community=False):
         if '+' in o[0]: return f'output mixed: {o[0]}', 0
         if o[0] == 'nothing' or o[3] <= 0.01: return 'an output gets nothing', 0
     if not community and int(r.get('grids') or 0) > 1: return r['grids'] + ' power grids', 0
+    if product == 'any':
+        return (None, 0) if outs or float(r.get('power_made') or 0) > 0 else ('makes nothing', 0)
     if product == 'power':
         made = float(r.get('power_made') or 0)
         return (None, made) if made > 0 else ('makes no power', 0)
@@ -114,32 +116,45 @@ def main():
         print(f'wrote {len(kept)} modules to {write}')
 
 
+def makes(r):
+    """What a lab row makes, by item, liquid or 'power': {name: rate}."""
+    out = {}
+    for o in ports(r['outputs']):
+        if o[3] > 0.01 and '+' not in o[0] and o[0] != 'nothing': out[o[0]] = out.get(o[0], 0) + o[3]
+    made = float(r.get('power_made') or 0)
+    if made > 0: out['power'] = made
+    return out
+
+
 def compare(kept, theirs):
-    """Per product: our best by rate per tile and by rate per cost, against the community's."""
+    """Per thing made: our best by rate per tile and by rate per item of cost, against the community's best that pass the
+    same rules (their grid count shown: more than one, and the layout would leave part of it without power)."""
     best = {}
     for file, r in theirs.items():
-        outs = ports(r['outputs'])
-        if not outs: continue
-        main = max(outs, key=lambda o: o[3])[0]
-        v, rate = judge(r, main, community=True)
-        if v is None: best.setdefault(main, []).append((r, rate))
+        if judge(r, 'any', community=True)[0] not in (None, 'makes no any'): continue
+        for what, rate in makes(r).items(): best.setdefault(what, []).append((r['name'], r, rate))
     ours = {}
-    for d, r, rate in kept: ours.setdefault(d['product'], []).append((d['id'], r, rate))
+    for d, r, _ in kept:
+        for what, rate in makes(r).items(): ours.setdefault(what, []).append((d['id'], r, rate))
     print()
-    print(f"{'product':14} {'best per tile (ours)':34} {'(community)':40} {'best per cost (ours)':34} {'(community)'}")
-    for product in sorted(ours):
-        mine = ours[product]
-        a = max(mine, key=lambda m: m[2] / tiles(m[1]))
-        b = max(mine, key=lambda m: m[2] / cost(m[1]))
-        them = best.get(product, [])
-        def show(r, rate, name):
-            return f"{name[:18]:18} {rate:6.2f}/s {tiles(r):4d}t {rate / tiles(r) * 100:5.2f}"
-        def showc(r, rate, name):
-            return f"{name[:18]:18} {rate:6.2f}/s {cost(r):5d}c {rate / cost(r) * 1000:5.2f}"
-        ta = max(them, key=lambda m: m[1] / tiles(m[0]), default=None)
-        tb = max(them, key=lambda m: m[1] / cost(m[0]), default=None)
-        print(f"{product:14} {show(a[1], a[2], a[0]):34} {show(ta[0], ta[1], ta[0]['name']) if ta else '-':40} {showc(b[1], b[2], b[0]):34} {showc(tb[0], tb[1], tb[0]['name']) if tb else '-'}")
-    print('(per tile: rate per 100 tiles; per cost: rate per 1000 items of cost)')
+    print('per tile: rate per 100 tiles of the design; per cost: rate per 1000 items it is built of (power: per 1 tile / per 1 item)')
+    print(f"{'makes':12} | {'ours, best per tile':36} | {'community':42} | {'ours, best per cost':36} | {'community'}")
+    for what in sorted(ours):
+        k = 1 if what == 'power' else 100
+        c = 1 if what == 'power' else 1000
+        def tile(m):
+            return m[2] / tiles(m[1]) * k
+        def per(m):
+            return m[2] / cost(m[1]) * c
+        def show(m, f, unit, grids=False):
+            if m is None: return '-'
+            g = f" {m[1].get('grids') or '?'}g" if grids else ''
+            return f"{m[0][:17]:17} {m[2]:7.2f} {unit(m):5d} {f(m):6.2f}{g}"
+        a, b = max(ours[what], key=tile), max(ours[what], key=per)
+        them = best.get(what, [])
+        ta = max(them, key=tile, default=None)
+        tb = max(them, key=per, default=None)
+        print(f"{what:12} | {show(a, tile, lambda m: tiles(m[1])):36} | {show(ta, tile, lambda m: tiles(m[1]), True):42} | {show(b, per, lambda m: cost(m[1])):36} | {show(tb, per, lambda m: cost(m[1]), True)}")
 
 
 if __name__ == '__main__':
