@@ -387,7 +387,9 @@ public final class Hand extends mindustry.entities.units.AIController{
                     scout(new Part(p.block, dark.x, dark.y, 0, null));
                     continue;
                 }
-                if(tile == null || unit.dst(tile.worldx(), tile.worldy()) > Vars.tilesize * 4f) continue;
+                //(near enough to have seen it: within building reach, the ground seen; a unit that builds from afar never comes
+                //within a few tiles of a part it can't put down, and waited on it for good)
+                if(tile == null || unit.dst(tile.worldx(), tile.worldy()) > Math.max(Vars.tilesize * 4f, unit.type.buildRange * 0.8f)) continue;
                 //units standing where it goes keep it from going down: they are sent off, and it waits
                 if(tile.block() != p.block && !(tile.build instanceof ConstructBuild) && !Build.validPlace(p.block, unit.team, p.x, p.y, p.rotation) && shoo(p)) continue;
                 if(tile.block() != p.block && !(tile.build instanceof ConstructBuild) && !Build.validPlace(p.block, unit.team, p.x, p.y, p.rotation)){

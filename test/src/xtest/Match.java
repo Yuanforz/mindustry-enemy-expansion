@@ -169,7 +169,9 @@ public class Match{
         float planSeconds = 0f;
         for(int f = 0; f < frames; f++){
             //the next stage, planned from what stands, once the last is all up (or has had its time)
-            boolean over = hand != null && (hand.done() || f - stageFrom > stageLimit);
+            //(a stage is not left for want of time while what makes its units is not up yet, unless three times over: on lake,
+            //raided from the second minute, the ship fabricator never went up and no unit came all game)
+            boolean over = hand != null && (hand.done() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
             if((hand == null || over) && stage + 1 < stages.length && us.core() != null){
                 if(hand != null && !hand.done()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 stage++;
@@ -184,11 +186,19 @@ public class Match{
                 Plan plan = null;
                 String[] st = null;
                 //each stage may name ways to go, the first that can be done is taken: "locus:1|merui:2"
-                for(String way : stages[stage].split("\\|")){
+                //no kind of this stage that can be made gets to the Brain's base: then the first that can be made, to hold our own
+                //(on intersect every stage was passed over, nothing was built, and the Brain's few units took the core)
+                boolean homeGuard = false;
+                String[] ways = stages[stage].split("\\|");
+                for(int pass = 0; pass < 2 && plan == null; pass++){
+                homeGuard = pass == 1;
+                if(homeGuard && stages[stage].startsWith("defend")) break;
+                if(homeGuard) System.out.println("  stage " + (stage + 1) + ": nothing that can be made gets to the Brain's base; units to hold our own");
+                for(String way : ways){
                     st = way.split(":");
                     //units that can't get to the Brain's base are not worth making (tanks, where deep water parts the bases)
                     mindustry.type.UnitType kind = Vars.content.unit(st[0]);
-                    if(kind != null && !expansion.army.Reach.toFoe(kind, us, them)){
+                    if(kind != null && !homeGuard && !expansion.army.Reach.toFoe(kind, us, them)){
                         System.out.println("  stage " + (stage + 1) + ": " + way + " passed over, " + kind.name + " can't get to the Brain's cores from ours");
                         continue;
                     }
@@ -209,6 +219,7 @@ public class Match{
                     }
                     if(plan != null) break;
                     System.out.println("  stage " + (stage + 1) + ": " + way + " can't be done here");
+                }
                 }
                 planSeconds += (System.nanoTime() - p0) / 1e9f;
                 System.out.println(String.format("  stage %d planned in %.1f s (wall)", stage + 1, (System.nanoTime() - p0) / 1e9f));
@@ -273,6 +284,13 @@ public class Match{
         float t = (float)(Vars.state.tick / 60.0);
         System.out.println(report(t, hand, stage));
         if(hand != null) for(String tr : hand.trouble) System.out.println("  could not put down: " + tr);
+        if(hand != null && hand.job != null) for(var p : hand.job){
+            Tile tile = Vars.world.tile(p.x, p.y);
+            if(tile.block() == p.block) continue;
+            System.out.println(String.format("  unfinished: %s at %d,%d (there %s%s); valid %b; dark %.0f; in the map area %b; the builder at %.0f tiles", p.block.name, p.x, p.y, tile.block().name,
+                tile.build instanceof mindustry.world.blocks.ConstructBlock.ConstructBuild cb ? String.format(", %.0f%% built", cb.progress * 100) : "", Build.validPlace(p.block, us, p.x, p.y, p.rotation), Vars.world.getDarkness(p.x, p.y), Vars.world.isInMapArea(p.x, p.y),
+                hand.unit() == null ? -1f : hand.unit().dst(tile.worldx(), tile.worldy()) / Vars.tilesize));
+        }
         Seq<String> who = hurt.keys().toSeq().sort(k -> -hurt.get(k, 0f));
         StringBuilder hb = new StringBuilder("  what hurt our units most:");
         for(int i = 0; i < Math.min(8, who.size); i++) hb.append(String.format(" %s %.0f;", who.get(i), hurt.get(who.get(i), 0f)));
@@ -390,6 +408,17 @@ public class Match{
         System.out.println(String.format("######## %sthe defence planner (tech of %s, fed with %s, budget %s) against %s: %d placements in %.0f ms", label, sector, ask.supply, ask.budget, units, plan.placements.size(), (System.nanoTime() - t0) / 1e6));
         System.out.print(plan.describe());
         return plan;
+    }
+
+    /** Whether what makes the stage's units is up (true for a stage that makes none). */
+    static boolean makerUp(expansion.econ.Hand hand){
+        boolean any = false;
+        for(int i = 0; i < hand.order.size(); i++){
+            if(!hand.order.get(i).recipe.makesUnits()) continue;
+            any = true;
+            if(!Float.isNaN(hand.finished[i])) return true;
+        }
+        return !any;
     }
 
     static int count(String prefix){
