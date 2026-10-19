@@ -91,6 +91,16 @@ public class EconRun{
             core.items.clear();
             for(ItemStack stack : rules.loadout) core.items.set(stack.item, stack.amount);
         }
+        //a sandbox for climbing the tech (-Dxp.noenemy=true, -Dxp.stock=n): no enemy on the map at all, and the core given
+        //n of every item to build with; what is aimed at must still be made (an item: counted as it comes into the core)
+        if(Boolean.getBoolean("xp.noenemy")){
+            for(Tile tile : Vars.world.tiles) if(tile.build != null && tile.team() == enemy) tile.setBlock(Blocks.air);
+            for(Unit u : Groups.unit.copy(new arc.struct.Seq<>())) if(u.team == enemy) u.remove();
+            rules.attackMode = false;
+            rules.winWave = 0;
+        }
+        int stock = Integer.getInteger("xp.stock", -1);
+        if(stock >= 0) for(Item item : Vars.content.items()) if(item.isOnPlanet(Planets.erekir) && !item.isHidden()) core.items.set(item, Math.min(stock, core.storageCapacity));
         rules.coreIncinerates = true;
         //the mod plays the enemy, which the game lets see the whole map: so does the test, unless asked (xp.fog)
         if(!Boolean.getBoolean("xp.fog")) rules.fog = false;
