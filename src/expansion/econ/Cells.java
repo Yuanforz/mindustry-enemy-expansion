@@ -126,6 +126,7 @@ final class Cells{
             nets.add(n);
         }
         for(Machine m : order) if(m.recipe.ground != Recipe.Ground.none) where.put(m, new int[]{m.x, m.y, m.rotation});
+        for(Machine m : order) if(m.pinned != null) where.put(m, m.pinned.clone());
         for(Machine m : existing) where.put(m, new int[]{m.x, m.y, m.rotation});
     }
 

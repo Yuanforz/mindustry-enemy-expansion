@@ -239,6 +239,136 @@ public final class Plan{
         return this;
     }
 
+    /**
+     * Plans a defence: the defence planner's modules pinned where it put them, makers for what they fire (the balance, as
+     * for any machine), the lines into them laid; makers first, then the modules in the planner's order, walls last.
+     */
+    public Plan defend(Team me, List<String> blocks, Set<String> allowed, expansion.defense.Planner.Plan defence, Collection<String> feedable){
+        CoreBlock.CoreBuild core = me.core();
+        cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+        cat.logistics(allowed);
+        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        StringBuilder notes = new StringBuilder();
+        //our turrets standing dry first (only a line to build), then what the defence planner laid
+        List<Machine> guard = new ArrayList<>(Defence.existing(cat, me, feedable, notes));
+        if(defence != null) guard.addAll(Defence.machines(cat, defence, notes));
+        if(notes.length() > 0) out.print("  defence: " + notes.toString().trim().replace("\n", "\n  defence: ") + "\n");
+        if(guard.isEmpty()) return null;
+        planner = new Planner(cat, field);
+        planner.chains = new Chains(cat, field);
+        planner.demand = cat.zeros();
+        unit = -1;
+        //each module fed by drills of its own, the nearest that dig what it fires with nothing put into them (a line from
+        //a drill by the choke is short and is there for it alone); then the balance for the rest (power, say)
+        Map<Machine, List<Machine>> feeders = new LinkedHashMap<>();
+        List<Machine> plant = new ArrayList<>(guard);
+        for(Machine g : guard){
+            List<Machine> mine = new ArrayList<>();
+            feeders.put(g, mine);
+            int cx = g.x + g.recipe.width(0) / 2, cy = g.y + g.recipe.height(0) / 2;
+            for(int k = 0; k < cat.size(); k++){
+                if(g.recipe.in[k] <= 0f) continue;
+                float got = 0f;
+                for(int guardN = 0; guardN < 8 && got < g.recipe.in[k] - 1e-4f; guardN++){
+                    Machine m = bareMaker(k, cx, cy);
+                    if(m == null) break;
+                    mine.add(m);
+                    plant.add(m);
+                    got += m.out(k);
+                }
+            }
+        }
+        plant = planner.balanceRest(plant);
+        if(!planner.notes.toString().isEmpty()) out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
+        long l0 = System.nanoTime();
+        this.feeders = feeders;
+        List<Machine> order = defenceOrder(plant, guard);
+        works = new Layout(cat, field, me, allowed);
+        works.prepare(order);
+        //takers no line could be laid to get makers of their own near them, and it is laid again
+        for(int round = 0; round < 2; round++){
+            List<Object[]> unfed = works.unfed();
+            if(unfed.isEmpty()) break;
+            List<Machine> more = new ArrayList<>(order);
+            Set<String> asked = new HashSet<>();
+            for(Object[] u : unfed){
+                int res = (Integer)u[0];
+                Machine c = (Machine)u[1];
+                if(!asked.add(res + "@" + System.identityHashCode(c))) continue;
+                out.println("    unfed: " + c + " of " + cat.get(res).name + ": " + u[2]);
+                if(u.length > 3) continue;
+                Machine m = planner.makerNear(res, c);
+                if(m != null) more.add(m);
+            }
+            if(more.size() == order.size()) break;
+            order = defenceOrder(more, guard);
+            works = new Layout(cat, field, me, allowed);
+            works.prepare(order);
+        }
+        layoutNanos = System.nanoTime() - l0;
+        order = works.mustComeFirst(order);
+        works.reorder(order);
+        int spent = 0;
+        for(Machine m : order){
+            System.arraycopy(works.realCost(m), 0, m.cost, 0, m.cost.length);
+            m.buildSeconds = works.buildSeconds(m);
+            for(int c : m.cost) spent += c;
+        }
+        model = new Timeline(cat, field, order);
+        out.println(String.format("######## %sdefence: %d modules and wall lines, %d machines in all, %d items; laid out in %.1fs: %s", label, guard.size(), order.size(), spent, layoutNanos / 1e9, works.summary()));
+        for(String p : works.problems) out.println("  checker: " + p);
+        return this;
+    }
+
+    Map<Machine, List<Machine>> feeders = new HashMap<>();
+
+    /**
+     * Module by module in the defence's order: its drills, then it, so the first module fires before the last is begun;
+     * then what else the balance added.
+     */
+    List<Machine> defenceOrder(List<Machine> plant, List<Machine> guard){
+        Set<Machine> fed = new HashSet<>();
+        for(List<Machine> l : feeders.values()) fed.addAll(l);
+        List<Machine> rest = new ArrayList<>();
+        for(Machine m : plant) if(!guard.contains(m) && !fed.contains(m)) rest.add(m);
+        List<Machine> order = new ArrayList<>();
+        for(Machine g : guard){
+            for(Machine m : feeders.getOrDefault(g, List.of())) if(plant.contains(m)) order.add(m);
+            order.add(g);
+        }
+        //(what the balance added besides, power say, after: a module that needs it waits for it, the others fire)
+        order.addAll(planner.plainOrder(rest));
+        return order;
+    }
+
+    /** A drill on the free place nearest a spot that digs this with nothing put into it; taken. Null if none. */
+    Machine bareMaker(int res, int x, int y){
+        Field.Site best = null;
+        Recipe bestRecipe = null;
+        double bestD = Double.MAX_VALUE;
+        for(Recipe r : cat.recipes){
+            if(r.ground == Recipe.Ground.none || !(r.out[res] > 0f || r.perFactor[res] > 0f)) continue;
+            boolean bare = true;
+            for(float v : r.in) if(v > 0f) bare = false;
+            if(!bare) continue;
+            for(Field.Site s : planner.free){
+                if(s.ground != r.ground || (r.perFactor[res] > 0f && s.item != res)) continue;
+                double rate = r.perFactor[res] > 0f ? r.perFactor[res] * s.factor : r.out[res];
+                if(rate <= 1e-4f) continue;
+                //near, and giving much
+                double d = Math.hypot(s.x - x, s.y - y) - rate * 8;
+                if(d < bestD){
+                    bestD = d;
+                    best = s;
+                    bestRecipe = r;
+                }
+            }
+        }
+        if(best == null) return null;
+        planner.free.remove(best);
+        return planner.machine(bestRecipe, best);
+    }
+
     public static String time(float s){
         if(Float.isNaN(s) || Float.isInfinite(s)) return "never";
         return String.format("%d:%02d", (int)s / 60, (int)s % 60);

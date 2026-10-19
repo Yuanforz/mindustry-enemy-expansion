@@ -135,9 +135,11 @@ public final class Layout{
         }
         for(Machine m : field.existing) a.at.put(m, new Part(block(m), m.x, m.y, m.rotation, null));
         int keptTiles = Packing.reserve(g, cat, field.sites, used, 3f);
+        //(designs whose place is given go down where they were put, before the cells look for room)
+        for(Machine m : order) if(m.pinned != null && m.recipe.module != null) placeDesign(a, m, m.pinned);
         //2. the cells
         List<Machine> cellMachines = new ArrayList<>();
-        for(Machine m : order) if(m.recipe.ground == Recipe.Ground.none) cellMachines.add(m);
+        for(Machine m : order) if(m.recipe.ground == Recipe.Ground.none && m.pinned == null) cellMachines.add(m);
         Cells cells = new Cells(g, cat, field, 1000 + seed + 7919L * Layout.seed);
         cells.stress.putAll(stress);
         cells.model(order, field.existing);
