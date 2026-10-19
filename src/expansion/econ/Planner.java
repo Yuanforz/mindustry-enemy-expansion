@@ -19,7 +19,7 @@ public final class Planner{
     /** Machines built from nowhere in particular stand this far from the core (tiles). */
     public float baseDistance = 8f;
     /** How many machines beyond the plant may be tried. */
-    public int extras = 12;
+    public int extras = 16;
     public float limit = 3 * 3600f;
     /** For telling how it went. */
     public final StringBuilder notes = new StringBuilder();
@@ -34,6 +34,7 @@ public final class Planner{
 
     /** Machines to add to what stands so that the unit comes out at this rate (units a second) with every machine fed and powered. */
     public List<Machine> balance(int unit, float rate){
+        wantRate = rate;
         List<Machine> plan = new ArrayList<>();
         //the unit itself, then the units it is made from
         Map<Integer, Float> unitsWanted = new HashMap<>();
@@ -258,18 +259,26 @@ public final class Planner{
     }
 
     /**
-     * The order to build the plant in. First by rollout: at each step, every kind of machine still to build (the best
-     * place of each) and every extra drill or turbine is tried next, with the rest after it in a plain order, and the one
-     * that gets the whole done soonest is taken. Then the rollout again, with the rest after each try in the best order
-     * found so far instead (so it can only get better), until it stops getting better; then single moves: each machine
-     * moved to each other place in the order, and each extra left out, while any of them helps.
+     * The order to build the plant in, found three ways and the best kept:
+     * <ol>
+     * <li>rollout: at each step every option is tried next (one more of each kind of machine still to build, at its best
+     * place, and the extras below), the rest is built after it in a plain order, and the option after which the whole is
+     * done soonest is taken; then the same again with the best order so far standing in for the plain order, until it
+     * stops getting better (with that, it can only get better);</li>
+     * <li>a beam search: the best few partial orders are kept at each step instead of one;</li>
+     * <li>single moves on the best: each machine moved to each other place, each extra left out, while any helps.</li>
+     * </ol>
+     * Extras are machines beyond the plant that may be worth it: another drill or turbine, a drill boosted with hydrogen
+     * where hydrogen is made, a furnace with the crushers and bores that feed it.
      *
      * "Done" is the plant built and the first unit out; of two orders done at the same time, the one with the first unit
      * out earlier is better.
      */
     public Timeline order(List<Machine> plant, int unit){
+        stages.clear();
         List<Machine> best = rollout(plant, unit, null);
         float[] bestScore = score(best, unit);
+        stages.put("rollout", bestScore);
         for(int pass = 0; pass < 6; pass++){
             List<Machine> next = rollout(plant, unit, best);
             float[] s = score(next, unit);
@@ -277,14 +286,52 @@ public final class Planner{
             best = next;
             bestScore = s;
         }
-        int rollouts = evaluated;
-        best = moves(best, plant, unit);
-        notes.append(String.format("orders tried: %d in rollouts, %d in moves\n", rollouts, evaluated - rollouts));
+        stages.put("rollout, repeated", bestScore);
+        //the beam and the moves, each starting from what the other found, while either finds better
+        for(int round = 1; round <= 4; round++){
+            boolean gained = false;
+            if(beamWidth > 1){
+                List<Machine> b = beam(plant, unit, beamWidth, best);
+                float[] s = score(b, unit);
+                if(better(s, bestScore)){
+                    best = b;
+                    bestScore = s;
+                    gained = true;
+                }
+                stages.put("beam " + beamWidth + " #" + round, bestScore);
+            }
+            List<Machine> m = moves(best, plant, unit);
+            float[] s = score(m, unit);
+            if(better(s, bestScore)){
+                best = m;
+                bestScore = s;
+                gained = true;
+            }
+            stages.put("moves #" + round, bestScore);
+            if(!gained) break;
+        }
         Timeline line = new Timeline(cat, field, best);
         line.runToGoal(unit, limit);
         return line;
     }
 
+    /** The rate the plant was balanced for: once built, it has to run at that, every machine fed and powered. */
+    public float wantRate;
+
+    /**
+     * Whether a finished timeline counts as done: the plant built, the first unit out, and what stands then making the
+     * unit at the rate wanted with power fully met (extras may not take what the plant needs).
+     */
+    boolean reached(Timeline t, int unit){
+        if(!t.done() || t.made[unit] < 1f) return false;
+        Plant p = t.steady();
+        return p.powerMet >= 0.999f && p.unitRate(t.built, unit) >= wantRate * 0.98f;
+    }
+
+    /** How wide the beam search is; 1 or less leaves it out. */
+    public int beamWidth = 16;
+    /** The score after each stage of {@link #order}, for telling how much each adds. */
+    public final Map<String, float[]> stages = new LinkedHashMap<>();
     /** How many orders have been played through. */
     public int evaluated;
 
@@ -293,13 +340,31 @@ public final class Planner{
         evaluated++;
         Timeline t = new Timeline(cat, field, seq);
         t.runToGoal(unit, limit);
-        boolean done = t.done() && t.made[unit] >= 1f;
-        return new float[]{done ? t.t : Float.POSITIVE_INFINITY, t.first[unit]};
+        return new float[]{reached(t, unit) ? t.t : Float.POSITIVE_INFINITY, t.first[unit], spent(seq)};
     }
 
+    /** Items the order spends, all counted alike: of two orders as fast, the one that leaves more in the core is better. */
+    static float spent(List<Machine> seq){
+        float sum = 0f;
+        for(Machine m : seq) for(int c : m.cost) sum += c;
+        return sum;
+    }
+
+    /** Sooner done, then sooner first unit, then less spent; times in whole seconds, as the model is no finer. */
     static boolean better(float[] a, float[] b){
-        if(a[0] < b[0] - 1e-3f) return true;
-        return Math.abs(a[0] - b[0]) <= 1e-3f && a[1] < b[1] - 1e-3f;
+        return compare(a, b) < 0;
+    }
+
+    static int compare(float[] a, float[] b){
+        int c = Double.compare(seconds(a[0]), seconds(b[0]));
+        if(c != 0) return c;
+        c = Double.compare(seconds(a[1]), seconds(b[1]));
+        if(c != 0) return c;
+        return Float.compare(a.length > 2 ? a[2] : 0f, b.length > 2 ? b[2] : 0f);
+    }
+
+    static double seconds(float t){
+        return Float.isInfinite(t) || Float.isNaN(t) ? Double.POSITIVE_INFINITY : Math.round(t);
     }
 
     /** The rest in the order a guide has them, what the guide does not have after in the plain order. */
@@ -313,59 +378,135 @@ public final class Planner{
         return list;
     }
 
-    List<Machine> rollout(List<Machine> plant, int unit, List<Machine> guide){
-        Timeline now = new Timeline(cat, field, new ArrayList<>());
-        List<Machine> left = new ArrayList<>(plant);
-        //the extras the guide took are kept, and more may be added
-        if(guide != null) for(Machine m : guide) if(!plant.contains(m)) left.add(m);
-        List<Field.Site> pool = new ArrayList<>(free);
-        for(Machine m : left) pool.remove(extraSites.get(m));
-        int extrasLeft = extras - (left.size() - plant.size());
-        List<Machine> done = new ArrayList<>();
-        while(!left.isEmpty()){
-            List<Machine> tries = new ArrayList<>();
-            Set<String> kinds = new HashSet<>();
-            for(Machine m : left) if(kinds.add(m.recipe.name + "/" + m.item)) tries.add(m);
-            //what the guide would do next is always tried, so that following it is one of the choices
-            if(guide != null){
-                List<Machine> g = following(left, guide);
-                if(!tries.contains(g.get(0))) tries.add(g.get(0));
-            }
-            List<Machine> extraTries = extrasLeft > 0 ? extraCandidates(pool) : List.of();
-            tries.addAll(extraTries);
+    // ---------------------------------------------------------------- one point of a search
 
-            Machine best = null;
-            float[] bestScore = {Float.POSITIVE_INFINITY, Float.POSITIVE_INFINITY};
-            for(Machine m : tries){
-                List<Machine> rest = new ArrayList<>(left);
-                rest.remove(m);
-                List<Machine> seq = new ArrayList<>(done);
-                seq.add(m);
-                seq.addAll(following(rest, guide));
-                Timeline t = now.copy();
-                t.reorder(seq.subList(done.size(), seq.size()));
-                t.runToGoal(unit, limit);
-                evaluated++;
-                float[] sc = {t.done() && t.made[unit] >= 1f ? t.t : Float.POSITIVE_INFINITY, t.first[unit]};
-                if(best == null || better(sc, bestScore)){
-                    bestScore = sc;
-                    best = m;
+    /** Where a search has got to: what has been begun, in order; what is still to be built; places still free for extras. */
+    final class Node{
+        Timeline now;
+        List<Machine> done, left;
+        List<Field.Site> pool;
+        int extrasLeft;
+        float[] score;
+
+        Node copy(){
+            Node n = new Node();
+            n.now = now.copy();
+            n.done = new ArrayList<>(done);
+            n.left = new ArrayList<>(left);
+            n.pool = new ArrayList<>(pool);
+            n.extrasLeft = extrasLeft;
+            return n;
+        }
+    }
+
+    Node start(List<Machine> plant, List<Machine> guide){
+        Node n = new Node();
+        n.now = new Timeline(cat, field, new ArrayList<>());
+        n.done = new ArrayList<>();
+        n.left = new ArrayList<>(plant);
+        //the extras the guide took are kept (moves may still leave them out), and more may be added
+        if(guide != null) for(Machine m : guide) if(!plant.contains(m)) n.left.add(m);
+        n.pool = new ArrayList<>(free);
+        for(Machine m : n.left) n.pool.remove(extraSites.get(m));
+        n.extrasLeft = extras - (n.left.size() - plant.size());
+        return n;
+    }
+
+    /** What could be begun next: lists of machines, the first begun now and the rest joining what is still to be built. */
+    List<List<Machine>> options(Node n, List<Machine> guide){
+        List<List<Machine>> list = new ArrayList<>();
+        Set<String> kinds = new HashSet<>();
+        for(Machine m : n.left) if(kinds.add(m.recipe.name + "/" + m.item + "/" + m.boosted)) list.add(List.of(m));
+        //what the guide would do next is always among them, so that following it is one of the choices
+        if(guide != null && !n.left.isEmpty()){
+            Machine g = following(n.left, guide).get(0);
+            if(!kinds.contains(g.recipe.name + "/" + g.item + "/" + g.boosted) || !containsFirst(list, g)) list.add(List.of(g));
+        }
+        if(n.extrasLeft > 0) list.addAll(extraOptions(n));
+        return list;
+    }
+
+    static boolean containsFirst(List<List<Machine>> list, Machine m){
+        for(List<Machine> o : list) if(o.get(0) == m) return true;
+        return false;
+    }
+
+    /** The node after beginning an option. */
+    Node apply(Node n, List<Machine> option, List<Machine> guide){
+        Node c = n.copy();
+        Machine first = option.get(0);
+        if(!c.left.remove(first)){
+            c.extrasLeft -= option.size();
+            for(Machine m : option) c.pool.remove(extraSites.get(m));
+        }
+        for(int i = 1; i < option.size(); i++) c.left.add(option.get(i));
+        c.done.add(first);
+        List<Machine> seq = new ArrayList<>();
+        seq.add(first);
+        seq.addAll(following(c.left, guide));
+        c.now.reorder(seq);
+        c.now.runToStart(c.now.next, limit);
+        return c;
+    }
+
+    /** How the node ends if the rest is built in the guide's order (or the plain order). */
+    float[] finish(Node n, int unit, List<Machine> guide){
+        evaluated++;
+        Timeline t = n.now.copy();
+        List<Machine> rest = following(n.left, guide);
+        t.reorder(rest);
+        t.runToGoal(unit, limit);
+        return new float[]{reached(t, unit) ? t.t : Float.POSITIVE_INFINITY, t.first[unit], spent(n.done) + spent(rest)};
+    }
+
+    List<Machine> rollout(List<Machine> plant, int unit, List<Machine> guide){
+        Node n = start(plant, guide);
+        while(!n.left.isEmpty()){
+            Node best = null;
+            for(List<Machine> o : options(n, guide)){
+                Node c = apply(n, o, guide);
+                c.score = finish(c, unit, guide);
+                if(best == null || better(c.score, best.score)) best = c;
+            }
+            n = best;
+        }
+        return n.done;
+    }
+
+    /** The best few partial orders kept at each step, each scored by building the rest in the guide's order. */
+    List<Machine> beam(List<Machine> plant, int unit, int width, List<Machine> guide){
+        List<Node> beam = new ArrayList<>(List.of(start(plant, guide)));
+        while(true){
+            List<Node> next = new ArrayList<>();
+            boolean grew = false;
+            for(Node n : beam){
+                if(n.left.isEmpty()){
+                    next.add(n);
+                    continue;
+                }
+                grew = true;
+                for(List<Machine> o : options(n, guide)){
+                    Node c = apply(n, o, guide);
+                    c.score = finish(c, unit, guide);
+                    next.add(c);
                 }
             }
-            done.add(best);
-            if(extraTries.contains(best)){
-                extrasLeft--;
-                pool.remove(extraSites.get(best));
-            }else{
-                left.remove(best);
+            if(!grew) break;
+            next.sort((a, b) -> compare(a.score, b.score));
+            //two partial orders with the same machines begun in the same order are the same
+            List<Node> kept = new ArrayList<>();
+            Set<String> seen = new HashSet<>();
+            for(Node c : next){
+                if(kept.size() >= width) break;
+                StringBuilder key = new StringBuilder();
+                for(Machine m : c.done) key.append(m.recipe.name).append(m.item).append(m.x).append(',').append(m.y).append(';');
+                if(seen.add(key.toString())) kept.add(c);
             }
-            List<Machine> seq = new ArrayList<>();
-            seq.add(best);
-            seq.addAll(following(left, guide));
-            now.reorder(seq);
-            now.runToStart(now.next, limit);
+            beam = kept;
         }
-        return done;
+        Node best = beam.get(0);
+        for(Node n : beam) if(better(n.score, best.score)) best = n;
+        return best.done;
     }
 
     /** Single moves on a whole order, kept while they help. */
@@ -405,24 +546,100 @@ public final class Planner{
         return seq;
     }
 
+    // ---------------------------------------------------------------- extras
+
     final Map<Machine, Field.Site> extraSites = new HashMap<>();
 
-    /** One more of each kind of drill on its best place still free, and one more turbine. */
-    List<Machine> extraCandidates(List<Field.Site> pool){
-        List<Machine> list = new ArrayList<>();
+    /**
+     * Extras that could be begun: one more of each kind of drill on its best place still free, one more turbine; a bore
+     * boosted with hydrogen where something makes hydrogen; another of each crafter that is fed only from the ground,
+     * with the drills and crushers that feed it.
+     */
+    List<List<Machine>> extraOptions(Node n){
+        List<List<Machine>> list = new ArrayList<>();
         Set<String> kinds = new HashSet<>();
-        for(Field.Site s : pool){
+        boolean[] made = madeSomewhere(n);
+        for(Field.Site s : n.pool){
             if(!kinds.add(s.ground + "/" + s.item)) continue;
             for(Recipe r : cat.recipes){
                 boolean fits = r.ground == s.ground && (s.ground == Recipe.Ground.vent ? r.powerOut > 0f : r.perFactor[s.item] > 0f && noInputs(r));
                 if(!fits) continue;
-                Machine m = machine(r, s);
-                extraSites.put(m, s);
-                list.add(m);
+                list.add(List.of(extra(r, s, false)));
+                if(r.boostRes >= 0 && made[r.boostRes]) list.add(List.of(extra(r, s, true)));
                 break;
             }
         }
+        //a whole furnace (or any crafter fed from the ground), with what feeds it
+        for(Recipe r : cat.recipes){
+            if(r.ground != Recipe.Ground.none || r.makesUnits() || !fedFromGround(r)) continue;
+            List<Machine> bundle = bundle(r, n.pool, n.extrasLeft);
+            if(bundle != null) list.add(bundle);
+        }
         return list;
+    }
+
+    Machine extra(Recipe r, Field.Site s, boolean boosted){
+        Machine m = boosted ? boosted(machine(r, s)) : machine(r, s);
+        extraSites.put(m, s);
+        return m;
+    }
+
+    /** The same machine with hydrogen (its booster) led to it: a conduit of the same length on top. */
+    Machine boosted(Machine m){
+        int[] cost = m.cost.clone();
+        cost[cat.id("beryllium")] += Math.round(m.distance);
+        return new Machine(m.recipe, m.item, m.factor, m.x, m.y, m.distance, cost, true, false);
+    }
+
+    boolean[] madeSomewhere(Node n){
+        boolean[] made = new boolean[cat.size()];
+        List<Machine> all = new ArrayList<>(n.now.built);
+        all.addAll(n.done);
+        all.addAll(n.left);
+        for(Machine m : all) for(int k = 0; k < made.length; k++) if(m.out(k) > 0f) made[k] = true;
+        return made;
+    }
+
+    /** Whether all a crafter takes (but power) can be dug by machines that need nothing but power. */
+    boolean fedFromGround(Recipe r){
+        boolean any = false;
+        for(int k = 0; k < cat.size(); k++){
+            if(r.in[k] <= 0f) continue;
+            any = true;
+            boolean dug = false;
+            for(Recipe d : cat.recipes) if(d.ground != Recipe.Ground.none && d.perFactor[k] > 0f && noInputs(d)) dug = true;
+            if(!dug) return false;
+        }
+        return any;
+    }
+
+    /** A crafter and, on the best free places, enough of what digs its inputs for it to run at full speed. Diggers first. */
+    List<Machine> bundle(Recipe r, List<Field.Site> pool, int room){
+        List<Machine> feeders = new ArrayList<>();
+        Set<Field.Site> used = new HashSet<>();
+        for(int k = 0; k < cat.size(); k++){
+            float need = r.in[k];
+            while(need > 1e-4f){
+                Field.Site best = null;
+                Recipe bestRecipe = null;
+                for(Field.Site s : pool){
+                    if(used.contains(s) || s.item != k) continue;
+                    for(Recipe d : cat.recipes){
+                        if(d.ground == s.ground && d.perFactor[k] > 0f && noInputs(d) && (best == null || d.perFactor[k] * s.factor > bestRecipe.perFactor[k] * best.factor)){
+                            best = s;
+                            bestRecipe = d;
+                        }
+                    }
+                }
+                if(best == null) return null;
+                used.add(best);
+                feeders.add(extra(bestRecipe, best, false));
+                need -= bestRecipe.perFactor[k] * best.factor;
+            }
+        }
+        if(feeders.size() + 1 > room) return null;
+        feeders.add(machine(r, null));
+        return feeders;
     }
 
     /** Whether it needs nothing but power (so an extra one is only ever a gain). */

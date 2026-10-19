@@ -102,6 +102,18 @@ public class EconLab{
         long t3 = System.nanoTime();
         report(String.format("rollout order (planned in %.1fs)", (t3 - t2) / 1e9), cat, best, unit);
         steps(cat, best, plant);
+        //what each extra is worth: the order without it
+        float[] full = planner.score(best.order, unit);
+        for(int i = 0; i < best.order.size(); i++){
+            if(plant.contains(best.order.get(i))) continue;
+            List<Machine> without = new ArrayList<>(best.order);
+            without.remove(i);
+            float[] s = planner.score(without, unit);
+            System.out.println(String.format("    without the extra %s at %d,%d: done %s (with it %s)", best.order.get(i).recipe.name, best.order.get(i).x, best.order.get(i).y, time(s[0]), time(full[0])));
+        }
+        StringBuilder st = new StringBuilder("  by stage (done / first unit):");
+        for(var e : planner.stages.entrySet()) st.append(String.format(" %s %s/%s;", e.getKey(), time(e.getValue()[0]), time(e.getValue()[1])));
+        System.out.println(st);
         System.out.print("  " + planner.notes.toString().replace("\n", "\n  ").trim() + "\n");
         System.exit(0);
     }

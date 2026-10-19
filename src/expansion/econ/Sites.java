@@ -55,7 +55,7 @@ public final class Sites{
                     Tile tile = Vars.world.tile(x, y);
                     if(tile == null || dst(field, x, y) > radius) continue;
                     for(int rot = 0; rot < (block.rotate ? 4 : 1); rot++){
-                        if(!Build.validPlace(block, team, x, y, rot)) continue;
+                        if(!Build.validPlace(block, team, x, y, rot) || occupied(block, x, y)) continue;
                         Field.Site site = site(cat, field, r.ground, block, x, y, rot);
                         if(site != null) all.add(site);
                     }
@@ -93,6 +93,13 @@ public final class Sites{
             field.existing.add(new Machine(r, item, factor, build.tileX(), build.tileY(), dst(field, build.tileX(), build.tileY()), new int[cat.size()], false, true));
         }
         return field;
+    }
+
+    /** Whether anything is built under where the block would go (the game would let some blocks be put over others; a plan may not count on that). */
+    static boolean occupied(Block block, int x, int y){
+        boolean[] any = {false};
+        Vars.world.tile(x, y).getLinkedTilesAs(block, t -> { if(t.build != null) any[0] = true; });
+        return any[0];
     }
 
     static float score(Field.Site s){
