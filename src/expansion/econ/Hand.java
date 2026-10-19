@@ -47,6 +47,11 @@ public final class Hand extends mindustry.entities.units.AIController{
         Arrays.fill(finished, Float.NaN);
     }
 
+    /** Whether everything of the order is up (nothing begun and nothing put off is left). */
+    public boolean done(){
+        return next >= order.size() && job == null && skipped.isEmpty() && pending == null;
+    }
+
     static float now(){
         return (float)(Vars.state.tick / 60.0);
     }

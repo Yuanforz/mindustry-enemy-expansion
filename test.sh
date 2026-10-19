@@ -121,6 +121,12 @@ case "$what" in
     [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
     java -cp "$CP" xtest.EconLab build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "$3" "$4" 2>build/test-err.log
     ;;
+  match)
+    # ./test.sh match <map> <minutes> [sector|even]   a whole game: our economy executor and the squad AI against the Brain
+    mkdir -p build/test-maps
+    [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
+    java $RUN_OPTS -cp "$CP" xtest.Match build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "${3:-sector}" 2>build/match-err-$1.log
+    ;;
   econrun)
     # ./test.sh econrun <map> <sector> <unit> <machines> <minutes>   the plan laid out and played in the game, set against the model
     mkdir -p build/test-maps
