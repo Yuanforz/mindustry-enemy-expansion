@@ -183,6 +183,24 @@ LIST
     out="$1"; shift
     java $RUN_OPTS -cp "$CP" xtest.ModLab build/test-data "$out" "$@" 2>build/test-err.log
     ;;
+  owngen)
+    # ./test.sh owngen [write]   our own module designs (xtest.DesignGen) drawn into build/own/gen, measured by the lab as they
+    # stand on a map at all four turns (two at a time), and judged (tools/own-modules.py); with write, the kept ones become
+    # blueprints/own, the library the mod ships, and are read back the way the planner reads them
+    rm -rf build/own/gen; mkdir -p build/own
+    java $RUN_OPTS -cp "$CP" xtest.DesignGen build/test-data build/own/gen 2>build/test-err.log
+    for t in 0 1 2 3; do
+      java $RUN_OPTS -Dlab.deploy=true -Dlab.portturn=true -Dlab.turn=$t -cp "$CP" xtest.ModLab build/test-data build/own/lab-$t.tsv build/own/gen/*.msch > build/own/lab-$t.txt 2>>build/test-err.log &
+      if [ $t = 1 ] || [ $t = 3 ]; then wait; fi
+    done
+    # set against the community designs' lab table, where there is one (COMMUNITY=<table> for another)
+    community="${COMMUNITY:-reference/schematics/lab-deployed.tsv}"
+    judge="--community $community"
+    [ -f "$community" ] || judge=""
+    if [ "$1" = write ]; then judge="$judge --write blueprints/own"; fi
+    python3 -I tools/own-modules.py build/own/gen build/own/lab-0.tsv build/own/lab-1.tsv build/own/lab-2.tsv build/own/lab-3.tsv $judge
+    if [ "$1" = write ]; then java $RUN_OPTS -cp "$CP" xtest.DesignGen build/test-data --check blueprints/own 2>>build/test-err.log; fi
+    ;;
   econwhy)
     # ./test.sh econwhy <map> <sector> <unit> <machines> [recipe]   the balanced plant solved, and with one more of a recipe
     java -cp "$CP" xtest.EconWhy build/test-data "build/test-maps/maps/erekir/$1.msav" "$2" "$3" "$4" "$5" 2>build/test-err.log
