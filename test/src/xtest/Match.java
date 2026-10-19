@@ -61,12 +61,23 @@ public class Match{
         //nothing is researched in a fresh data dir: the Brain may build all it knows, as in the other tests
         brain.unlocked = content -> true;
 
-        Fi map = new Fi(args[1]);
+        //gen:seed, a map the game's generator makes for Erekir, one core a side and the same stock (a custom game, as PvP)
+        boolean generated = args[1].startsWith("gen:");
+        Fi map = generated ? new Fi("gen-" + args[1].substring(4)) : new Fi(args[1]);
         float minutes = Float.parseFloat(args[2]);
-        String mode = args.length > 3 ? args[3] : "sector";
+        String mode = generated ? "gen" : args.length > 3 ? args[3] : "sector";
 
         Vars.logic.reset();
-        SaveIO.load(map);
+        if(generated){
+            if(Wild.make(Integer.parseInt(args[1].substring(4)), System.getProperty("match.stock", "plain")) == null){
+                System.out.println("RESULT " + map.nameWithoutExtension() + " gen winner=none: the generator left no place for a second core");
+                System.exit(0);
+            }
+            //(the generator's test keeps the player's side standing; not here)
+            Vars.state.rules.defaultTeam.rules().blockHealthMultiplier = 1f;
+        }else{
+            SaveIO.load(map);
+        }
         Rules rules = Vars.state.rules;
         Planets.erekir.applyRules(rules, false);
         us = rules.defaultTeam;
@@ -82,7 +93,7 @@ public class Match{
             System.exit(0);
         }
         if(mode.equals("even")) even();
-        else{
+        else if(!generated){
             //the rules the campaign lays on the enemy of a sector (the mod keeps its own count of what it has)
             Planet planet = Planets.erekir;
             if(planet.enemyInfiniteItems){

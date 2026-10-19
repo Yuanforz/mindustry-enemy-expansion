@@ -1,7 +1,7 @@
 #!/bin/sh
 # Plays whole games of our side against the Brain on many maps (xtest.Match), a few at a time, on a copy of the classes
 # (so the source can be worked on meanwhile), and prints each game's result line and a tally.
-# Usage: test/matches.sh <minutes> <sector|even> [maps...]
+# Usage: test/matches.sh <minutes> <sector|even> [maps...]   (a map gen:seed is made by the game's generator, one core a side)
 #   JOBS=2 by default; TAG=name keeps this batch's logs apart; STAGES=... our stages (Match's -Dmatch.stages);
 #   OPTS="-Dmatch.us=rts ..." more options for every game.
 cd "$(dirname "$0")/.."
@@ -15,7 +15,7 @@ rm -rf "$snap"; mkdir -p "$snap"; cp -r build/classes "$snap/classes"; cp -r bui
 mkdir -p build/test-maps
 [ -f build/test-maps/maps/erekir/onset.msav ] || unzip -q -o "$GAME_JAR" 'maps/erekir/*' -d build/test-maps
 run(){
-  java -XX:+UseSerialGC -XX:CICompilerCount=2 -Dmatch.stages="$STAGES" $OPTS -cp "$GAME_JAR:$snap/classes:$snap/test-classes" xtest.Match build/test-data "build/test-maps/maps/erekir/$1.msav" "$minutes" "$mode" > "build/match/$TAG-$1-$mode.log" 2> "build/match/$TAG-$1-$mode.err"
+  java -XX:+UseSerialGC -XX:CICompilerCount=2 -Dmatch.stages="$STAGES" $OPTS -cp "$GAME_JAR:$snap/classes:$snap/test-classes" xtest.Match build/test-data "$(case "$1" in gen:*) echo "$1";; *) echo "build/test-maps/maps/erekir/$1.msav";; esac)" "$minutes" "$mode" > "build/match/$TAG-$1-$mode.log" 2> "build/match/$TAG-$1-$mode.err"
 }
 running=0
 for m in $MAPS; do
