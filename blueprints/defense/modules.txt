@@ -1,0 +1,160 @@
+# 防御模块 / Defence modules (our own designs)
+#
+# Blueprint text format (see src/expansion/Blueprint.java): the first part is the main block, positions are relative to
+# it, and the front (+x) faces the enemy. Supply comes in from behind (-x), toward our base.
+# An item source or liquid source marks where a supply line ends: on the map it becomes the router that line ends in.
+# A part written "?block" goes up only when what it needs is to be had (water for faster fire).
+# Lines starting "#!" say what the module is for; the defence planner reads them, the Blueprint reader skips them.
+# Walls are not part of a module: the planner lays them as a line across the choke in front (2 tiles thick).
+#
+# Patterns (reference/research-2026-10-18/schematics-and-sectors.md, P5): turrets in a row with the feed bus behind,
+# a router beside each turret, an ammunition store (container and unloader) that fills between waves, and a liquid
+# store right behind turrets that fire liquid. Each turret role from reference/turrets-drills-human.md §2.
+
+# ---- 撕裂 Breach: the first line (air and ground) ----
+
+# Two breaches with a store: the line fills a container between waves (160 items), an unloader feeds both turrets
+# through a router each. Water, when there is some to spare, comes in between them and cools both (2.5 times the fire).
+# Tungsten is 1 an shot and reaches 5 tiles further; beryllium is 2 a shot.
+[breach-pair]
+#! role line antiAir
+#! about two breaches, ammo store, water between them
+breach 0 0 0
+breach 0 4 0
+reinforced-container -3 -3
+duct-unloader -2 -1 1
+duct-router -2 0 1
+duct -2 1 1
+duct -2 2 1
+duct -2 3 1
+duct-router -2 4 1
+item-source -4 -3 0 tungsten
+?liquid-source -1 2 0 water
+
+# The same without a store, for when there are no containers yet (the first sector): the line ends at the first router.
+[breach-pair-direct]
+#! role line antiAir
+#! about two breaches fed straight from the line
+breach 0 0 0
+breach 0 4 0
+duct-router -2 0 1
+duct -2 1 1
+duct -2 2 1
+duct -2 3 1
+duct-router -2 4 1
+item-source -2 -1 0 beryllium
+?liquid-source -1 2 0 water
+
+# ---- 扩散 Diffuse: close range, against leg mechs and swarms that reach the line ----
+
+# Two diffuses with a store. Graphite is 3 a salvo, 6 a second while it fires (15 with water): it must fire from a store.
+[diffuse-pair]
+#! role close
+#! about two diffuses, ammo store, water between them
+diffuse 0 0 0
+diffuse 0 4 0
+reinforced-container -3 -3
+duct-unloader -2 -1 1
+duct-router -2 0 1
+duct -2 1 1
+duct -2 2 1
+duct -2 3 1
+duct-router -2 4 1
+item-source -4 -3 0 graphite
+?liquid-source -1 2 0 water
+
+# ---- 升华 Sublimate: the ground killer at a choke ----
+
+# Two sublimates with a liquid tank right behind both (2700: three minutes of one electrolyzer's ozone, or 90 s of fire
+# for one turret). The tank stands behind the turrets, never at the front: ozone and cyanogen go up when hit.
+[sublimate-pair]
+#! role line close
+#! about two sublimates sharing a liquid tank behind them
+sublimate 0 0 0
+sublimate 0 3 0
+reinforced-liquid-tank -3 1
+liquid-source -5 1 0 ozone
+
+# ---- 驱离 Disperse: anti-air, always in pairs ----
+
+[disperse-pair]
+#! role antiAir
+#! about two disperses, tungsten store, water between them
+disperse 0 0 0
+disperse 0 5 0
+reinforced-container -3 -3
+duct-unloader -2 -1 1
+duct-router -2 0 1
+duct -2 1 1
+duct -2 2 1
+duct -2 3 1
+duct -2 4 1
+duct-router -2 5 1
+item-source -4 -3 0 tungsten
+?liquid-source -1 3 0 water
+
+# ---- 泰坦 Titan: ground artillery behind the line ----
+
+# Hydrogen is needed all the time (5 a second each) and comes in between the two; thorium from a store.
+[titan-pair]
+#! role artillery
+#! about two titans, thorium store, hydrogen between them
+titan 0 0 0
+titan 0 5 0
+reinforced-container -3 -3
+duct-unloader -2 -1 1
+duct-router -2 0 1
+duct -2 1 1
+duct -2 2 1
+duct -2 3 1
+duct -2 4 1
+duct-router -2 5 1
+item-source -4 -3 0 thorium
+liquid-source -1 3 0 hydrogen
+
+# ---- 劫难 Afflict: the all-rounder (power and heat) ----
+
+# 20 heat from seven electric heaters: two on each side and three into a heat redirector behind it (3 x 3 = 9 more).
+# The heaters stand behind and beside it, never in front. Power: 300 for the turret, 700 for the heaters.
+[afflict-post]
+#! role line artillery antiAir
+#! about one afflict heated by seven electric heaters
+afflict 0 0 0
+electric-heater -1 -3 1
+electric-heater 1 -3 1
+electric-heater -1 3 3
+electric-heater 1 3 3
+heat-redirector -3 0 0
+electric-heater -6 -1 0
+electric-heater -4 -3 1
+electric-heater -4 2 3
+
+# ---- 光辉 Lustre: one big unit at a time ----
+
+# Nitrogen only while it fires (6 a second): a liquid container behind keeps 160 s of it.
+[lustre-post]
+#! role heavy
+#! about one lustre with a nitrogen container behind it
+lustre 0 0 0
+reinforced-liquid-container -3 0
+liquid-source -4 0 0 nitrogen
+
+# ---- 天谴 Smite: the late line holder on a straight approach ----
+
+[smite-post]
+#! role line heavy
+#! about one smite, surge store, water at its back
+smite 0 0 0
+reinforced-container -6 0
+duct-unloader -4 0 0
+duct-router -3 0 0
+item-source -7 0 0 surge-alloy
+?liquid-source -3 2 0 water
+
+# ---- 支援 Support ----
+
+# One regen projector per cluster (they do not stack): heals 28 x 28 tiles round it, hydrogen 1 a second while it heals.
+[regen-support]
+#! about a regen projector with its hydrogen
+regen-projector 0 0 0
+liquid-source -2 0 0 hydrogen
