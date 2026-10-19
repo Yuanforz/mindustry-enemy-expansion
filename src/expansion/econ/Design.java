@@ -128,14 +128,27 @@ public final class Design{
                 }
             }
         }
-        //and the tile a line comes into an input from (behind its router), and the one an output's line goes on to
+        //and a lane straight out from each port, LANE tiles long: the way a line comes into an input (behind its router)
+        //and the way an output's line goes off; kept clear, or ports side by side by a cliff can be shut in
+        for(int[] t : lanes(o)) if(seen.add(t[0] * 4096 + t[1])) out.add(t);
+        return foot[o] = out.toArray(new int[0][]);
+    }
+
+    /** How long the lane kept clear before each port is. */
+    public static final int LANE = 3;
+
+    /** The lane tiles before every port, turned o times, from the design's corner. */
+    public List<int[]> lanes(int o){
+        List<int[]> out = new ArrayList<>();
         for(int[] port : portsAt(o)){
             if(port[4] < 0) continue;
-            int dx = arc.math.geom.Geometry.d4x(port[4]), dy = arc.math.geom.Geometry.d4y(port[4]);
-            int x = port[0] == 1 ? port[2] - dx : port[2] + dx, y = port[0] == 1 ? port[3] - dy : port[3] + dy;
-            if(seen.add(x * 4096 + y)) out.add(new int[]{x, y});
+            int dx = arc.math.geom.Geometry.d4x(port[4] % 4), dy = arc.math.geom.Geometry.d4y(port[4] % 4);
+            for(int i = 1; i <= LANE; i++){
+                int x = port[0] == 1 ? port[2] - dx * i : port[2] + dx * i, y = port[0] == 1 ? port[3] - dy * i : port[3] + dy * i;
+                out.add(new int[]{x, y});
+            }
         }
-        return foot[o] = out.toArray(new int[0][]);
+        return out;
     }
 
     /** The block that stands for the whole design where only one can (the biggest that uses power, else the biggest), turned o times. */
@@ -157,12 +170,16 @@ public final class Design{
      * The ports turned o times: {in (1/0), liquid (1/0), x, y} in the turned design, in the order of {@link #ports}. Found
      * again in the turned design by the source or void that marks each (the game turns them with the rest).
      */
+    private final int[][][] portCache = new int[4][][];
+
     public int[][] portsAt(int o){
-        int[][] out = new int[ports.size()][];
+        if(portCache[o] != null) return portCache[o];
+        int[][] out = portCache[o] = new int[ports.size()][];
         for(int i = 0; i < ports.size(); i++){
             Port p = ports.get(i);
             Stile t = turned[o].tiles.get(p.index);
-            out[i] = new int[]{p.in ? 1 : 0, p.liquid ? 1 : 0, t.x, t.y, p.turn < 0 ? -1 : (p.turn + o) % 4};
+            //(a turn of 4 and up is a plain duct into the design facing turn - 4: it turns the same way, and stays 4 and up)
+            out[i] = new int[]{p.in ? 1 : 0, p.liquid ? 1 : 0, t.x, t.y, p.turn < 0 ? -1 : p.turn >= 4 ? 4 + (p.turn - 4 + o) % 4 : (p.turn + o) % 4};
         }
         return out;
     }
@@ -217,6 +234,7 @@ public final class Design{
             int turn = -1;
             if(place.contains(":")){
                 turn = Integer.parseInt(place.substring(place.indexOf(':') + 1));
+                //(0..3: a router facing that way; 4..7: a plain duct facing turn - 4)
                 place = place.substring(0, place.indexOf(':'));
             }
             String[] xy = place.split(",");

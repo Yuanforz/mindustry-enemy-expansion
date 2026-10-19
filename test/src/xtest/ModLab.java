@@ -186,6 +186,35 @@ public class ModLab{
             for(Port p : r.ports){
                 int px = p.x + ox, py = p.y + oy;
                 boolean done = false;
+                //an item input that fed one neighbour only: a plain duct into it, which a line can come into from behind
+                //or either side (its turn is written as 4 + the way the duct faces)
+                if(p.in && !p.liquid && Boolean.parseBoolean(System.getProperty("lab.ducts", "true"))){
+                    Item item = Vars.content.item(p.what);
+                    int only = -1, count = 0;
+                    for(int d = 0; d < 4; d++){
+                        Tile nb = Vars.world.tile(px + Geometry.d4x(d), py + Geometry.d4y(d));
+                        if(nb == null || nb.build == null || !foot.contains(Point2.pack(nb.x, nb.y)) || item == null) continue;
+                        if(nb.build.acceptItem(p.at, item)){
+                            only = d;
+                            count++;
+                        }
+                    }
+                    if(count == 1){
+                        for(int d = 0; d < 4 && !done; d++){
+                            if(d == only) continue;
+                            int qx = px + Geometry.d4x(d), qy = py + Geometry.d4y(d);
+                            Tile q = Vars.world.tile(qx, qy);
+                            if(q == null || foot.contains(Point2.pack(qx, qy)) || q.build != null) continue;
+                            Object what = p.at == null ? null : p.at.config();
+                            Vars.world.tile(px, py).setBlock(Blocks.duct, team, only);
+                            q.setBlock(srcItem, team, 0);
+                            if(what != null) q.build.configureAny(what);
+                            p.at = q.build;
+                            p.turn = 4 + only;
+                            done = true;
+                        }
+                    }
+                }
                 for(int d = 0; d < 4 && !done; d++){
                     int dx = Geometry.d4x(d), dy = Geometry.d4y(d);
                     if(p.in){

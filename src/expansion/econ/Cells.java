@@ -256,6 +256,26 @@ final class Cells{
 
     // ---------------------------------------------------------------- what a layout costs
 
+    /**
+     * Where a line of thing k meets a machine: for a design, the far end of the lane before its port for k (its output if
+     * it makes k, its input if it takes it), so that it is turned with that port towards what it works with; for a block,
+     * its whole edge.
+     */
+    int[] portRect(Machine m, int k, boolean out){
+        if(!design(m)) return rect(m);
+        int[] p = where.get(m);
+        int[][] all = m.recipe.module.portsAt(p[2]);
+        for(int i = 0; i < all.length; i++){
+            int[] port = all[i];
+            Design.Port dp = m.recipe.module.ports.get(i);
+            if(dp.in == out || cat.id(dp.what) != k || port[4] < 0) continue;
+            int dx = arc.math.geom.Geometry.d4x(port[4] % 4), dy = arc.math.geom.Geometry.d4y(port[4] % 4), l = Design.LANE;
+            int x = p[0] + (dp.in ? port[2] - dx * l : port[2] + dx * l), y = p[1] + (dp.in ? port[3] - dy * l : port[3] + dy * l);
+            return new int[]{x, y, x, y};
+        }
+        return rect(m);
+    }
+
     int[] rect(Machine m){
         int[] p = where.get(m);
         if(design(m)){
@@ -311,7 +331,7 @@ final class Cells{
             for(Machine m : all){
                 if(!cells.contains(m) || !where.containsKey(m)) continue;
                 boolean maker = n.from.contains(m);
-                int[] r = rect(m);
+                int[] r = portRect(m, n.res, maker);
                 int d = Integer.MAX_VALUE;
                 boolean direct = false;
                 for(Machine o : all){
@@ -320,7 +340,7 @@ final class Cells{
                     if(!maker && n.from.contains(o) && feeds(o, m, n.res)){ direct = true; d = 0; break; }
                     //only maker to taker counts: two takers of a thing side by side share nothing
                     if(maker == n.from.contains(o) && !(n.toCore)) continue;
-                    d = Math.min(d, gap(r, rect(o)));
+                    d = Math.min(d, gap(r, portRect(o, n.res, !maker)));
                 }
                 if(n.toCore && !direct) d = Math.min(d, gap(r, core));
                 if(d == Integer.MAX_VALUE) d = 40;
