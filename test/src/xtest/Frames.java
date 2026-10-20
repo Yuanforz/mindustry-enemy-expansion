@@ -8,7 +8,7 @@ import mindustry.world.*;
 
 /** Pictures of a stretch of the map as it stands, for looking at a fight frame by frame. */
 public class Frames{
-    static final int scale = 6;
+    static final int scale = Integer.getInteger("xp.framescale", 6);
 
     /** Floor grey, walls dark, ore walls by item, water blue; buildings of the side played green, the other side's red, turrets lighter; units white and orange; turrets with nothing to fire crossed in black; what is being built hatched. */
     public static void write(Fi file, int x0, int y0, int w, int h, Team own){

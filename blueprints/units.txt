@@ -47,6 +47,27 @@ in silicon -2 1 0
 # Second tier: a fabricator facing straight into a refabricator, which takes each unit as it comes out.
 # The hydrogen the refabricator needs is piped from an electrolyzer.
 
+# 不依附涡轮机的二级坦克工厂：原来涡轮机的位置换成一个强化液体容器，贴着电解器给水；水也靠核心机搬：
+# 液体容器搬到任何一台涡轮机旁装满水，再搬回来。其余同上。可以建在任何安全的空地上。
+# The same works on any safe open ground: a liquid box where the turbine stood gives the electrolyzer its water,
+# filled by being carried to stand against any turbine and back.
+[tank-works-box]
+tank-fabricator 0 -3 0 stell
+reinforced-liquid-container 0 0
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+beam-node 0 2
+beam-node 5 2
+beam-node 5 0
+beam-node 5 -5
+beam-node 4 -5
+beam-node -2 -5
+beam-node -2 -2
+duct-unloader 0 -5 1
+reinforced-container -1 -7
+duct-unloader 3 -5 1
+reinforced-container 3 -7
+
 [tank-works]
 tank-fabricator 0 0 0 stell
 tank-refabricator 3 0 0
@@ -147,3 +168,330 @@ ship-refabricator 3 0 0
 ?beam-node 2 -2
 in silicon 3 2 3
 in tungsten 3 -2 1
+
+# 二级坦克的成套兵营，建在喷口上：冷凝器贴着电解器（水靠接触传过去），电解器压在改造厂上面（氢从下侧直接进改造厂），
+# 兵厂在改造厂后面。整套没有一根液体管道；只需引进铍、硅和钨。实验台 lab/t2cell.txt 验证过接触供给能出 locus。
+# A tier-2 tank works on a vent: the condenser touches the electrolyzer (its water passes by touch), the electrolyzer sits on the
+# refabricator (its hydrogen goes straight in from below), the fabricator behind the refabricator. Not one conduit; only the
+# beryllium, silicon and tungsten are led in. lab/t2cell.txt showed the touching blocks turn out locus.
+[tank-works-vent]
+tank-fabricator -3 0 0 stell
+tank-refabricator 0 0 0
+electrolyzer 0 3 0
+vent-condenser -3 3
+beam-node -2 -2
+beam-node -1 -2
+beam-node 2 -2
+beam-node 2 3
+beam-node -5 3
+beam-node -5 -2
+in beryllium -5 0 0
+in silicon -3 -2 1
+in silicon 0 -2 1
+in tungsten 1 -2 1
+
+# 同样的成套兵营，挂在一台已有的涡轮冷凝器旁边：涡轮顺带出的水（满喷口约每秒 5）让电解器半速运转，正好是一台改造厂要的
+# 每秒 3 氢。不占新的喷口。实验台 lab/t2cell.txt 的 t2turbine 验证过。
+# The same works against a turbine condenser that stands already: the water it gives off besides its power (about 5 a second on
+# a full vent) runs the electrolyzer at half pace, the 3 hydrogen a second one refabricator takes. No vent of its own.
+# 涡轮机旁的二级坦克工厂，原料靠箱子转运：兵厂和改造厂南面各一个不设物品的卸载器，背后一个强化容器。
+# 核心机把装满的箱子搬到这里、搬空的搬回去装；氢气由贴着改造厂的电解器直接给，电解器的水由涡轮机直接给。
+# A works beside a turbine fed by boxes: an unloader set to nothing on the south of the fabricator and of the
+# refabricator, each with a box behind it, which the core's unit carries to be filled and back.
+[tank-works-turbine-box]
+@turbine-condenser 0 0
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+tank-fabricator 0 -3 0 stell
+beam-node 0 2
+beam-node 5 2
+beam-node 5 0
+beam-node 5 -5
+beam-node 4 -5
+beam-node -2 -5
+beam-node -2 -2
+duct-unloader 0 -5 1
+reinforced-container -1 -7
+duct-unloader 3 -5 1
+reinforced-container 3 -7
+
+[tank-works-turbine]
+@turbine-condenser 0 0
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+tank-fabricator 0 -3 0 stell
+beam-node 0 2
+beam-node 5 2
+beam-node 5 0
+beam-node 5 -5
+beam-node 4 -5
+beam-node -2 -5
+beam-node -2 -2
+in beryllium -2 -3 0
+in silicon 0 -5 1
+in silicon 2 -5 1
+in tungsten 3 -5 1
+
+# 贴着硅厂的兵营：硅厂一边出硅一边直接倒进紧挨着的兵工厂，不用管道，也比通往核心的那条线先拿到。
+# 第一行带 @ 的是已经建好的硅厂。四种摆法对应硅厂的四条边，哪边空就用哪边；另一种原料照常从管线引来。
+# Yards against a silicon furnace: the furnace hands what it makes straight to the fabricator touching it, with no
+# line, and before its own line to a core gets any. The line with the @ is the furnace that stands already; the four
+# layouts are its four sides, whichever is free. The other thing a unit is made of is led from the lines as usual.
+
+[tank-yard-on-furnace-above]
+@silicon-arc-furnace 0 0
+tank-fabricator 0 3 0 stell
+?beam-node -2 3
+?beam-node -2 4
+in beryllium 0 5 3
+
+[tank-yard-on-furnace-below]
+@silicon-arc-furnace 0 0
+tank-fabricator 0 -3 0 stell
+?beam-node -2 -3
+?beam-node -2 -4
+in beryllium 0 -5 1
+
+[tank-yard-on-furnace-right]
+@silicon-arc-furnace 0 0
+tank-fabricator 3 0 0 stell
+?beam-node 3 2
+?beam-node 4 2
+in beryllium 3 -2 1
+
+[tank-yard-on-furnace-left]
+@silicon-arc-furnace 0 0
+tank-fabricator -3 0 2 stell
+?beam-node -3 2
+?beam-node -4 2
+in beryllium -3 -2 1
+
+[ship-yard-on-furnace-above]
+@silicon-arc-furnace 0 0
+ship-fabricator 0 3 0 elude
+?beam-node -2 3
+?beam-node -2 4
+in graphite 0 5 3
+
+[ship-yard-on-furnace-below]
+@silicon-arc-furnace 0 0
+ship-fabricator 0 -3 0 elude
+?beam-node -2 -3
+?beam-node -2 -4
+in graphite 0 -5 1
+
+[ship-yard-on-furnace-right]
+@silicon-arc-furnace 0 0
+ship-fabricator 3 0 0 elude
+?beam-node 3 2
+?beam-node 4 2
+in graphite 3 -2 1
+
+[ship-yard-on-furnace-left]
+@silicon-arc-furnace 0 0
+ship-fabricator -3 0 2 elude
+?beam-node -3 2
+?beam-node -4 2
+in graphite -3 -2 1
+
+[mech-yard-on-furnace-above]
+@silicon-arc-furnace 0 0
+mech-fabricator 0 3 0 merui
+?beam-node -2 3
+?beam-node -2 4
+in beryllium 0 5 3
+
+[mech-yard-on-furnace-below]
+@silicon-arc-furnace 0 0
+mech-fabricator 0 -3 0 merui
+?beam-node -2 -3
+?beam-node -2 -4
+in beryllium 0 -5 1
+
+[mech-yard-on-furnace-right]
+@silicon-arc-furnace 0 0
+mech-fabricator 3 0 0 merui
+?beam-node 3 2
+?beam-node 4 2
+in beryllium 3 -2 1
+
+[mech-yard-on-furnace-left]
+@silicon-arc-furnace 0 0
+mech-fabricator -3 0 2 merui
+?beam-node -3 2
+?beam-node -4 2
+in beryllium -3 -2 1
+
+# 同一套挂在涡轮旁的二级兵营，转到涡轮的另外三边（原来只有一边，涡轮四周稍挤就放不下）；还有机甲的一套。
+# The same works by a turbine turned to its other three sides (with one side only, a turbine with a little in the way on it
+# had no room), and one of them for mechs.
+
+[tank-works-turbine-1]
+@turbine-condenser 0 0
+electrolyzer 0 3 1
+tank-refabricator 3 3 1
+tank-fabricator 3 0 1 stell
+beam-node -2 0
+beam-node -2 5
+beam-node 0 5
+beam-node 5 5
+beam-node 5 4
+beam-node 5 -2
+beam-node 2 -2
+in beryllium 3 -2 1
+in silicon 5 0 2
+in silicon 5 2 2
+in tungsten 5 3 2
+
+[tank-works-turbine-2]
+@turbine-condenser 0 0
+electrolyzer -3 0 2
+tank-refabricator -3 3 2
+tank-fabricator 0 3 2 stell
+beam-node 0 -2
+beam-node -5 -2
+beam-node -5 0
+beam-node -5 5
+beam-node -4 5
+beam-node 2 5
+beam-node 2 2
+in beryllium 2 3 2
+in silicon 0 5 3
+in silicon -2 5 3
+in tungsten -3 5 3
+
+[tank-works-turbine-3]
+@turbine-condenser 0 0
+electrolyzer 0 -3 3
+tank-refabricator -3 -3 3
+tank-fabricator -3 0 3 stell
+beam-node 2 0
+beam-node 2 -5
+beam-node 0 -5
+beam-node -5 -5
+beam-node -5 -4
+beam-node -5 2
+beam-node -2 2
+in beryllium -3 2 3
+in silicon -5 0 0
+in silicon -5 -2 0
+in tungsten -5 -3 0
+
+[mech-works-turbine-0]
+@turbine-condenser 0 0
+electrolyzer 3 0 0
+mech-refabricator 3 -3 0
+mech-fabricator 0 -3 0 merui
+beam-node 0 2
+beam-node 5 2
+beam-node 5 0
+beam-node 5 -5
+beam-node 4 -5
+beam-node -2 -5
+beam-node -2 -2
+in beryllium -2 -3 0
+in silicon 0 -5 1
+in silicon 2 -5 1
+in tungsten 3 -5 1
+
+[mech-works-turbine-1]
+@turbine-condenser 0 0
+electrolyzer 0 3 1
+mech-refabricator 3 3 1
+mech-fabricator 3 0 1 merui
+beam-node -2 0
+beam-node -2 5
+beam-node 0 5
+beam-node 5 5
+beam-node 5 4
+beam-node 5 -2
+beam-node 2 -2
+in beryllium 3 -2 1
+in silicon 5 0 2
+in silicon 5 2 2
+in tungsten 5 3 2
+
+[mech-works-turbine-2]
+@turbine-condenser 0 0
+electrolyzer -3 0 2
+mech-refabricator -3 3 2
+mech-fabricator 0 3 2 merui
+beam-node 0 -2
+beam-node -5 -2
+beam-node -5 0
+beam-node -5 5
+beam-node -4 5
+beam-node 2 5
+beam-node 2 2
+in beryllium 2 3 2
+in silicon 0 5 3
+in silicon -2 5 3
+in tungsten -3 5 3
+
+[mech-works-turbine-3]
+@turbine-condenser 0 0
+electrolyzer 0 -3 3
+mech-refabricator -3 -3 3
+mech-fabricator -3 0 3 merui
+beam-node 2 0
+beam-node 2 -5
+beam-node 0 -5
+beam-node -5 -5
+beam-node -5 -4
+beam-node -5 2
+beam-node -2 2
+in beryllium -3 2 3
+in silicon -5 0 0
+in silicon -5 -2 0
+in tungsten -5 -3 0
+
+# 喷口二级兵营的机甲版：布局同 tank-works-vent。
+# The works on a vent for mechs, laid out as tank-works-vent.
+[mech-works-vent]
+mech-fabricator -3 0 0 merui
+mech-refabricator 0 0 0
+electrolyzer 0 3 0
+vent-condenser -3 3
+beam-node -2 -2
+beam-node -1 -2
+beam-node 2 -2
+beam-node 2 3
+beam-node -5 3
+beam-node -5 -2
+in beryllium -5 0 0
+in silicon -3 -2 1
+in silicon 0 -2 1
+in tungsten 1 -2 1
+
+# 喷口二级兵营的箱子版：水和氢靠贴着传，物料由核心机搬箱子送来。重构厂和兵工厂下方各有一个卸货器和一只箱子，
+# 电力节点挪到别的边上，让出箱子的位置。管线接不到的时候用它。
+# The works on a vent fed by boxes: water and hydrogen by touch, the items carried in boxes by the core's unit. An unloader
+# and a box under the refabricator and under the fabricator; the nodes moved to other sides to leave them room. For where no
+# line can be led to it.
+[tank-works-vent-box]
+tank-fabricator -3 0 0 stell
+tank-refabricator 0 0 0
+electrolyzer 0 3 0
+vent-condenser -3 3
+beam-node -5 0
+beam-node -5 3
+beam-node 2 3
+beam-node 1 -2
+duct-unloader 0 -2 1
+reinforced-container -1 -4
+duct-unloader -3 -2 1
+reinforced-container -4 -4
+
+[mech-works-vent-box]
+mech-fabricator -3 0 0 merui
+mech-refabricator 0 0 0
+electrolyzer 0 3 0
+vent-condenser -3 3
+beam-node -5 0
+beam-node -5 3
+beam-node 2 3
+beam-node 1 -2
+duct-unloader 0 -2 1
+reinforced-container -1 -4
+duct-unloader -3 -2 1
+reinforced-container -4 -4
