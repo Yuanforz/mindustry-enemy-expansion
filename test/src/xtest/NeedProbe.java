@@ -22,7 +22,7 @@ public class NeedProbe{
                 System.out.println(args[a] + ": no such block");
                 continue;
             }
-            StringBuilder s = new StringBuilder(b.name + " (size " + b.size + "): built of");
+            StringBuilder s = new StringBuilder(b.name + " (size " + b.size + (b.isOnPlanet(mindustry.content.Planets.erekir) ? "" : ", not shown on erekir") + ", " + b.buildVisibility + "): built of");
             for(ItemStack st : b.requirements) s.append(" ").append(st.item.name).append("=").append(st.amount);
             if(b instanceof ItemTurret it){
                 s.append("; ammo");

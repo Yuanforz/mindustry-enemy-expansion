@@ -218,6 +218,7 @@ public class Match{
         String sector = expansion.defense.Tech.known(map.nameWithoutExtension()) ? map.nameWithoutExtension() : "atlas";
         expansion.defense.GameData.shapes();
         int stage = -1, climbSteps = 0;
+        boolean again = false;
         float stageFrom = 0f;
         expansion.econ.Hand hand = null;
         //a guard put down where raiders take what we built: the stage's hand waits meanwhile
@@ -237,9 +238,10 @@ public class Match{
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
             //(a stage is over once its own order is up, whatever it is mending meanwhile: under raids that never ends)
             boolean over = paused == null && hand != null && (hand.orderDone() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
-            if((hand == null || over) && stage + 1 < stages.length && us.core() != null){
+            if((hand == null || over) && (again || stage + 1 < stages.length) && us.core() != null){
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
-                stage++;
+                if(!again) stage++;
+                again = false;
                 //(the world as it stands when a stage is planned, kept for planning it again by itself: -Dmatch.save=dir, xtest.PlanAt)
                 if(System.getProperty("match.save") != null){
                     Fi to = new Fi(System.getProperty("match.save")).child(map.nameWithoutExtension() + "-stage" + (stage + 1) + ".msav");
@@ -271,7 +273,7 @@ public class Match{
                     climbing = aim != null && !aim.equals(goal) && climbSteps < 10;
                     if(climbing) climbSteps++;
                     else climbSteps = 0;
-                    System.out.println("  stage " + (stage + 1) + ": climbing to " + goal + ", " + (aim == null ? "no way there here" : climbing ? "next " + aim : "now the goal"));
+                    System.out.println("  stage " + (stage + 1) + ": climbing to " + goal + ", " + (aim == null ? "no way there here" : climbing ? "next " + aim : "now the goal") + (probe.climbed.isEmpty() ? "" : " (" + probe.climbed + ")"));
                     ways = aim == null ? new String[0] : new String[]{climbing ? aim : goal + ":1"};
                 }
                 for(int pass = 0; pass < 2 && plan == null; pass++){
@@ -316,7 +318,7 @@ public class Match{
                 }
                 planSeconds += (System.nanoTime() - p0) / 1e9f;
                 //(a step of a climb: the same stage again once this is up)
-                if(climbing && plan != null) stage--;
+                again = climbing && plan != null;
                 System.out.println(String.format("  stage %d planned in %.1f s (wall)", stage + 1, (System.nanoTime() - p0) / 1e9f));
                 if(Boolean.getBoolean("xp.time")) System.out.print(expansion.econ.Took.report());
                 if(plan != null && plan.model != null){
@@ -486,6 +488,20 @@ public class Match{
             StringBuilder held = new StringBuilder("  the core holds:");
             if(us.core() != null) for(Item item : Vars.content.items()) if(us.core().items.get(item) > 0) held.append(' ').append(item.name).append('=').append(us.core().items.get(item));
             System.out.println(held);
+            //each kind of drill and crafter: how many, how hard they work, how many sit full (their way out is shut)
+            Map<String, float[]> kinds = new TreeMap<>();
+            for(Building b : us.data().buildings){
+                String item = b instanceof mindustry.world.blocks.production.Drill.DrillBuild d ? d.dominantItem == null ? "" : " " + d.dominantItem.name
+                    : b instanceof mindustry.world.blocks.production.BeamDrill.BeamDrillBuild bd ? bd.lastItem == null ? "" : " " + bd.lastItem.name : null;
+                if(item == null && !(b instanceof mindustry.world.blocks.production.GenericCrafter.GenericCrafterBuild)) continue;
+                float[] k = kinds.computeIfAbsent(b.block.name + (item == null ? "" : item), x -> new float[3]);
+                k[0]++;
+                k[1] += b.efficiency;
+                if(b.items != null && b.items.total() >= b.block.itemCapacity) k[2]++;
+            }
+            StringBuilder ks = new StringBuilder("  makers:");
+            for(var e : kinds.entrySet()) ks.append(String.format(" %s x%.0f (working %.2f, full %.0f);", e.getKey(), e.getValue()[0], e.getValue()[1] / e.getValue()[0], e.getValue()[2]));
+            System.out.println(ks);
             //what each unit maker and each turret that can't fire is short of
             for(Building b : us.data().buildings){
                 boolean maker = b.block instanceof mindustry.world.blocks.units.UnitFactory || b.block instanceof mindustry.world.blocks.units.Reconstructor

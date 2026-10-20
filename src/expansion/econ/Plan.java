@@ -750,39 +750,101 @@ public final class Plan{
         Res g = cat.byName.get(goal);
         if(g == null) return null;
         Chains chains = new Chains(cat, field);
-        //the goal's cheapest maker
+        //what a thing costs to get: nothing once something of ours makes it (the map's places for it may all be taken by
+        //then: the bores on the thorium walls stand where the next bore would), else what its cheapest chain costs
+        float[] cost = chains.cost.clone();
+        for(Machine m : field.existing) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) cost[k] = 0f;
+        StringBuilder why = new StringBuilder(goal);
+        climbed = "";
+        if(climbMaker(g.id, cost) == null){
+            climbed = goal + ": nothing here makes it (" + unmade(g.id, cost) + ")";
+            return null;
+        }
+        //down from the goal: to what its maker lacks, to what that one's maker lacks, and so on, to the first thing whose
+        //maker lacks nothing (a player wanting carbide first gets oxide, then thorium, then carbide)
+        boolean[] seen = new boolean[cat.size()];
+        int at = g.id;
+        for(int step = 0; step < 8; step++){
+            seen[at] = true;
+            Recipe maker = climbMaker(at, cost);
+            int k = maker == null ? -1 : lacking(maker, cost, me.core(), seen);
+            if(k < 0) break;
+            Item item = Vars.content.item(cat.get(k).name);
+            why.append(" <- ").append(maker.name).append(" lacks ").append(cat.get(k).name).append(" (the core has ").append(item == null || me.core() == null ? 0 : me.core().items.get(item)).append(')');
+            if(Float.isInfinite(cost[k])){
+                climbed = why + ", which can't be made here (" + unmade(k, cost) + ")";
+                return null;
+            }
+            at = k;
+        }
+        climbed = why.toString();
+        return at == g.id ? goal : cat.get(at).name + ":0.3";
+    }
+
+    /** (for the log) the way down from the goal that the last {@link #next} took. */
+    public String climbed = "";
+
+    /** (for the log) why nothing makes this: each maker there is, with what it takes that can't be had. */
+    String unmade(int id, float[] cost){
+        StringBuilder s = new StringBuilder();
+        for(Recipe r : cat.recipes){
+            if(r.unitOut != id && (r.unitOut >= 0 || !r.makes(id))) continue;
+            StringBuilder no = new StringBuilder();
+            for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f && Float.isInfinite(cost[k])) no.append(no.length() == 0 ? "" : ", ").append(cat.get(k).name);
+            if(r.ground != Recipe.Ground.none && r.makes(id)){
+                boolean place = false;
+                for(Field.Site site : field.sites) if(site.ground == r.ground && site.item == id) place = true;
+                if(!place) no.append(no.length() == 0 ? "" : ", ").append("no free place on ").append(r.ground);
+            }
+            s.append(s.length() == 0 ? "" : "; ").append(r.name).append(no.length() == 0 ? "" : " wants " + no);
+        }
+        return s.length() == 0 ? "no maker in the catalog" : s.toString();
+    }
+
+    /**
+     * The cheapest maker of a thing for climbing: what is built and what it takes, counted at the map's cheapest. For an
+     * item, one that isn't built of the item itself when there is one (the eruption drill digs thorium and costs thorium).
+     */
+    Recipe climbMaker(int id, float[] cost){
         Recipe maker = null;
         float best = Float.POSITIVE_INFINITY;
+        boolean bestSelf = true;
         for(Recipe r : cat.recipes){
-            if(r.unitOut != g.id && (r.unitOut >= 0 || r.out[g.id] <= 0f)) continue;
+            if(r.unitOut != id && (r.unitOut >= 0 || !r.makes(id))) continue;
             float c = r.totalCost();
-            for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f) c += r.in[k] * chains.cost[k];
-            if(c < best){
+            for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f) c += r.in[k] * cost[k];
+            if(Float.isNaN(c) || Float.isInfinite(c)) continue;
+            boolean self = r.cost[id] > 0;
+            if(maker == null || bestSelf && !self || self == bestSelf && c < best){
                 best = c;
                 maker = r;
+                bestSelf = self;
             }
         }
-        if(maker == null) return null;
-        CoreBlock.CoreBuild core = me.core();
-        String next = null;
+        return maker;
+    }
+
+    /**
+     * Of the items a maker is built of and takes, the cheapest to make that nothing of ours makes, the core doesn't hold
+     * enough of and the core unit can't dig; -1 for none. One that can't be made here at all comes first (the goal is out
+     * of reach then). Liquids are left to the plan that leads them.
+     */
+    int lacking(Recipe maker, float[] cost, CoreBlock.CoreBuild core, boolean[] seen){
+        int next = -1;
         float nextCost = Float.POSITIVE_INFINITY;
         for(int k = 0; k < cat.size(); k++){
             Res r = cat.get(k);
-            if(r.kind != Res.Kind.item || k == g.id) continue;
-            boolean wanted = maker.cost[k] > 0 || maker.in[k] > 0f;
-            if(!wanted) continue;
-            boolean flowing = false;
-            for(Machine m : field.existing) if(m.out(k) > 1e-4f) flowing = true;
+            if(r.kind != Res.Kind.item || seen[k] || maker.cost[k] <= 0 && maker.in[k] <= 0f) continue;
             Item item = Vars.content.item(r.name);
-            boolean held = item != null && core.items.get(item) >= Math.max(maker.cost[k], 1) && maker.in[k] <= 0f;
-            if(flowing || held || field.handRate(cat, k) > 0f) continue;
-            if(Float.isInfinite(chains.cost[k])) continue;
-            if(chains.cost[k] < nextCost){
-                nextCost = chains.cost[k];
-                next = r.name;
+            boolean held = item != null && core != null && core.items.get(item) >= Math.max(maker.cost[k], 1) && maker.in[k] <= 0f;
+            if(cost[k] <= 0f || held || field.handRate(cat, k) > 0f) continue;
+            if(Float.isInfinite(cost[k])) return k;
+            if(cost[k] < nextCost){
+                nextCost = cost[k];
+                next = k;
             }
         }
-        return next == null ? goal : next + ":0.3";
+        return next;
     }
 
     /** (debug, -Dxp.order) the model's order: each machine, when begun and done, what it costs, and what the core held at the end. */

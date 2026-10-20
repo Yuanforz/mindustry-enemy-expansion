@@ -25,6 +25,16 @@ public class PlanAt{
         Set<String> allowed = new HashSet<>(blocks);
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/modules"));
         Took.report();
+        //"climb:titan": only the next step of the climb there (Plan.next), and the way down from the goal it took
+        if(args[2].startsWith("climb:")){
+            for(String goal : args[2].substring(6).split(",")){
+                Plan probe = new Plan(System.out);
+                probe.gate = true;
+                String aim = probe.next(us, blocks, allowed, library, goal);
+                System.out.println("CLIMB " + goal + ": next " + aim + " (" + probe.climbed + ")");
+            }
+            System.exit(0);
+        }
         long t0 = System.nanoTime();
         Plan plan = new Plan(System.out).make(us, blocks, allowed, library, args[2], Float.parseFloat(args[3]), null);
         System.out.println(String.format("PLANAT %s %s %s: %s in %.1f s", new Fi(args[1]).nameWithoutExtension(), args[2], args[3],
