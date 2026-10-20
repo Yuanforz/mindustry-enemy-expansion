@@ -620,6 +620,8 @@ public final class Planner{
     }
 
     static int compare(float[] a, float[] b){
+        //(an order not scored, as the beam's start when nothing is left to place, is the worst)
+        if(a == null || b == null) return a == b ? 0 : a == null ? 1 : -1;
         int c = Double.compare(seconds(a[0]), seconds(b[0]));
         if(c != 0) return c;
         c = Double.compare(seconds(a[1]), seconds(b[1]));

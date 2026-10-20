@@ -1,0 +1,11 @@
+post-afflict  afflict heated by 7 electric heaters (21 heat of 20)
+  5       e.e.e.e.    
+  4   n.  eve.eve.n.  
+  3   e.e.?.?.?.?.    
+  2 n.e>e.?.?.?.?.n.  
+  1   e.e.?.?.?.?.e.e.
+  0   e>e.?>?.?.?.e<e.
+ -1       e.e.e.e.    
+ -2 n.n.  e^e.e^e.n.  
+ -3 n.        n.      
+    e=electric-heater  n=beam-node  ?=afflict  

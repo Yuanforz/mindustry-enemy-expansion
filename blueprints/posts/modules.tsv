@@ -1,0 +1,5 @@
+id	file	name	size	blocks	cost	power	inputs	outputs	units_per_min	machines	stable	power_made	grids	source
+post-titan	post-titan.msch	post-titan	5x4	1	silicon 300 thorium 400 tungsten 250	0	thorium@0,1:0=0.521;hydrogen@0,2:0=5		titan=60	titan x1	settled	0	0	generated: titan with thorium from behind and hydrogen beside it
+post-scathe	post-scathe.msch	post-scathe	5x4	1	carbide 200 graphite 400 oxide 100 silicon 450 tungsten 500	0	carbide@0,1:0=0.45		scathe=60	scathe x1	settled	0	0	generated: scathe with carbide from behind
+post-afflict	post-afflict.msch	post-afflict	9x9	17	beryllium 282 graphite 250 oxide 250 silicon 200 surge-alloy 100 tungsten 210	1000			afflict=60	afflict x1	settled	0	1	generated: afflict heated by 7 electric heaters (21 heat of 20)
+post-malign	post-malign.msch	post-malign	17x13	42	beryllium 1438 carbide 530 graphite 530 oxide 330 phase-fabric 200 silicon 500 tungsten 30	2400	phase-fabric@2,7:3=0.375;phase-fabric@11,10:2=0.375;phase-fabric@14,1:1=0.375;phase-fabric@8,0:1=0.25		malign=60	malign x1	settled	0	1	generated: malign heated by 3 banks of 3 phase heaters through heat redirectors and 2 phase heaters straight on (165 heat of 144)

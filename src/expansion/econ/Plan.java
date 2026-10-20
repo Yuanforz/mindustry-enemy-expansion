@@ -57,7 +57,8 @@ public final class Plan{
         List<Design> library = new ArrayList<>();
         for(String dir : dirs.split(",")){
             Fi d = new Fi(dir);
-            if(d.exists()) library.addAll(Design.load(d, dir.endsWith("own") ? "" : "c-"));
+            //(the community designs, blueprints/modules, here only where kept locally, have their ids marked apart)
+            if(d.exists()) library.addAll(Design.load(d, dir.endsWith("modules") ? "c-" : ""));
         }
         return library;
     }
