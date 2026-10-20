@@ -57,8 +57,20 @@ public final class Muster{
     /** How many minutes the cap should take to fill, at most, by the makers asked for. */
     public static float refill = Float.parseFloat(System.getProperty("army.refill", "3"));
     public static int maxMakers = Integer.getInteger("army.makers", 4);
+    /** How many makers of a kind a stage adds at most. */
+    public static int growth = Integer.getInteger("army.growth", 2);
     /** How far ahead the strength an aim brings is weighed, in seconds. */
     public static float horizon = Float.parseFloat(System.getProperty("army.horizon", "480"));
+
+    /** How many of the side's standing blocks make this kind (fabricators, or refabricators that turn it out). */
+    static int makersOf(Team team, UnitType type){
+        int n = 0;
+        for(Building b : team.data().buildings){
+            if(b.block instanceof UnitFactory f && f.plans.contains(p -> p.unit == type)) n++;
+            else if(b.block instanceof Reconstructor r && r.upgrades.contains(u -> u[1] == type)) n++;
+        }
+        return n;
+    }
 
     /**
      * The kinds to make, best first: of what these blocks make (fabricators and refabricators), what reaches the foe's cores
@@ -83,8 +95,12 @@ public final class Muster{
             UnitType type = e.getKey();
             if(!type.canAttack || type.dpsEstimate <= 0f) continue;
             float strength = type.dpsEstimate * type.health * (1f + type.armor / 20f);
-            //makers: enough to fill the room under the cap in the refill time
-            int makers = Math.max(1, Math.min(maxMakers, (int)Math.ceil(room * e.getValue() / (refill * 60f))));
+            //makers: enough to fill the room under the cap in the refill time, but no more than two more than stand already
+            //(a plan of four fabricators and all that feeds them from a bare base is paid for slowly, and the first unit with
+            //it: two, then more once those run, as a player grows a base)
+            int standing = makersOf(team, type);
+            int needed = Math.max(1, Math.min(maxMakers, (int)Math.ceil(room * e.getValue() / (refill * 60f))));
+            int makers = Math.max(1, Math.min(needed, standing + growth));
             out.add(new Aim(type, makers, strength, Reach.toFoe(type, team, foe), e.getValue(), room));
         }
         boolean any = out.stream().anyMatch(a -> a.reaches);
