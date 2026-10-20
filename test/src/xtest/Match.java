@@ -87,7 +87,9 @@ public class Match{
         boolean campaign = mode.equals("campaign");
         boolean brainSide = campaign && System.getProperty("match.us", "").equals("brain");
         if(campaign){
-            Core.settings.put("expansion-strongest", false);
+            //the Brain in our place as xtest.Campaign has it play the campaign: at its strongest, from the first second
+            Core.settings.put("expansion-strongest", brainSide);
+            if(brainSide) Core.settings.put("expansion-grace", 0);
             if(!brainSide) Core.settings.put("expansion-enabled", false);
         }
 
