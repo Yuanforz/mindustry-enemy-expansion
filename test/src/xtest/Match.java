@@ -122,6 +122,9 @@ public class Match{
         }
         Boot.frames(1);
 
+        if(Boolean.getBoolean("match.brainunits")) Events.on(UnitCreateEvent.class, e -> {
+            if(e.unit.team == them) System.out.println(String.format("    the Brain's %s made at %s by %s; its factories active %b (delay %.0f s)", e.unit.type.name, Plan.time((float)(Vars.state.tick / 60.0)), e.spawner == null ? "-" : e.spawner.block.name, them.activateUnitFactories(), Vars.state.rules.unitActivationDelay(them) / 60f));
+        });
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == us) made.increment("us " + e.unit.type.name);
             if(e.unit.team == them) made.increment("them " + e.unit.type.name);
@@ -147,6 +150,17 @@ public class Match{
         });
 
         System.out.println(String.format("MATCH %s (%s): we have %d core(s), %d blocks; the Brain %d core(s), %d blocks", map.nameWithoutExtension(), mode, us.cores().size, us.data().buildings.size, them.cores().size, them.data().buildings.size));
+        {
+            StringBuilder st = new StringBuilder("  at the start: our core " + us.core().block.name + " at " + us.core().tileX() + "," + us.core().tileY() + " holds");
+            for(Item item : Vars.content.items()) if(us.core().items.get(item) > 0) st.append(" ").append(item.name).append("=").append(us.core().items.get(item));
+            ObjectIntMap<String> ourGuns = new ObjectIntMap<>(), theirGuns = new ObjectIntMap<>();
+            for(Building b : us.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret || b.block instanceof mindustry.world.blocks.units.UnitFactory) ourGuns.increment(b.block.name);
+            for(Building b : them.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret || b.block instanceof mindustry.world.blocks.units.UnitFactory || b.block instanceof mindustry.world.blocks.units.Reconstructor) theirGuns.increment(b.block.name);
+            float near = Float.MAX_VALUE;
+            for(CoreBlock.CoreBuild c : them.cores()) near = Math.min(near, c.dst(us.core()) / Vars.tilesize);
+            st.append("; our turrets and yards ").append(ourGuns).append("; the Brain's ").append(theirGuns).append(String.format("; its nearest core %.0f tiles off", near));
+            System.out.println(st);
+        }
 
         //our stages
         List<String> blocks = new ArrayList<>(Plan.erekir());
@@ -154,6 +168,16 @@ public class Match{
         Set<String> allowed = new HashSet<>(blocks);
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/modules"));
         String[] stages = System.getProperty("match.stages", "stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
+        //the other side has yards from the start (a base that came with the map) whose units can get to us: a defence first,
+        //before the economy, as a player sets the first breaches down before the first fabricator (-Dmatch.early=false: not)
+        String early = earlyThreat(us, them);
+        if(early != null && System.getProperty("match.early", "true").equals("true") && !stages[0].startsWith("defend")){
+            String[] more = new String[stages.length + 1];
+            more[0] = "defend";
+            System.arraycopy(stages, 0, more, 1, stages.length);
+            stages = more;
+            System.out.println("  a defence first: " + early);
+        }
         //a stage not all up after this long is left as it is, and the next begun
         float stageLimit = Float.parseFloat(System.getProperty("match.stagemin", "6")) * 3600f;
         String sector = expansion.defense.Tech.known(map.nameWithoutExtension()) ? map.nameWithoutExtension() : "atlas";
@@ -207,7 +231,9 @@ public class Match{
                     p.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
                     try{
                         if(st[0].equals("defend")){
-                            expansion.defense.Planner.Plan dp = defence(sector, f / 60f, p.label);
+                            expansion.defense.Planner.Plan dp = defence(us, them, sector, f / 60f, p.label);
+                            p.income = income(us, f);
+                            p.gateDepth = 2;
                             plan = p.defend(us, blocks, allowed, dp, feedable);
                         }else{
                             plan = p.make(us, blocks, allowed, library, st[0], Float.parseFloat(st[1]), null);
@@ -323,10 +349,10 @@ public class Match{
      * units it fields now and those it can make by this time of the game (from its yards' blueprints: stell, merui and
      * elude, then their refits), our tech of the sector, and what the economy can feed turrets with.
      */
-    static expansion.defense.Planner.Plan defence(String sector, float seconds, String label){
+    static expansion.defense.Planner.Plan defence(Team me, Team foe, String sector, float seconds, String label){
         expansion.defense.Planner.Ask ask = new expansion.defense.Planner.Ask();
-        CoreBlock.CoreBuild core = us.core();
-        ask.terrain = expansion.defense.GameData.terrain(us);
+        CoreBlock.CoreBuild core = me.core();
+        ask.terrain = expansion.defense.GameData.terrain(me);
         ask.coreX = core.tileX();
         ask.coreY = core.tileY();
         ask.coreSize = core.block.size;
@@ -335,18 +361,22 @@ public class Match{
         //what turrets can be fed with: what the sector's tech gives that our base makes already, or that a drill on the
         //ground digs with nothing put into it (a plasma bore's beryllium and graphite): a defence that waits on a new
         //chain of crafters is not up when it is wanted
-        Catalog cat = Recipes.read(new ArrayList<>(Plan.erekir()), (CoreBlock)core.block, Vars.state.rules.buildSpeed(us));
-        Field field = Sites.scan(cat, us, Integer.getInteger("xp.radius", 110));
+        Catalog cat = Recipes.read(new ArrayList<>(Plan.erekir()), (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+        Field field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
         Chains chains = new Chains(cat, field);
         Set<String> made = new HashSet<>();
         for(Machine m : field.existing) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) made.add(cat.get(k).name);
+        //(a drill that takes power counts: the defence's plan lays the power too, a turbine on a vent; at the landing nothing
+        //at all is made yet, and a defence that only counted what stands could fire nothing)
         for(int k = 0; k < cat.size(); k++){
             Recipe by = chains.by[k];
             if(by == null || by.ground == Recipe.Ground.none || Float.isInfinite(chains.cost[k])) continue;
             boolean bare = true;
             for(float v : by.in) if(v > 0f) bare = false;
-            if(bare && by.powerUse <= 0f && cat.get(k).kind == Res.Kind.item) made.add(cat.get(k).name);
+            if(bare && cat.get(k).kind == Res.Kind.item) made.add(cat.get(k).name);
         }
+        //what can be had here at all (held, dug, or made by what can be paid for): what a block may be built of
+        boolean[] had = Plan.obtainable(cat, field, core);
         for(String what : expansion.defense.Tech.supply(sector)) if(made.contains(what)) ask.supply.add(what);
         feedable.clear();
         feedable.addAll(ask.supply);
@@ -354,8 +384,8 @@ public class Match{
         ask.blocks.removeIf(name -> {
             Block b = Vars.content.block(name);
             if(b == null || name.endsWith("-source")) return false;
-            for(ItemStack stack : b.requirements) if(core.items.get(stack.item) < stack.amount && !made.contains(stack.item.name)) return true;
-            return false;
+            //(the defence's plan brings in what it lacks: makers of it for the core, built first)
+            return !Plan.payable(cat, b, core, had);
         });
         ask.costs = expansion.defense.GameData.costs();
         //no more than the core holds and what comes in over the next minutes (-Dmatch.defbudget: how many minutes; the
@@ -378,23 +408,23 @@ public class Match{
         float minute = seconds / 60f;
         int early = Math.max(4, Math.min(10, 3 + (int)(minute / 2))), later = Math.min(6, 2 + (int)(minute / 4));
         Set<String> kinds = new TreeSet<>();
-        for(Building b : them.data().buildings){
+        for(Building b : foe.data().buildings){
             if(b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0){
                 kinds.add(((mindustry.world.blocks.units.UnitFactory)yard.block).plans.get(yard.currentPlan).unit.name);
             }
             if(b.block instanceof mindustry.world.blocks.units.Reconstructor re) for(var up : re.upgrades) kinds.add(up[1].name);
         }
-        for(Unit u : them.data().units) if(!u.spawnedByCore) kinds.add(u.type.name);
+        for(Unit u : foe.data().units) if(!u.spawnedByCore) kinds.add(u.type.name);
         if(kinds.isEmpty()) kinds.addAll(List.of("stell", "merui", "elude"));
         for(String k : kinds){
-            var foe = expansion.defense.Foe.get(k);
-            if(foe != null) units.put(k, foe.tier <= 1 ? early : later);
+            var kind = expansion.defense.Foe.get(k);
+            if(kind != null) units.put(k, kind.tier <= 1 ? early : later);
         }
         ObjectIntMap<String> now = new ObjectIntMap<>();
-        for(Unit u : them.data().units) if(!u.spawnedByCore) now.increment(u.type.name);
+        for(Unit u : foe.data().units) if(!u.spawnedByCore) now.increment(u.type.name);
         for(var e : now) if(expansion.defense.Foe.get(e.key) != null) units.merge(e.key, (int)Math.ceil(e.value * 1.5f), Math::max);
         ask.units.putAll(units);
-        for(CoreBlock.CoreBuild c : them.cores()){
+        for(CoreBlock.CoreBuild c : foe.cores()){
             expansion.defense.Planner.Source ground = new expansion.defense.Planner.Source(c.tileX(), c.tileY(), "Brain core " + c.tileX() + "," + c.tileY());
             for(var e : units.entrySet()){
                 ground.units.put(e.getKey(), e.getValue());
@@ -408,6 +438,33 @@ public class Match{
         System.out.println(String.format("######## %sthe defence planner (tech of %s, fed with %s, budget %s) against %s: %d placements in %.0f ms", label, sector, ask.supply, ask.budget, units, plan.placements.size(), (System.nanoTime() - t0) / 1e6));
         System.out.print(plan.describe());
         return plan;
+    }
+
+    /**
+     * Whether a side is under threat from the start: the other side's yards that stand already and make units that can get to
+     * it, in words; null if none.
+     */
+    static String earlyThreat(Team me, Team foe){
+        ObjectIntMap<String> yards = new ObjectIntMap<>();
+        for(Building b : foe.data().buildings){
+            mindustry.type.UnitType made = null;
+            if(b.block instanceof mindustry.world.blocks.units.UnitFactory uf && !uf.plans.isEmpty()) made = uf.plans.first().unit;
+            else if(b.block instanceof mindustry.world.blocks.units.Reconstructor re && re.upgrades.size > 0) made = re.upgrades.first()[1];
+            if(made == null || !expansion.army.Reach.toFoe(made, foe, me)) continue;
+            yards.increment(b.block.name);
+        }
+        return yards.isEmpty() ? null : "the other side has " + yards + " standing";
+    }
+
+    /** What a side's core gained a second over the last whole minute, by item (nothing before the first minute is out). */
+    static Map<String, Float> income(Team team, int frame){
+        Map<String, Float> out = new HashMap<>();
+        if(team.core() == null || frame < 3600) return out;
+        for(Item item : Vars.content.items()){
+            int have = team.core().items.get(item), before = lastMinute.get(item.name, have);
+            if(have > before) out.put(item.name, (have - before) / 60f);
+        }
+        return out;
     }
 
     /** Whether what makes the stage's units is up (true for a stage that makes none). */

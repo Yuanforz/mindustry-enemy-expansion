@@ -38,6 +38,12 @@ public final class Plan{
      * with each sector's tech.)
      */
     public boolean gate;
+    /**
+     * How many steps from what is held or dug the gate lets materials be made in. A defence that is wanted soon is built of
+     * what is held, dug, or made straight from that (2), not of what a long chain of crafters would make some time; an
+     * economy that has time may go further.
+     */
+    public int gateDepth = Integer.MAX_VALUE;
     /** Put before the plan's heading line (a map's name, say). */
     public String label = "";
 
@@ -298,6 +304,26 @@ public final class Plan{
      */
     List<String> gated(List<String> blocks, Team me){
         CoreBlock.CoreBuild core = me.core();
+        boolean[] had = obtainable(cat, field, core, gateDepth);
+        List<String> kept = new ArrayList<>();
+        for(String name : blocks){
+            Block b = Vars.content.block(name);
+            if(b == null || b instanceof CoreBlock || payable(cat, b, core, had)) kept.add(name);
+        }
+        return kept;
+    }
+
+    /**
+     * What can be had here, by catalog id: what the core holds, what the core unit digs, and what a machine that can itself be
+     * paid for makes here out of what can be had (round till nothing more comes in). The same for any side: what it holds,
+     * the places its ground gives, what it can build.
+     */
+    public static boolean[] obtainable(Catalog cat, Field field, CoreBlock.CoreBuild core){
+        return obtainable(cat, field, core, Integer.MAX_VALUE);
+    }
+
+    /** The same, but only what is made within so many steps of what is held or dug (rounds of the closure). */
+    public static boolean[] obtainable(Catalog cat, Field field, CoreBlock.CoreBuild core, int depth){
         boolean[] had = new boolean[cat.size()];
         for(int k = 0; k < cat.size(); k++){
             Res r = cat.get(k);
@@ -314,14 +340,16 @@ public final class Plan{
             if(st.ground == Recipe.Ground.vent) vents = true;
             if(st.item >= 0 && st.block != null) placed.computeIfAbsent(st.block, x -> new HashSet<>()).add(st.item);
         }
-        for(boolean more = true; more; ){
-            more = false;
+        for(int round = 0; round < depth; round++){
+            boolean more = false;
+            boolean[] before = had.clone();
             for(Recipe r : cat.recipes){
                 if(r.makesUnits() || r.block == null) continue;
                 Block b = Vars.content.block(r.block);
-                if(b == null || !payable(b, core, had)) continue;
+                //(what this round can use is what the rounds before had: one step a round)
+                if(b == null || !payable(cat, b, core, before)) continue;
                 boolean fed = true;
-                for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f && !had[k]) fed = false;
+                for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f && !before[k]) fed = false;
                 if(!fed) continue;
                 if(r.ground == Recipe.Ground.vent && !vents) continue;
                 for(int k = 0; k < cat.size(); k++){
@@ -333,16 +361,13 @@ public final class Plan{
                     }
                 }
             }
+            if(!more) break;
         }
-        List<String> kept = new ArrayList<>();
-        for(String name : blocks){
-            Block b = Vars.content.block(name);
-            if(b == null || b instanceof CoreBlock || payable(b, core, had)) kept.add(name);
-        }
-        return kept;
+        return had;
     }
 
-    boolean payable(Block b, CoreBlock.CoreBuild core, boolean[] had){
+    /** Whether a block can be paid for: every material held in the core in full, or one that can be had here. */
+    public static boolean payable(Catalog cat, Block b, CoreBlock.CoreBuild core, boolean[] had){
         for(mindustry.type.ItemStack stack : b.requirements){
             int k = cat.id(stack.item.name);
             if((k < 0 || !had[k]) && core.items.get(stack.item) < stack.amount) return false;
@@ -401,6 +426,11 @@ public final class Plan{
                 }
             }
         }
+        //what the defence costs to put up and the core will not have soon (what it holds and what comes in over the next
+        //minute and a half): makers of that sending to the core, built first. (The opening economy is the least that makes
+        //its units, and its factories eat what comes; on aegis the breaches waited six minutes on beryllium while the core
+        //never held more than a hundred.)
+        payItself(plant, me.core());
         plant = planner.balanceRest(plant);
         if(!planner.notes.toString().isEmpty()) out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
         long l0 = System.nanoTime();
@@ -455,13 +485,77 @@ public final class Plan{
         List<Machine> rest = new ArrayList<>();
         for(Machine m : plant) if(!guard.contains(m) && !fed.contains(m)) rest.add(m);
         List<Machine> order = new ArrayList<>();
+        //a defence that pays for itself: its makers for the core, and what feeds them, first (it is paid for out of them)
+        boolean paying = false;
+        for(Machine m : payers) if(rest.contains(m)) paying = true;
+        if(paying) order.addAll(planner.plainOrder(rest));
         for(Machine g : guard){
             for(Machine m : feeders.getOrDefault(g, List.of())) if(plant.contains(m)) order.add(m);
             order.add(g);
         }
         //(what the balance added besides, power say, after: a module that needs it waits for it, the others fire)
-        order.addAll(planner.plainOrder(rest));
+        if(!paying) order.addAll(planner.plainOrder(rest));
         return order;
+    }
+
+    /** What the side brings into its core a second, by item name, as last seen (for a defence that is to pay for itself). */
+    public Map<String, Float> income;
+    /** How soon a defence is to be paid for: what the core will not have by then gets makers of its own. */
+    public static float payWithin = Float.parseFloat(System.getProperty("xp.paywithin", "150"));
+    /** Makers sending to the core added for a defence's cost, for the report. */
+    public final List<Machine> payers = new ArrayList<>();
+
+    void payItself(List<Machine> plant, CoreBlock.CoreBuild core){
+        int[] cost = new int[cat.size()];
+        for(Machine m : plant) for(int k = 0; k < Math.min(cost.length, m.cost.length); k++) cost[k] += m.cost[k];
+        for(int k = 0; k < cat.size(); k++){
+            if(cost[k] <= 0 || cat.get(k).kind != Res.Kind.item) continue;
+            Item item = Vars.content.item(cat.get(k).name);
+            if(item == null) continue;
+            float coming = core.items.get(item) + (income == null ? 0f : income.getOrDefault(item.name, 0f)) * payWithin;
+            float shortBy = cost[k] - coming;
+            if(shortBy <= 0f) continue;
+            float wanted = shortBy / payWithin, got = 0f;
+            int added = 0;
+            for(int n = 0; n < 6 && got < wanted; n++){
+                //a drill where it is dug (the planner's own choice of place), else the smallest crafter of it
+                Machine m = bareMaker(k, field.coreX, field.coreY);
+                boolean dug = planner.chains != null && planner.chains.by[k] != null && planner.chains.by[k].ground != Recipe.Ground.none;
+                if(m == null && dug && Boolean.getBoolean("xp.paybyplanner")) m = planner.maker(k, wanted - got, false);
+                if(m == null) m = cheapestCrafter(k);
+                if(m == null || m.out(k) <= 1e-4f){
+                    if(Boolean.getBoolean("xp.paylog")){
+                        out.println("    (no maker of " + item.name + ": " + (m == null ? "none found" : m.recipe.name + " gives " + m.out(k)) + "; free places " + planner.free.size() + ")");
+                        for(Recipe r : cat.recipes) if(r.ground != Recipe.Ground.none && (r.out[k] > 0f || r.perFactor[k] > 0f)){
+                            StringBuilder ins = new StringBuilder();
+                            for(int q = 0; q < cat.size(); q++) if(r.in[q] > 0f) ins.append(cat.get(q).name).append(" ");
+                            int fits = 0, items = 0;
+                            for(Field.Site st : planner.free) if(st.ground == r.ground){ if(st.item == k) items++; if(st.item == k && st.fits(r)) fits++; }
+                            out.println("      " + r.name + " (" + r.block + ") takes [" + ins.toString().trim() + "]; free places of it " + items + ", fitting " + fits);
+                        }
+                    }
+                    break;
+                }
+                plant.add(m);
+                payers.add(m);
+                got += m.out(k);
+                added++;
+            }
+            out.println(String.format("  defence: %s short by %.0f (the core holds %d): %d makers of it for the core, %.2f/s", item.name, shortBy, core.items.get(item), added, got));
+        }
+    }
+
+    /**
+     * The crafter that makes this for the least to build (what feeds it the balance adds): a defence pays for itself with the
+     * smallest thing that will do, not the one that makes it cheapest a second, which is a whole module.
+     */
+    Machine cheapestCrafter(int res){
+        Recipe best = null;
+        for(Recipe r : cat.recipes){
+            if(r.ground != Recipe.Ground.none || r.makesUnits() || r.out[res] <= 0f || r.module != null) continue;
+            if(best == null || r.totalCost() < best.totalCost()) best = r;
+        }
+        return best == null ? null : planner.machine(best, null);
     }
 
     /** A drill on the free place nearest a spot that digs this with nothing put into it; taken. Null if none. */
@@ -475,7 +569,7 @@ public final class Plan{
             for(float v : r.in) if(v > 0f) bare = false;
             if(!bare) continue;
             for(Field.Site s : planner.free){
-                if(s.ground != r.ground || (r.perFactor[res] > 0f && s.item != res)) continue;
+                if(s.ground != r.ground || !s.fits(r) || (r.perFactor[res] > 0f && s.item != res)) continue;
                 double rate = r.perFactor[res] > 0f ? r.perFactor[res] * s.factor : r.out[res];
                 if(rate <= 1e-4f) continue;
                 //near, and giving much
