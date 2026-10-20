@@ -227,6 +227,9 @@ public class Match{
                     }
                     Plan p = new Plan(System.out);
                     p.gate = !Boolean.getBoolean("match.allblocks");
+                    //raided lately: what may stand anywhere goes where our turrets reach
+                    //(or able to be: the other side has yards that make units)
+                    if((raids.raided() || makesUnits(them)) && !"false".equals(System.getProperty("match.cover"))) p.cover = raids.cover();
                     p.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
                     try{
                         if(st[0].equals("defend")){
@@ -295,14 +298,31 @@ public class Match{
                             List<expansion.defense.Planner.Plan> ways = expansion.defense.Guard.plans(ask, raid, c.tileX(), c.tileY(), (block, x, y, rot) -> freeFor(now, block, x, y, rot), raids.feed(), 4, notes);
                             if(ways.isEmpty()) System.out.print("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + notes);
                             //the first way whose supply can be laid (a turret standing dry is so many items for nothing)
+                            int stake = raids.atStake(raid.x, raid.y);
                             for(expansion.defense.Planner.Plan dp : ways){
+                                //(what its own blocks cost, before anything is laid out: dearer than what it guards, not tried)
+                                int least = 0;
+                                for(expansion.defense.Placement pl : dp.placements){
+                                    Block pb = Vars.content.block(pl.block);
+                                    if(pb != null && pl.kind != expansion.defense.Placement.Kind.port) for(ItemStack st : pb.requirements) least += st.amount;
+                                }
+                                if(least > stake){
+                                    System.out.println("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + dp.notes.get(0) + String.format(" (costs at least %d, guards %d: not worth it)", least, stake));
+                                    continue;
+                                }
                                 Plan tryPlan = new Plan(System.out);
                                 tryPlan.gate = gp.gate;
                                 tryPlan.label = gp.label;
                                 Plan got = tryPlan.defend(us, blocks, allowed, dp, feedable);
                                 boolean fed = got != null && got.works != null;
                                 if(fed) for(Object[] u : got.works.unfed()) if(expansion.econ.Defence.is((Machine)u[1])) fed = false;
-                                System.out.println("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + dp.notes.get(0) + (fed ? "" : ": its supply can't be laid"));
+                                //no dearer than what it guards
+                                int cost = 0;
+                                if(got != null && got.model != null) for(Machine m : got.model.order) for(int v : m.cost) cost += v;
+                                boolean worth = cost <= stake;
+                                System.out.println("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + dp.notes.get(0) + (fed ? "" : ": its supply can't be laid")
+                                    + String.format(" (costs %d, guards %d%s)", cost, stake, worth ? "" : ": not worth it"));
+                                fed &= worth;
                                 if(fed){
                                     made = got;
                                     guards++;
@@ -522,6 +542,12 @@ public class Match{
             if(hand.works.grid != null && hand.works.grid.block(x + off + dx, y + off + dy) != null && Vars.world.tile(x + off + dx, y + off + dy).build == null) return false;
         }
         return true;
+    }
+
+    /** Whether a side has anything standing that makes units. */
+    static boolean makesUnits(Team team){
+        for(Building b : team.data().buildings) if(b.block instanceof mindustry.world.blocks.units.UnitFactory || b.block instanceof mindustry.world.blocks.units.Reconstructor || b.block instanceof mindustry.world.blocks.units.UnitAssembler) return true;
+        return false;
     }
 
     /** Whether what makes the stage's units is up (true for a stage that makes none). */

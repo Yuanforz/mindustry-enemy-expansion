@@ -174,6 +174,56 @@ public final class Raids{
         };
     }
 
+    /** Whether the side has been raided at all lately (some loss put down to a raider in the last window). */
+    public boolean raided(){
+        float t = now();
+        for(Loss l : losses) if(t - l.at <= window) return true;
+        return false;
+    }
+
+    /** The kinds that raided lately: whether any of them flies. */
+    public boolean airRaids(){
+        for(Loss l : losses) if(l.air) return true;
+        return false;
+    }
+
+    /**
+     * Where the side's loaded turrets that can hit what raided lately reach, by tile (x + y * width), a few tiles short of
+     * their full reach (what stands at the very edge is shot at from outside it).
+     */
+    public boolean[] cover(){
+        int w = Vars.world.width(), h = Vars.world.height();
+        boolean[] out = new boolean[w * h];
+        boolean air = airRaids();
+        for(Building b : team.data().buildings){
+            if(!(b instanceof Turret.TurretBuild tb) || !(b.block instanceof Turret turret)) continue;
+            if(air ? !turret.targetAir : !turret.targetGround) continue;
+            if(!tb.hasAmmo()) continue;
+            int r = (int)(turret.range / Vars.tilesize) - 3;
+            for(int x = Math.max(0, b.tileX() - r); x <= Math.min(w - 1, b.tileX() + r); x++){
+                for(int y = Math.max(0, b.tileY() - r); y <= Math.min(h - 1, b.tileY() + r); y++){
+                    if((x - b.tileX()) * (x - b.tileX()) + (y - b.tileY()) * (y - b.tileY()) <= r * r) out[x + y * w] = true;
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * What is at stake at a raided place: what the side's buildings within it cost to build, and what was lost there
+     * lately. A guard dearer than that is not worth it (better to put the lost things back once the raider has gone).
+     */
+    public int atStake(float x, float y){
+        int worth = 0;
+        for(Building b : team.data().buildings){
+            if(Math.hypot(b.tileX() - x, b.tileY() - y) > near) continue;
+            for(mindustry.type.ItemStack stack : b.block.requirements) worth += stack.amount;
+        }
+        float t = now();
+        for(Loss l : losses) if(t - l.at <= window && Math.hypot(l.x - x, l.y - y) <= near) worth += l.worth;
+        return worth;
+    }
+
     /** A guard was planned for this place: left alone for a while. */
     public void guarding(float x, float y){
         guarded.add(new float[]{x, y, now() + guardFor});

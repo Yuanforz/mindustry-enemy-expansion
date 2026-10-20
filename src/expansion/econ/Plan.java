@@ -38,6 +38,11 @@ public final class Plan{
      * with each sector's tech.)
      */
     public boolean gate;
+    /**
+     * Where the side's own turrets reach (by tile, x + y * width), for a side that is being raided: machines that may stand
+     * anywhere (furnaces, factories) are put inside it where they can be. Null: anywhere.
+     */
+    public @arc.util.Nullable boolean[] cover;
     /** Put before the plan's heading line (a map's name, say). */
     public String label = "";
 
@@ -132,6 +137,7 @@ public final class Plan{
         long l0 = System.nanoTime();
         check("after the balance");
         works = new Layout(cat, field, me, allowed);
+        works.cover = cover;
         check("after a new layout");
         t0 = Took.start();
         works.prepare(model.order);
@@ -216,6 +222,7 @@ public final class Plan{
             planner.extras = 0;
             model = planner.order(more, unit);
             works = new Layout(cat, field, me, allowed);
+        works.cover = cover;
             works.noTap.addAll(noTap);
             t0 = Took.start();
             works.prepare(model.order);
@@ -407,6 +414,7 @@ public final class Plan{
         this.feeders = feeders;
         List<Machine> order = defenceOrder(plant, guard);
         works = new Layout(cat, field, me, allowed);
+        works.cover = cover;
         works.prepare(order);
         //takers no line could be laid to get makers of their own near them, and it is laid again
         for(int round = 0; round < 2; round++){
@@ -426,6 +434,7 @@ public final class Plan{
             if(more.size() == order.size()) break;
             order = defenceOrder(more, guard);
             works = new Layout(cat, field, me, allowed);
+        works.cover = cover;
             works.prepare(order);
         }
         layoutNanos = System.nanoTime() - l0;

@@ -44,6 +44,9 @@ final class Cells{
     /** How much more a net's lines count, for nets that could not be laid on a try before. */
     final Map<Integer, Float> stress = new HashMap<>();
     public int iterations = 40000;
+    /** Where the side's turrets reach; a machine placed outside it costs {@link #outside} (null: no such cost). */
+    @arc.util.Nullable boolean[] cover;
+    static float outside = 40f;
     public float radius = 55f;
     float best;
 
@@ -353,6 +356,11 @@ final class Cells{
             for(Machine m : u.ms){
                 if(!where.containsKey(m)) continue;
                 int[] r = rect(m);
+                //raided: what may stand anywhere stands where our turrets reach, where it can
+                if(cover != null){
+                    int mx = (r[0] + r[2]) / 2, my = (r[1] + r[3]) / 2;
+                    if(grid.in(mx, my) && !cover[mx + my * grid.w]) c += outside;
+                }
                 //a maker against something that would take what it gives and is not meant to
                 for(int k = 0; k < cat.size(); k++){
                     if(m.out(k) <= 1e-4f || cat.get(k).kind == Res.Kind.unit) continue;
