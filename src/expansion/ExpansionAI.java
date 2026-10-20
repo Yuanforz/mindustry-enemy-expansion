@@ -45,6 +45,12 @@ public class ExpansionAI extends BuilderAI{
      * mass drivers carry across water: the builder can lift a block of its size, and nothing else would put it there.
      */
     public @Nullable Building carry, carryTo;
+    /** Where to set down what it carries, when that is a place and not a building to lift it into. */
+    public @Nullable arc.math.geom.Vec2 carrySpot;
+    /** What ferry the box it carries goes for, if any. */
+    public @Nullable Object carryFerry;
+    /** How the last carrying went, for looking into it. */
+    public String carryHow = "";
     private float carryAge;
 
     /**
@@ -122,6 +128,7 @@ public class ExpansionAI extends BuilderAI{
         repair = null;
         if(carry != null && unit instanceof Payloadc pay && pay.hasPayload()) pay.dropLastPayload();
         carry = carryTo = null;
+        carrySpot = null;
         stopDigging();
     }
 
@@ -149,7 +156,11 @@ public class ExpansionAI extends BuilderAI{
         //going off to help another builder would abandon the job this one was given
         if(order != null || haul != null) following = null;
 
-        super.updateMovement();
+        //carrying a box to a place, it goes there and nowhere else: led off by building and by what it shies from, it went
+        //round and round the place and never set the box down (ninety-three of ninety-eight carries given up holding it)
+        //(but it still shies from what could hurt it)
+        boolean focused = carry != null && carrySpot != null && order == null && haul == null && System.getProperty("xp.loosecarry") == null && Brain.threat(unit.x, unit.y, fleeRange) == null;
+        if(!focused) super.updateMovement();
 
         travelling = false;
         if(rest > 0f){
@@ -178,10 +189,57 @@ public class ExpansionAI extends BuilderAI{
     private void updateCarry(){
         Payloadc pay = unit instanceof Payloadc p ? p : null;
         boolean holding = pay != null && pay.hasPayload();
-        if(pay == null || carryTo == null || !carryTo.isValid() || (carryAge += Time.delta) > haulPatience * 2f || (!holding && (carry == null || !carry.isValid()))){
+        boolean nowhere = carrySpot == null && (carryTo == null || !carryTo.isValid());
+        if(pay == null || nowhere || (carryAge += Time.delta) > haulPatience * 2f || (!holding && (carry == null || !carry.isValid()))){
+            carryHow = "given up: " + (pay == null ? "can't carry" : nowhere ? "nowhere to take it" : carryAge > haulPatience * 2f ? "out of time, " + (holding ? "holding it" : "not holding it")
+                + ", " + (carrySpot == null ? "-" : (int)(unit.dst(carrySpot) / tilesize) + " tiles off") + (Brain.threat(unit.x, unit.y, fleeRange) != null ? ", shying" : "") + (order != null ? ", building" : "") + (haul != null ? ", hauling" : "") : "the box is gone");
             if(holding) pay.dropLastPayload();
             carry = carryTo = null;
+            carrySpot = null;
             carryAge = 0f;
+            return;
+        }
+        if(carrySpot != null){
+            if(!holding){
+                if(!unit.within(carry, tilesize * 1.5f)){
+                    travel(carry, tilesize);
+                    return;
+                }
+                if(!pay.canPickup(carry)){
+                    carryHow = "could not pick up the " + carry.block.name;
+                    carry = null;
+                    carrySpot = null;
+                    return;
+                }
+                Call.pickedBuildPayload(unit, carry, true);
+                carryHow = "picked it up";
+                return;
+            }
+            if(!unit.within(carrySpot, tilesize * 0.4f)){
+                carryHow = "carrying it, " + (int)(unit.dst(carrySpot) / tilesize) + " tiles to go";
+                //right over the place: what it carries is set down on the tiles under it
+                if(unit.within(carrySpot, tilesize * 2f)) unit.movePref(arc.util.Tmp.v1.set(carrySpot).sub(unit).limit(unit.speed()));
+                else travel(carrySpot, tilesize * 0.3f);
+                return;
+            }
+            if(pay.dropLastPayload()){
+                carryHow = "set it down at " + unit.tileX() + "," + unit.tileY();
+                carry = null;
+                carrySpot = null;
+                carryAge = 0f;
+            }else{
+                //what stands in the way, for looking into it
+                mindustry.world.Block held = pay.payloads().isEmpty() || !(pay.payloads().peek() instanceof mindustry.world.blocks.payloads.BuildPayload build) ? null : build.block();
+                int tx = held == null ? unit.tileX() : mindustry.core.World.toTile(unit.x - held.offset), ty = held == null ? unit.tileY() : mindustry.core.World.toTile(unit.y - held.offset);
+                StringBuilder there = new StringBuilder();
+                for(int dx = 0; dx < 2; dx++) for(int dy = 0; dy < 2; dy++){
+                    mindustry.gen.Building on = mindustry.Vars.world.build(tx + dx, ty + dy);
+                    mindustry.world.Tile tile = mindustry.Vars.world.tile(tx + dx, ty + dy);
+                    there.append(on != null ? on.block.name : tile == null ? "edge" : tile.solid() ? "solid" : tile.floor().isDeep() ? "deep" : "free").append(' ');
+                }
+                if(!carryHow.startsWith("could not")) brain.carryRefused = "could not set it down at " + tx + "," + ty + " (aiming at " + (int)(carrySpot.x / tilesize) + "," + (int)(carrySpot.y / tilesize) + "): " + there;
+                carryHow = "could not set it down at " + unit.tileX() + "," + unit.tileY();
+            }
             return;
         }
         if(!holding){

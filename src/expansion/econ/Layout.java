@@ -39,6 +39,8 @@ public final class Layout{
     public final Team team;
     final Set<String> allowed;
     public Grid grid;
+    /** Where the side's turrets reach (see {@link Plan#cover}); null for anywhere. */
+    public @arc.util.Nullable boolean[] cover;
     /** Where each machine of the order (and each that stands already) is. */
     public final Map<Machine, Part> at = new HashMap<>();
     /** Kept for the hand: lines to cut once building is done (the bus ends in the core and needs none). */
@@ -164,6 +166,7 @@ public final class Layout{
         List<Machine> cellMachines = new ArrayList<>();
         for(Machine m : order) if(m.recipe.ground == Recipe.Ground.none && m.pinned == null) cellMachines.add(m);
         Cells cells = new Cells(g, cat, field, 1000 + seed + 7919L * Layout.seed);
+        cells.cover = cover;
         cells.stress.putAll(stress);
         cells.model(order, field.existing);
         cells.group(cellMachines);

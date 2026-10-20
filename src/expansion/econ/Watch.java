@@ -41,6 +41,52 @@ public final class Watch{
         this.order = order;
     }
 
+    /** When each part (by place and block) was last seen gone, and how often lately: for not putting it back into the fire. */
+    public Map<Long, float[]> losses = new HashMap<>();
+    /** How often a part may be lost in {@link #lossWindow} seconds before it is left alone for {@link #coolOff} seconds. */
+    public static int lossLimit = 3;
+    public static float lossWindow = 120f, coolOff = 60f;
+    /** For the report: how often a part to put back was held back, under fire or lost too often. */
+    public int heldBack;
+
+    static long key(Part p){
+        return ((long)p.x << 32) ^ ((long)p.y << 16) ^ p.block.id;
+    }
+
+    void lost(Part p, float now){
+        float[] l = losses.computeIfAbsent(key(p), k -> new float[3]);
+        //[0]: losses in the window, [1]: when the window began, [2]: the last loss
+        if(now - l[1] > lossWindow){
+            l[0] = 0f;
+            l[1] = now;
+        }
+        l[0]++;
+        l[2] = now;
+    }
+
+    /**
+     * Whether a part is better not put back now: one of the other side's fighting units is within its reach of it (and a
+     * few tiles), or it has been lost again and again lately. Raiders stay a while; a site begun under them is shot down
+     * at once, and begun again, and shot down: on lake, raided by an elude or two, one turbine's place was begun 485 times
+     * while the core unit did nothing else.
+     */
+    public boolean hot(Part p){
+        float now = (float)(Vars.state.tick / 60.0);
+        float[] l = losses.get(key(p));
+        if(l != null && l[0] >= lossLimit && now - l[2] < coolOff) return true;
+        return enemyNear(layout.team, p.x * Vars.tilesize, p.y * Vars.tilesize, 6f * Vars.tilesize);
+    }
+
+    /** Whether one of the other sides' fighting units has this place within its reach and the margin. */
+    public static boolean enemyNear(mindustry.game.Team team, float x, float y, float margin){
+        boolean[] near = {false};
+        mindustry.entities.Units.nearbyEnemies(team, x, y, 40f * Vars.tilesize, u -> {
+            if(near[0] || u.spawnedByCore || !u.type.canAttack || u.dead()) return;
+            if(u.within(x, y, u.range() + margin)) near[0] = true;
+        });
+        return near[0];
+    }
+
     /** Looks at the jobs done so far (the first {@code done} of the order). */
     public void update(int done){
         float now = (float)(Vars.state.tick / 60.0);
@@ -55,6 +101,7 @@ public final class Watch{
                 boolean there = t.block() == p.block || t.build instanceof ConstructBuild;
                 if(!there && !repairs.contains(p, true) && Build.validPlace(p.block, layout.team, p.x, p.y, p.rotation)){
                     repairs.add(p);
+                    lost(p, now);
                     repaired++;
                     if(what.size() < 20) what.add(String.format("%s at %d,%d (of #%d %s; there: %s) at %s", p.block.name, p.x, p.y, i + 1, m.recipe.name, t.block().name, clock(now)));
                 }

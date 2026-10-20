@@ -39,9 +39,14 @@ public final class Plan{
      */
     public boolean gate;
     /**
-     * How many steps from what is held or dug the gate lets materials be made in. A defence that is wanted soon is built of
-     * what is held, dug, or made straight from that (2), not of what a long chain of crafters would make some time; an
-     * economy that has time may go further.
+     * Where the side's own turrets reach (by tile, x + y * width), for a side that is being raided: machines that may stand
+     * anywhere (furnaces, factories) are put inside it where they can be. Null: anywhere.
+     */
+    public @arc.util.Nullable boolean[] cover;
+    /**
+     * How many steps of making away (see {@link #depths}) a defence's materials may be: a defence that is wanted soon is built
+     * of what is held, dug, or made straight from that (2: silicon), not of what a long chain of crafters would make some
+     * time (oxide is five); an economy plans with more (it tries depths itself).
      */
     public int gateDepth = Integer.MAX_VALUE;
     /** How many of the defence planner's modules a defence takes (the first ones); all, unless it is wanted at once. */
@@ -99,47 +104,36 @@ public final class Plan{
      * brings the core a second, as watched (for leaving out what of it does not really run). Null if there is no way.
      */
     public Plan make(Team me, List<String> blocks, Set<String> allowed, List<Design> library, String unitName, float machines, Map<String, Float> income){
-        CoreBlock.CoreBuild core = me.core();
-        long t0 = Took.start();
-        allowed = read(me, blocks, allowed);
-        Took.end("plan: recipes and sites", t0);
-        if(income != null){
-            String pruned = Sites.prune(cat, field, income, me);
-            if(!pruned.isEmpty()) out.println("  the map's own: " + pruned);
+        //with the gate on, planned with the tech that is near at hand, a little further, and all of it, and laid out as the
+        //one that gets there first (with all of Erekir's tech, two stell fabricators were planned behind large bores that
+        //cost oxide, and so an electrolyzer and an oxidation chamber: the first stell at 5:09 where 3:52 would do)
+        int[] tries = gate ? new int[]{2, 3, Integer.MAX_VALUE} : new int[]{Integer.MAX_VALUE};
+        Object[] best = null;
+        for(int d : tries){
+            if(!model(me, blocks, allowed, library, unitName, machines, income, d)) continue;
+            //(one that gets the whole plan up before one that never does, however soon its first unit; then the earliest first
+            //unit, then the earliest end)
+            float first = model.first[unit], t = model.t;
+            boolean ends = t < planner.limit - 1f, bestEnds = best != null && (Float)best[6] < planner.limit - 1f;
+            if(best == null || ends && !bestEnds || ends == bestEnds && (first < (Float)best[5] - 0.5f || Math.abs(first - (Float)best[5]) <= 0.5f && t < (Float)best[6] - 0.5f)){
+                best = new Object[]{cat, field, planner, model, allowedNow, first, t, d, wanted};
+            }
         }
-        check("after the scan");
-        planner = new Planner(cat, field);
-        t0 = Took.start();
-        Recipes.modules(cat, library, allowed);
-        Took.end("plan: modules", t0);
-        check("after the modules");
-        Recipe making = null;
+        if(best == null) return null;
+        cat = (Catalog)best[0];
+        field = (Field)best[1];
+        planner = (Planner)best[2];
+        model = (Timeline)best[3];
+        allowed = allowedNow = (Set<String>)best[4];
+        wanted = (Float)best[8];
         unit = cat.id(unitName);
-        if(unit < 0) return null;
-        for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
-        wanted = making != null ? machines / making.unitSeconds : machines;
-        t0 = Took.start();
-        List<Machine> plant = planner.balance(unit, wanted);
-        Took.end("plan: balance", t0);
-        if(Boolean.getBoolean("xp.chains")){
-            out.print(planner.chains.describe());
-            Map<String, Integer> kinds = new TreeMap<>();
-            for(Field.Site st : field.sites) kinds.merge(st.ground + "/" + (st.item >= 0 ? cat.get(st.item).name : "-"), 1, Integer::sum);
-            out.println("  places: " + kinds + " (of " + field.candidates + " looked at)");
-        }
-        if(!planner.notes.toString().isEmpty()) out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
-        t0 = Took.start();
-        model = planner.order(plant, unit);
-        Took.end("plan: order", t0);
-        out.println("######## " + label + unitName + " from " + machines + "; the model has it done by " + time(model.t)
-            + ", first " + unitName + " at " + time(model.first[unit]) + "; " + model.order.size() + " machines");
-        //never got to: nothing laid out (a later stage may ask for something the map has no way to make)
-        if(Float.isInfinite(model.first[unit]) || Float.isNaN(model.first[unit])) return null;
-
+        long t0;
+        if(tries.length > 1) out.println("  taken: the plan with materials " + ((Integer)best[7] == Integer.MAX_VALUE ? "as far away as need be" : "at most " + best[7] + " steps of making away"));
         //laid out on the map; what it all really costs goes back to the planner, which may then order it otherwise
         long l0 = System.nanoTime();
         check("after the balance");
         works = new Layout(cat, field, me, allowed);
+        works.cover = cover;
         check("after a new layout");
         t0 = Took.start();
         works.prepare(model.order);
@@ -224,6 +218,7 @@ public final class Plan{
             planner.extras = 0;
             model = planner.order(more, unit);
             works = new Layout(cat, field, me, allowed);
+        works.cover = cover;
             works.noTap.addAll(noTap);
             t0 = Took.start();
             works.prepare(model.order);
@@ -281,17 +276,74 @@ public final class Plan{
      * The catalog and the places on the map, for these blocks; with {@link #gate} on, for those of them that can be paid
      * for now only. What may be built, as it then is.
      */
+    /** What may be built in the plan worked out last. */
+    Set<String> allowedNow;
+
+    /**
+     * The model of the making of a unit or an item, with the blocks whose materials are at most this many steps away (see
+     * {@link #depths}): the catalog, the places, the balance and the order. Whether it gets there at all.
+     */
+    boolean model(Team me, List<String> blocks, Set<String> allowed, List<Design> library, String unitName, float machines, Map<String, Float> income, int maxDepth){
+        long t0 = Took.start();
+        allowedNow = read(me, blocks, allowed, maxDepth);
+        Took.end("plan: recipes and sites", t0);
+        if(income != null){
+            String pruned = Sites.prune(cat, field, income, me);
+            if(!pruned.isEmpty()) out.println("  the map's own: " + pruned);
+        }
+        check("after the scan");
+        planner = new Planner(cat, field);
+        t0 = Took.start();
+        Recipes.modules(cat, library, allowedNow);
+        Took.end("plan: modules", t0);
+        check("after the modules");
+        Recipe making = null;
+        unit = cat.id(unitName);
+        if(unit < 0) return false;
+        for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
+        wanted = making != null ? machines / making.unitSeconds : machines;
+        t0 = Took.start();
+        List<Machine> plant = planner.balance(unit, wanted);
+        Took.end("plan: balance", t0);
+        if(Boolean.getBoolean("xp.chains")){
+            out.print(planner.chains.describe());
+            Map<String, Integer> kinds = new TreeMap<>();
+            for(Field.Site st : field.sites) kinds.merge(st.ground + "/" + (st.item >= 0 ? cat.get(st.item).name : "-"), 1, Integer::sum);
+            out.println("  places: " + kinds + " (of " + field.candidates + " looked at)");
+        }
+        if(!planner.notes.toString().isEmpty()) out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
+        t0 = Took.start();
+        model = planner.order(plant, unit);
+        Took.end("plan: order", t0);
+        out.println("######## " + label + unitName + " from " + machines + "; the model has it done by " + time(model.t)
+            + ", first " + unitName + " at " + time(model.first[unit]) + "; " + model.order.size() + " machines"
+            + (gate ? maxDepth == Integer.MAX_VALUE ? " (all the tech that can be paid for)" : " (materials at most " + maxDepth + " steps away)" : ""));
+        //never got to: nothing laid out (a later stage may ask for something the map has no way to make)
+        return !Float.isInfinite(model.first[unit]) && !Float.isNaN(model.first[unit]);
+    }
+
     Set<String> read(Team me, List<String> blocks, Set<String> allowed){
+        return read(me, blocks, allowed, Integer.MAX_VALUE);
+    }
+
+    /**
+     * The catalog and the places on the map, for these blocks; with {@link #gate} on, only those that can be paid for now,
+     * and of those only the ones whose materials are at most this many steps of making away (see {@link #depths}). What
+     * may be built, as it then is.
+     */
+    Set<String> read(Team me, List<String> blocks, Set<String> allowed, int maxDepth){
         CoreBlock.CoreBuild core = me.core();
         cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
         cat.logistics(allowed);
         field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
         if(!gate) return allowed;
-        List<String> kept = gated(blocks, me);
+        Map<String, Integer> depth = depths(blocks, me);
+        List<String> kept = new ArrayList<>();
+        for(String name : blocks) if(depth.getOrDefault(name, Integer.MAX_VALUE) <= maxDepth || (maxDepth == Integer.MAX_VALUE && depth.containsKey(name))) kept.add(name);
         if(kept.size() == blocks.size()) return allowed;
         Set<String> left = new TreeSet<>(blocks);
         left.removeAll(kept);
-        out.println("  not yet (what they are built of is neither in the core nor dug here): " + String.join(" ", left));
+        if(maxDepth == Integer.MAX_VALUE) out.println("  not yet (what they are built of is neither in the core nor dug here): " + String.join(" ", left));
         Set<String> fewer = new HashSet<>(allowed);
         fewer.removeAll(left);
         cat = Recipes.read(kept, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
@@ -301,39 +353,22 @@ public final class Plan{
     }
 
     /**
-     * The blocks of these whose materials can be had now (see {@link #gate}): what the core holds, what the core unit digs,
-     * and what a machine that can itself be paid for makes here out of what can be had (round till nothing more comes in).
+     * For each of these blocks that can be paid for now (see {@link #gate}), how many steps of making away its materials
+     * are: 0 for what the core holds enough of or what is dug (by the core unit, or by a drill that is itself 0), and for
+     * what a machine makes one more than the furthest of the machine's own materials and its inputs. Silicon is two away (a
+     * crusher's sand into a furnace), tungsten three (an impact drill costs silicon), oxide five. Blocks that can't be paid
+     * for at all are left out. (Worked out round by round, from the catalog and places just read.)
      */
-    List<String> gated(List<String> blocks, Team me){
+    Map<String, Integer> depths(List<String> blocks, Team me){
         CoreBlock.CoreBuild core = me.core();
-        boolean[] had = obtainable(cat, field, core, gateDepth);
-        List<String> kept = new ArrayList<>();
-        for(String name : blocks){
-            Block b = Vars.content.block(name);
-            if(b == null || b instanceof CoreBlock || payable(cat, b, core, had)) kept.add(name);
-        }
-        return kept;
-    }
-
-    /**
-     * What can be had here, by catalog id: what the core holds, what the core unit digs, and what a machine that can itself be
-     * paid for makes here out of what can be had (round till nothing more comes in). The same for any side: what it holds,
-     * the places its ground gives, what it can build.
-     */
-    public static boolean[] obtainable(Catalog cat, Field field, CoreBlock.CoreBuild core){
-        return obtainable(cat, field, core, Integer.MAX_VALUE);
-    }
-
-    /** The same, but only what is made within so many steps of what is held or dug (rounds of the closure). */
-    public static boolean[] obtainable(Catalog cat, Field field, CoreBlock.CoreBuild core, int depth){
-        boolean[] had = new boolean[cat.size()];
+        int[] depth = new int[cat.size()];
+        Arrays.fill(depth, Integer.MAX_VALUE);
         for(int k = 0; k < cat.size(); k++){
             Res r = cat.get(k);
-            if(r.kind == Res.Kind.item){
-                Item item = Vars.content.item(r.name);
-                if(item != null && core.items.get(item) > 0) had[k] = true;
-                if(field.handDistance != null && k < field.handDistance.length && !Float.isInfinite(field.handDistance[k])) had[k] = true;
-            }
+            if(r.kind != Res.Kind.item) continue;
+            Item item = Vars.content.item(r.name);
+            if(item != null && core.items.get(item) > 0) depth[k] = 0;
+            if(field.handDistance != null && k < field.handDistance.length && !Float.isInfinite(field.handDistance[k])) depth[k] = 0;
         }
         //places on the ground, by block, and what each gives
         Map<String, Set<Integer>> placed = new HashMap<>();
@@ -342,39 +377,62 @@ public final class Plan{
             if(st.ground == Recipe.Ground.vent) vents = true;
             if(st.item >= 0 && st.block != null) placed.computeIfAbsent(st.block, x -> new HashSet<>()).add(st.item);
         }
-        for(int round = 0; round < depth; round++){
-            boolean more = false;
-            boolean[] before = had.clone();
+        for(boolean more = true; more; ){
+            more = false;
             for(Recipe r : cat.recipes){
                 if(r.makesUnits() || r.block == null) continue;
                 Block b = Vars.content.block(r.block);
-                //(what this round can use is what the rounds before had: one step a round)
-                if(b == null || !payable(cat, b, core, before)) continue;
-                boolean fed = true;
-                for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f && !before[k]) fed = false;
-                if(!fed) continue;
-                if(r.ground == Recipe.Ground.vent && !vents) continue;
+                if(b == null || (r.ground == Recipe.Ground.vent && !vents)) continue;
+                int at = blockDepth(b, core, depth);
+                for(int k = 0; k < cat.size() && at != Integer.MAX_VALUE; k++) if(r.in[k] > 0f) at = Math.max(at, depth[k]);
+                if(at == Integer.MAX_VALUE) continue;
+                //(a drill on the ground gives what it digs at the depth of what it is made of; a crafter one step further)
                 for(int k = 0; k < cat.size(); k++){
                     boolean gives = r.out[k] > 0f;
-                    if(r.perFactor[k] > 0f) gives |= placed.getOrDefault(r.block, Set.of()).contains(k);
-                    if(gives && !had[k]){
-                        had[k] = true;
+                    boolean dug = r.perFactor[k] > 0f && placed.getOrDefault(r.block, Set.of()).contains(k);
+                    if(!gives && !dug) continue;
+                    int d = dug && r.ground != Recipe.Ground.none ? at : at + 1;
+                    if(d < depth[k]){
+                        depth[k] = d;
                         more = true;
                     }
                 }
             }
-            if(!more) break;
         }
-        return had;
+        Map<String, Integer> out = new HashMap<>();
+        for(String name : blocks){
+            Block b = Vars.content.block(name);
+            if(b == null || b instanceof CoreBlock){
+                out.put(name, 0);
+                continue;
+            }
+            int d = blockDepth(b, core, depth);
+            if(d != Integer.MAX_VALUE) out.put(name, d);
+        }
+        return out;
     }
 
-    /** Whether a block can be paid for: every material held in the core in full, or one that can be had here. */
-    public static boolean payable(Catalog cat, Block b, CoreBlock.CoreBuild core, boolean[] had){
+    /**
+     * The same for a catalog and places read elsewhere (the defence planner's ask): each block's materials' steps of making
+     * away, for any side; blocks that can't be paid for at all left out.
+     */
+    public static Map<String, Integer> depths(Catalog cat, Field field, Team me, List<String> blocks){
+        Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
+        p.cat = cat;
+        p.field = field;
+        return p.depths(blocks, me);
+    }
+
+    /** How far away the furthest of a block's materials is (0 for what the core holds enough of); MAX_VALUE if one can't be had. */
+    int blockDepth(Block b, CoreBlock.CoreBuild core, int[] depth){
+        int d = 0;
         for(mindustry.type.ItemStack stack : b.requirements){
+            if(core.items.get(stack.item) >= stack.amount) continue;
             int k = cat.id(stack.item.name);
-            if((k < 0 || !had[k]) && core.items.get(stack.item) < stack.amount) return false;
+            if(k < 0 || depth[k] == Integer.MAX_VALUE) return Integer.MAX_VALUE;
+            d = Math.max(d, depth[k]);
         }
-        return true;
+        return d;
     }
 
     /** (debug, -Dxp.checksites: how many of the places found can no longer be built on) */
@@ -397,7 +455,7 @@ public final class Plan{
      */
     public Plan defend(Team me, List<String> blocks, Set<String> allowed, expansion.defense.Planner.Plan defence, Collection<String> feedable){
         CoreBlock.CoreBuild core = me.core();
-        allowed = read(me, blocks, allowed);
+        allowed = read(me, blocks, allowed, gateDepth);
         StringBuilder notes = new StringBuilder();
         //our turrets standing dry first (only a line to build), then what the defence planner laid
         List<Machine> guard = new ArrayList<>(Defence.existing(cat, me, feedable, notes));
@@ -449,9 +507,9 @@ public final class Plan{
             }
         }
         //what the defence costs to put up and the core will not have soon (what it holds and what comes in over the next
-        //minute and a half): makers of that sending to the core, built first. (The opening economy is the least that makes
-        //its units, and its factories eat what comes; on aegis the breaches waited six minutes on beryllium while the core
-        //never held more than a hundred.)
+        //two and a half minutes): makers of that sending to the core, built first. (The opening economy is the least that
+        //makes its units, and its factories eat what comes; on aegis the breaches waited six minutes on beryllium while the
+        //core never held more than a hundred.)
         payItself(plant, me.core());
         plant = planner.balanceRest(plant);
         if(!planner.notes.toString().isEmpty()) out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
@@ -459,6 +517,7 @@ public final class Plan{
         this.feeders = feeders;
         List<Machine> order = defenceOrder(plant, guard);
         works = new Layout(cat, field, me, allowed);
+        works.cover = cover;
         works.prepare(order);
         //takers no line could be laid to get makers of their own near them, and it is laid again
         for(int round = 0; round < 2; round++){
@@ -478,6 +537,7 @@ public final class Plan{
             if(more.size() == order.size()) break;
             order = defenceOrder(more, guard);
             works = new Layout(cat, field, me, allowed);
+        works.cover = cover;
             works.prepare(order);
         }
         layoutNanos = System.nanoTime() - l0;

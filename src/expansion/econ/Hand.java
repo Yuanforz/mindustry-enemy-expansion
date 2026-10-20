@@ -138,12 +138,16 @@ public final class Hand extends mindustry.entities.units.AIController{
         //up while raiders break lines faster than they can be put back; what they broke waits till it is up)
         //(and only while it can be begun: saving up for it, what was broken is put back meanwhile)
         boolean first = urgent && job == null && next < order.size() && affordable(order.get(next).cost);
-        if(job == null && !watch.repairs.isEmpty() && !first){
+        //(what is under fire, or lost again and again lately, waits: put back into the fire it is lost again at once)
+        Seq<Part> mend = new Seq<>(), held = new Seq<>();
+        if(job == null && !first) for(Part p : watch.repairs) (watch.hot(p) ? held : mend).add(p);
+        if(held.size > 0 && mend.isEmpty() && job == null && !first) watch.heldBack++;
+        if(job == null && !mend.isEmpty() && !first){
             //paid for first, like any job (building waits on the core for what it lacks, and the hand would wait with it)
-            int[] need = cost(watch.repairs);
+            int[] need = cost(mend);
             if(affordable(need)){
-                job = watch.repairs;
-                watch.repairs = new Seq<>();
+                job = mend;
+                watch.repairs = held;
                 repairing = true;
                 unit.mineTile = null;
             }else{
@@ -367,6 +371,24 @@ public final class Hand extends mindustry.entities.units.AIController{
                     watch.taken.add(p);
                     job.remove(i);
                 }
+            }
+        }
+        //putting back what went missing: what has come under fire since goes back to wait (not begun again and again
+        //under the raider)
+        if(repairing){
+            for(int i = job.size - 1; i >= 0; i--){
+                Part p = job.get(i);
+                Tile tile = Vars.world.tile(p.x, p.y);
+                if(tile == null || tile.block() == p.block || !watch.hot(p)) continue;
+                job.remove(i);
+                if(!watch.repairs.contains(p, true)) watch.repairs.add(p);
+                unit.plans.remove(b -> b.x == p.x && b.y == p.y);
+                watch.heldBack++;
+            }
+            if(job.isEmpty()){
+                job = null;
+                repairing = false;
+                return;
             }
         }
         boolean all = true;

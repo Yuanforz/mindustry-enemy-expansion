@@ -41,6 +41,11 @@ public class Match{
     static int blocksLostUs, blocksLostThem;
     static final ObjectFloatMap<String> hurt = new ObjectFloatMap<>();
     static final ObjectIntMap<String> died = new ObjectIntMap<>();
+    static final ObjectFloatMap<String> blockHurt = new ObjectFloatMap<>();
+    /** Where raiders take what we built (-Dmatch.guard=false: no turret put down for it). */
+    static expansion.econ.Raids raids;
+    static int guards, feeds;
+    static final ObjectIntMap<String> blocksLostKind = new ObjectIntMap<>();
     /** Seconds our turrets stood, and of those, with no ammunition. */
     static int turretSeconds, drySeconds;
     /** What the last defence planned could feed turrets with. */
@@ -49,6 +54,9 @@ public class Match{
     static final ObjectIntMap<String> lastMinute = new ObjectIntMap<>();
 
     public static void main(String[] args){
+        //the path finders stepped with the game (else the same start plays out otherwise each time, and units wait on a
+        //thread that lags behind); -Dxp.syncpath=false for the game's own threads
+        if(System.getProperty("xp.syncpath") == null) System.setProperty("xp.syncpath", "true");
         ExpansionMod[] mod = {null};
         Boot.boot(args[0], () -> mod[0] = new ExpansionMod());
         mod[0].init();
@@ -61,12 +69,25 @@ public class Match{
         //nothing is researched in a fresh data dir: the Brain may build all it knows, as in the other tests
         brain.unlocked = content -> true;
 
-        Fi map = new Fi(args[1]);
+        //gen:seed, a map the game's generator makes for Erekir, one core a side and the same stock (a custom game, as PvP)
+        boolean generated = args[1].startsWith("gen:");
+        Fi map = generated ? new Fi("gen-" + args[1].substring(4)) : new Fi(args[1]);
         float minutes = Float.parseFloat(args[2]);
-        String mode = args.length > 3 ? args[3] : "sector";
+        String mode = args.length > 3 ? args[3] : generated ? "gen" : "sector";
+        //sandbox: no other side at all; our stages climb the tech from the landing stock, and what got made is told at the end
+        boolean sandbox = mode.equals("sandbox");
 
         Vars.logic.reset();
-        SaveIO.load(map);
+        if(generated){
+            if(Wild.make(Integer.parseInt(args[1].substring(4)), System.getProperty("match.stock", "plain")) == null){
+                System.out.println("RESULT " + map.nameWithoutExtension() + " gen winner=none: the generator left no place for a second core");
+                System.exit(0);
+            }
+            //(the generator's test keeps the player's side standing; not here)
+            Vars.state.rules.defaultTeam.rules().blockHealthMultiplier = 1f;
+        }else{
+            SaveIO.load(map);
+        }
         Rules rules = Vars.state.rules;
         Planets.erekir.applyRules(rules, false);
         us = rules.defaultTeam;
@@ -77,12 +98,21 @@ public class Match{
         rules.infiniteResources = false;
         rules.attackMode = true;
         //a sector of waves has no base of the Brain's to play against
-        if(them.cores().isEmpty() || us.cores().isEmpty()){
+        //every kind of ground in reach of our core (-Dmatch.allground=true): what the map lacks is put down near the core, a
+        //patch of each (a fixture for climbing the whole tech; no generated map of 200 has them all)
+        if(Boolean.getBoolean("match.allground")) allGround(us.core());
+        if(sandbox){
+            for(Tile tile : Vars.world.tiles) if(tile.build != null && tile.team() == them) tile.setBlock(Blocks.air);
+            for(Unit u : Groups.unit.copy(new Seq<>())) if(u.team == them) u.remove();
+            rules.attackMode = false;
+            rules.winWave = 0;
+        }
+        if(!sandbox && (them.cores().isEmpty() || us.cores().isEmpty())){
             System.out.println("RESULT " + map.nameWithoutExtension() + " " + mode + " winner=none: " + (them.cores().isEmpty() ? "the Brain has no core on this map (a sector of waves)" : "we have no core"));
             System.exit(0);
         }
         if(mode.equals("even")) even();
-        else{
+        else if(!generated && !sandbox){
             //the rules the campaign lays on the enemy of a sector (the mod keeps its own count of what it has)
             Planet planet = Planets.erekir;
             if(planet.enemyInfiniteItems){
@@ -101,6 +131,9 @@ public class Match{
             core.items.clear();
             for(ItemStack stack : rules.loadout) core.items.set(stack.item, stack.amount);
         }
+        //the game gives the side of the waves no unit cap at all (Units.getCap); where the two sides are to start alike (even,
+        //gen) ours gets none either. In a sector it keeps the cap a player has there.
+        if((mode.equals("even") || generated) && !sandbox && !Boolean.getBoolean("match.cap")) us.ignoreUnitCap = true;
         //the squad AI, which the game runs for its AI sides only: run here for ours by hand
         us.rules().rtsAi = true;
         mindustry.ai.RtsAI squads = new mindustry.ai.RtsAI(us.data());
@@ -122,12 +155,17 @@ public class Match{
         }
         Boot.frames(1);
 
-        if(Boolean.getBoolean("match.brainunits")) Events.on(UnitCreateEvent.class, e -> {
-            if(e.unit.team == them) System.out.println(String.format("    the Brain's %s made at %s by %s; its factories active %b (delay %.0f s)", e.unit.type.name, Plan.time((float)(Vars.state.tick / 60.0)), e.spawner == null ? "-" : e.spawner.block.name, them.activateUnitFactories(), Vars.state.rules.unitActivationDelay(them) / 60f));
-        });
+        raids = new expansion.econ.Raids(us);
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == us) made.increment("us " + e.unit.type.name);
             if(e.unit.team == them) made.increment("them " + e.unit.type.name);
+        });
+        //who hurts our buildings, and which: by the kind of attacker, and by the block hit
+        Events.on(BuildDamageEvent.class, e -> {
+            if(e.build == null || e.build.team != us || e.source == null) return;
+            Object owner = e.source.owner;
+            String who = owner instanceof Building b ? b.block.name : owner instanceof Unit u ? "unit " + u.type.name : String.valueOf(owner);
+            blockHurt.put(who, blockHurt.get(who, 0f) + e.source.damage);
         });
         //who hurts our units: by the block or unit that fired, damage summed
         Events.on(UnitDamageEvent.class, e -> {
@@ -145,22 +183,17 @@ public class Match{
         Events.on(UnitDestroyEvent.class, e -> lostUnits.increment(e.unit.team == us ? "us" : e.unit.team == them ? "them" : "other"));
         Events.on(BlockDestroyEvent.class, e -> {
             if(e.tile.team() == us && Boolean.getBoolean("match.losses")) System.out.println(String.format("    lost %s at %d,%d at %s", e.tile.block().name, e.tile.x, e.tile.y, Plan.time((float)(Vars.state.tick / 60.0))));
-            if(e.tile.team() == us) blocksLostUs++;
+            raids.lost(e.tile);
+            if(e.tile.team() == us){
+                blocksLostUs++;
+                blocksLostKind.increment(e.tile.block().name);
+            }
             else if(e.tile.team() == them) blocksLostThem++;
         });
 
+        if(Boolean.getBoolean("match.turrets")) for(Building b : us.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret t) System.out.println(String.format("  our turret %s at %d,%d range %.0f tiles", b.block.name, b.tileX(), b.tileY(), t.range / Vars.tilesize));
         System.out.println(String.format("MATCH %s (%s): we have %d core(s), %d blocks; the Brain %d core(s), %d blocks", map.nameWithoutExtension(), mode, us.cores().size, us.data().buildings.size, them.cores().size, them.data().buildings.size));
-        {
-            StringBuilder st = new StringBuilder("  at the start: our core " + us.core().block.name + " at " + us.core().tileX() + "," + us.core().tileY() + " holds");
-            for(Item item : Vars.content.items()) if(us.core().items.get(item) > 0) st.append(" ").append(item.name).append("=").append(us.core().items.get(item));
-            ObjectIntMap<String> ourGuns = new ObjectIntMap<>(), theirGuns = new ObjectIntMap<>();
-            for(Building b : us.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret || b.block instanceof mindustry.world.blocks.units.UnitFactory) ourGuns.increment(b.block.name);
-            for(Building b : them.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret || b.block instanceof mindustry.world.blocks.units.UnitFactory || b.block instanceof mindustry.world.blocks.units.Reconstructor) theirGuns.increment(b.block.name);
-            float near = Float.MAX_VALUE;
-            for(CoreBlock.CoreBuild c : them.cores()) near = Math.min(near, c.dst(us.core()) / Vars.tilesize);
-            st.append("; our turrets and yards ").append(ourGuns).append("; the Brain's ").append(theirGuns).append(String.format("; its nearest core %.0f tiles off", near));
-            System.out.println(st);
-        }
+        System.out.println(landing(us, them));
 
         //our stages
         List<String> blocks = new ArrayList<>(Plan.erekir());
@@ -185,6 +218,11 @@ public class Match{
         int stage = -1;
         float stageFrom = 0f;
         expansion.econ.Hand hand = null;
+        //a guard put down where raiders take what we built: the stage's hand waits meanwhile
+        expansion.econ.Hand paused = null;
+        int guardFrom = 0;
+        boolean guarding = !"false".equals(System.getProperty("match.guard"));
+        Map<Long, float[]> lossBook = new HashMap<>();
         //the stages before: what of them goes missing is put back too, where its tile is empty
         List<expansion.econ.Hand> before = new ArrayList<>();
         Unit builder = null;
@@ -195,7 +233,8 @@ public class Match{
             //the next stage, planned from what stands, once the last is all up (or has had its time)
             //(a stage is not left for want of time while what makes its units is not up yet, unless three times over: on lake,
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
-            boolean over = hand != null && (hand.orderDone() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
+            //(a stage is over once its own order is up, whatever it is mending meanwhile: under raids that never ends)
+            boolean over = paused == null && hand != null && (hand.orderDone() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
             if((hand == null || over) && stage + 1 < stages.length && us.core() != null){
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 stage++;
@@ -228,13 +267,17 @@ public class Match{
                     }
                     Plan p = new Plan(System.out);
                     p.gate = !Boolean.getBoolean("match.allblocks");
+                    //raided lately: what may stand anywhere goes where our turrets reach
+                    //(or able to be: the other side has yards that make units)
+                    if((raids.raided() || makesUnits(them)) && !"false".equals(System.getProperty("match.cover"))) p.cover = raids.cover();
                     p.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
                     try{
                         if(st[0].equals("defend")){
                             expansion.defense.Planner.Plan dp = defence(us, them, sector, f / 60f, p.label);
+                            //(it pays for itself out of what the core holds and brings in; built of what is near at hand; the one
+                            //put first for a threat from the start is its first module only)
                             p.income = income(us, f);
                             p.gateDepth = 2;
-                            //(the defence put first for a threat from the start: its first module only, then the economy)
                             if(stage == 0 && early != null) p.maxModules = 1;
                             plan = p.defend(us, blocks, allowed, dp, feedable);
                         }else{
@@ -258,11 +301,95 @@ public class Match{
                     //its own jobs before putting back what raiders broke, every stage (a stage put off till every raid's damage
                     //is mended never gets its factory up: lake, raided from the second minute on, made no unit in twenty)
                     hand.urgent = true;
+                    hand.watch.losses = lossBook;
                     //our units are the squad AI's to lead (a unit told where to wait is left alone by it)
                     hand.rallyUnits = false;
                     Intent.current = plan.works.intent();
                     hand.intent = Intent.current;
                     if(builder != null && !builder.dead()) builder.controller(hand);
+                }
+            }
+            //a guard up, or out of time: the stage's hand takes over again
+            if(paused != null && (hand.done() || f - guardFrom > 60 * 240)){
+                System.out.println("  " + Plan.time(f / 60f) + ": guard " + (hand.done() ? "up" : "left at " + hand.next + " of " + hand.order.size()) + "; back to stage " + (stage + 1));
+                before.add(hand);
+                hand = paused;
+                paused = null;
+                if(builder != null && !builder.dead()) builder.controller(hand);
+            }
+            //a place being raided that nothing of ours that can hit the raiders reaches: a turret for it (or, where one of ours
+            //stands dry in reach, ammunition led to it)
+            if(guarding && paused == null && hand != null && f % 300 == 150 && us.core() != null){
+                expansion.defense.Guard.Raid raid = raids.hottest(false);
+                if(raid != null){
+                    long g0 = System.nanoTime();
+                    raids.guarding(raid.x, raid.y);
+                    Plan gp = new Plan(System.out);
+                    gp.gate = !Boolean.getBoolean("match.allblocks");
+                    gp.label = "guard at " + Plan.time(f / 60f) + ": ";
+                    StringBuilder notes = new StringBuilder();
+                    Plan made = null;
+                    try{
+                        if(raids.covered(raid.x, raid.y, raid.air, true)){
+                            //a turret of ours reaches it but stands dry: a line to it is all
+                            defenceAsk(sector);
+                            made = gp.defend(us, blocks, allowed, null, feedable);
+                            if(made != null) feeds++;
+                            System.out.println("  " + Plan.time(f / 60f) + ": raided, " + raid + "; a dry turret of ours reaches it: fed" + (made == null ? " (no way)" : ""));
+                        }else{
+                            expansion.defense.Planner.Ask ask = defenceAsk(sector);
+                            expansion.econ.Hand now = hand;
+                            CoreBlock.CoreBuild c = us.core();
+                            List<expansion.defense.Planner.Plan> ways = expansion.defense.Guard.plans(ask, raid, c.tileX(), c.tileY(), (block, x, y, rot) -> freeFor(now, block, x, y, rot), raids.feed(), 4, notes);
+                            if(ways.isEmpty()) System.out.print("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + notes);
+                            //the first way whose supply can be laid (a turret standing dry is so many items for nothing)
+                            int stake = raids.atStake(raid.x, raid.y);
+                            for(expansion.defense.Planner.Plan dp : ways){
+                                //(what its own blocks cost, before anything is laid out: dearer than what it guards, not tried)
+                                int least = 0;
+                                for(expansion.defense.Placement pl : dp.placements){
+                                    Block pb = Vars.content.block(pl.block);
+                                    if(pb != null && pl.kind != expansion.defense.Placement.Kind.port) for(ItemStack st : pb.requirements) least += st.amount;
+                                }
+                                if(least > stake){
+                                    System.out.println("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + dp.notes.get(0) + String.format(" (costs at least %d, guards %d: not worth it)", least, stake));
+                                    continue;
+                                }
+                                Plan tryPlan = new Plan(System.out);
+                                tryPlan.gate = gp.gate;
+                                tryPlan.label = gp.label;
+                                Plan got = tryPlan.defend(us, blocks, allowed, dp, feedable);
+                                boolean fed = got != null && got.works != null;
+                                if(fed) for(Object[] u : got.works.unfed()) if(expansion.econ.Defence.is((Machine)u[1])) fed = false;
+                                //no dearer than what it guards
+                                int cost = 0;
+                                if(got != null && got.model != null) for(Machine m : got.model.order) for(int v : m.cost) cost += v;
+                                boolean worth = cost <= stake;
+                                System.out.println("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + dp.notes.get(0) + (fed ? "" : ": its supply can't be laid")
+                                    + String.format(" (costs %d, guards %d%s)", cost, stake, worth ? "" : ": not worth it"));
+                                fed &= worth;
+                                if(fed){
+                                    made = got;
+                                    guards++;
+                                    break;
+                                }
+                            }
+                        }
+                    }catch(Throwable t){
+                        System.out.println("  guard could not be planned: " + t);
+                        t.printStackTrace(System.out);
+                        made = null;
+                    }
+                    planSeconds += (System.nanoTime() - g0) / 1e9f;
+                    if(made != null && made.model != null && !made.model.order.isEmpty()){
+                        paused = hand;
+                        guardFrom = f;
+                        hand = new expansion.econ.Hand(made.works, made.model.order);
+                        hand.urgent = true;
+                        hand.rallyUnits = false;
+                        hand.watch.losses = lossBook;
+                        if(builder != null && !builder.dead()) builder.controller(hand);
+                    }
                 }
             }
             CoreBlock.CoreBuild home = us.core();
@@ -280,6 +407,7 @@ public class Match{
                 old.watch.repairs.clear();
             }
             Boot.frames(1);
+            ControlSync.step();
             squads.update();
             if(army != null) army.update();
             if(f % 60 == 0) for(Building b : us.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild tb){
@@ -304,13 +432,29 @@ public class Match{
                 winner = "Brain";
                 break;
             }
-            if(them.cores().isEmpty()){
+            if(!sandbox && them.cores().isEmpty()){
                 winner = "us";
                 break;
             }
         }
         float t = (float)(Vars.state.tick / 60.0);
         System.out.println(report(t, hand, stage));
+        if(sandbox){
+            StringBuilder made = new StringBuilder("  made, by kind:");
+            for(var e : Match.made) if(e.key.startsWith("us ")) made.append(' ').append(e.key.substring(3)).append('=').append(e.value);
+            System.out.println(made);
+            ObjectIntMap<String> turrets = new ObjectIntMap<>(), ready = new ObjectIntMap<>();
+            for(Building b : us.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild tb){
+                turrets.increment(b.block.name);
+                if(tb.hasAmmo() && tb.efficiency > 0f) ready.increment(b.block.name);
+            }
+            StringBuilder tb = new StringBuilder("  turrets standing (ready to fire):");
+            for(var e : turrets) tb.append(' ').append(e.key).append('=').append(e.value).append(" (").append(ready.get(e.key, 0)).append(')');
+            System.out.println(tb);
+            StringBuilder held = new StringBuilder("  the core holds:");
+            if(us.core() != null) for(Item item : Vars.content.items()) if(us.core().items.get(item) > 0) held.append(' ').append(item.name).append('=').append(us.core().items.get(item));
+            System.out.println(held);
+        }
         if(hand != null) for(String tr : hand.trouble) System.out.println("  could not put down: " + tr);
         if(hand != null && hand.job != null) for(var p : hand.job){
             Tile tile = Vars.world.tile(p.x, p.y);
@@ -324,6 +468,13 @@ public class Match{
         for(int i = 0; i < Math.min(8, who.size); i++) hb.append(String.format(" %s %.0f;", who.get(i), hurt.get(who.get(i), 0f)));
         System.out.println(hb);
         System.out.println("  where our units died: " + died);
+        Seq<String> bw = blockHurt.keys().toSeq().sort(k -> -blockHurt.get(k, 0f));
+        StringBuilder bb = new StringBuilder("  what hurt our buildings most:");
+        for(int i = 0; i < Math.min(8, bw.size); i++) bb.append(String.format(" %s %.0f;", bw.get(i), blockHurt.get(bw.get(i), 0f)));
+        System.out.println(bb);
+        System.out.println("  our blocks lost, by kind: " + blocksLostKind);
+        if(hand != null) System.out.println("  repairs held back under fire: " + hand.watch.heldBack + ", parts put back: " + hand.watch.repaired);
+        System.out.println("  raids: losses to raiders by kind " + raids.byKind + "; guards put down " + guards + ", dry turrets fed " + feeds);
         if(hand != null && Boolean.getBoolean("match.grids")) for(int i = 0; i < hand.order.size(); i++){
             StringBuilder nodes = new StringBuilder();
             for(var p : hand.works.job(hand.order.get(i))) if(p.block.name.equals("beam-node")) nodes.append(" ").append(p.x).append(",").append(p.y).append(Vars.world.tile(p.x, p.y).block() == p.block ? "" : "(missing)");
@@ -351,63 +502,17 @@ public class Match{
      * units it fields now and those it can make by this time of the game (from its yards' blueprints: stell, merui and
      * elude, then their refits), our tech of the sector, and what the economy can feed turrets with.
      */
+    static expansion.defense.Planner.Plan defence(String sector, float seconds, String label){
+        return defence(us, them, sector, seconds, label);
+    }
+
+    /** The defence planner's plan for a side against its foe now: what the foe has and what its yards will soon have made. */
     static expansion.defense.Planner.Plan defence(Team me, Team foe, String sector, float seconds, String label){
-        expansion.defense.Planner.Ask ask = new expansion.defense.Planner.Ask();
-        CoreBlock.CoreBuild core = me.core();
-        ask.terrain = expansion.defense.GameData.terrain(me);
-        ask.coreX = core.tileX();
-        ask.coreY = core.tileY();
-        ask.coreSize = core.block.size;
-        ask.blocks.addAll(expansion.defense.Tech.blocks(sector));
-        ask.blocks.removeIf(b -> !b.endsWith("-source") && (Vars.content.block(b) == null || Vars.state.rules.isBanned(Vars.content.block(b))));
-        //what turrets can be fed with: what the sector's tech gives that our base makes already, or that a drill on the
-        //ground digs with nothing put into it (a plasma bore's beryllium and graphite): a defence that waits on a new
-        //chain of crafters is not up when it is wanted
-        Catalog cat = Recipes.read(new ArrayList<>(Plan.erekir()), (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-        Field field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
-        Chains chains = new Chains(cat, field);
-        Set<String> made = new HashSet<>();
-        for(Machine m : field.existing) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) made.add(cat.get(k).name);
-        //(a drill that takes power counts: the defence's plan lays the power too, a turbine on a vent; at the landing nothing
-        //at all is made yet, and a defence that only counted what stands could fire nothing)
-        for(int k = 0; k < cat.size(); k++){
-            Recipe by = chains.by[k];
-            if(by == null || by.ground == Recipe.Ground.none || Float.isInfinite(chains.cost[k])) continue;
-            boolean bare = true;
-            for(float v : by.in) if(v > 0f) bare = false;
-            if(bare && cat.get(k).kind == Res.Kind.item) made.add(cat.get(k).name);
-        }
-        //what can be had here at all (held, dug, or made by what can be paid for): what a block may be built of
-        boolean[] had = Plan.obtainable(cat, field, core);
-        for(String what : expansion.defense.Tech.supply(sector)) if(made.contains(what)) ask.supply.add(what);
-        feedable.clear();
-        feedable.addAll(ask.supply);
-        //and only what can be paid for: what the core holds or what is made
-        ask.blocks.removeIf(name -> {
-            Block b = Vars.content.block(name);
-            if(b == null || name.endsWith("-source")) return false;
-            //(the defence's plan brings in what it lacks: makers of it for the core, built first)
-            return !Plan.payable(cat, b, core, had);
-        });
-        ask.costs = expansion.defense.GameData.costs();
-        //no more than the core holds and what comes in over the next minutes (-Dmatch.defbudget: how many minutes; the
-        //income is what the core gained over the last minute, or a guess at the start)
-        //(and at least about two of the first line's pairs: the hand saves up for what is not there yet, the budget only
-        //keeps the plan to what the next few minutes can pay for)
-        float budgetMinutes = Float.parseFloat(System.getProperty("match.defbudget", "3"));
-        Map<String, Integer> floor = Map.of("beryllium", 900, "graphite", 600, "silicon", 700, "tungsten", 150);
-        for(Item item : Vars.content.items()){
-            int have = core.items.get(item);
-            int income = Math.max(0, have - lastMinute.get(item.name, have));
-            int budget = Math.max(floor.getOrDefault(item.name, 0), have + Math.round(income * budgetMinutes));
-            if(budget > 0) ask.budget.put(item.name, budget);
-        }
-        ask.modules = expansion.defense.Battery.parse(new Fi("blueprints/defense/modules.txt").readString());
-        ask.capacity = expansion.defense.Capacity.parse(new Fi("blueprints/defense/capacity.txt").readString());
-        //what the Brain may send: what it has now, half as many again, and at least what its yards could have made by now
-        //(the kinds: what its yards make and what it has; before it has any, all three of the first tier)
+        expansion.defense.Planner.Ask ask = defenceAsk(me, sector);
         Map<String, Integer> units = new TreeMap<>();
         float minute = seconds / 60f;
+        //what the Brain may send: what it has now, half as many again, and at least what its yards could have made by now
+        //(the kinds: what its yards make and what it has; before it has any, all three of the first tier)
         int early = Math.max(4, Math.min(10, 3 + (int)(minute / 2))), later = Math.min(6, 2 + (int)(minute / 4));
         Set<String> kinds = new TreeSet<>();
         for(Building b : foe.data().buildings){
@@ -464,6 +569,98 @@ public class Match{
         System.out.println(String.format("######## %sthe defence planner (tech of %s, fed with %s, budget %s) against %s: %d placements in %.0f ms", label, sector, ask.supply, ask.budget, units, plan.placements.size(), (System.nanoTime() - t0) / 1e6));
         System.out.print(plan.describe());
         return plan;
+    }
+
+    /** What the defence planner is asked with for our side now: the ground, our tech that can be paid for, what can be fed, the budget, the modules. */
+    static expansion.defense.Planner.Ask defenceAsk(String sector){
+        return defenceAsk(us, sector);
+    }
+
+    /** The same for any side. */
+    static expansion.defense.Planner.Ask defenceAsk(Team me, String sector){
+        expansion.defense.Planner.Ask ask = new expansion.defense.Planner.Ask();
+        CoreBlock.CoreBuild core = me.core();
+        ask.terrain = expansion.defense.GameData.terrain(me);
+        ask.coreX = core.tileX();
+        ask.coreY = core.tileY();
+        ask.coreSize = core.block.size;
+        ask.blocks.addAll(expansion.defense.Tech.blocks(sector));
+        ask.blocks.removeIf(b -> !b.endsWith("-source") && (Vars.content.block(b) == null || Vars.state.rules.isBanned(Vars.content.block(b))));
+        //what turrets can be fed with: what the sector's tech gives that our base makes already, or that a drill on the
+        //ground digs with nothing put into it (a plasma bore's beryllium and graphite): a defence that waits on a new
+        //chain of crafters is not up when it is wanted
+        Catalog cat = Recipes.read(new ArrayList<>(Plan.erekir()), (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+        Field field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        Chains chains = new Chains(cat, field);
+        Set<String> made = new HashSet<>();
+        for(Machine m : field.existing) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) made.add(cat.get(k).name);
+        for(int k = 0; k < cat.size(); k++){
+            Recipe by = chains.by[k];
+            if(by == null || by.ground == Recipe.Ground.none || Float.isInfinite(chains.cost[k])) continue;
+            boolean bare = true;
+            for(float v : by.in) if(v > 0f) bare = false;
+            //(a drill that takes power counts: the defence's plan lays the power too, a turbine on a vent; at the landing nothing
+            //at all is made yet, and a defence that only counted what stands could fire nothing)
+            if(bare && cat.get(k).kind == Res.Kind.item) made.add(cat.get(k).name);
+        }
+        for(String what : expansion.defense.Tech.supply(sector)) if(made.contains(what)) ask.supply.add(what);
+        feedable.clear();
+        feedable.addAll(ask.supply);
+        //and only what can be paid for: what the core holds or what is made
+        //(of what the core lacks, what is near at hand: held, dug, or made straight from that; the defence's plan brings it
+        //in, makers of it for the core built first)
+        Map<String, Integer> depth = Plan.depths(cat, field, me, new ArrayList<>(ask.blocks));
+        ask.blocks.removeIf(name -> {
+            Block b = Vars.content.block(name);
+            if(b == null || name.endsWith("-source")) return false;
+            return depth.getOrDefault(name, Integer.MAX_VALUE) > 2;
+        });
+        ask.costs = expansion.defense.GameData.costs();
+        //no more than the core holds and what comes in over the next minutes (-Dmatch.defbudget: how many minutes; the
+        //income is what the core gained over the last minute, or a guess at the start)
+        //(and at least about two of the first line's pairs: the hand saves up for what is not there yet, the budget only
+        //keeps the plan to what the next few minutes can pay for)
+        float budgetMinutes = Float.parseFloat(System.getProperty("match.defbudget", "3"));
+        Map<String, Integer> floor = Map.of("beryllium", 900, "graphite", 600, "silicon", 700, "tungsten", 150);
+        for(Item item : Vars.content.items()){
+            int have = core.items.get(item);
+            int income = Math.max(0, have - lastMinute.get(item.name, have));
+            int budget = Math.max(floor.getOrDefault(item.name, 0), have + Math.round(income * budgetMinutes));
+            if(budget > 0) ask.budget.put(item.name, budget);
+        }
+        ask.modules = expansion.defense.Battery.parse(new Fi("blueprints/defense/modules.txt").readString());
+        ask.capacity = expansion.defense.Capacity.parse(new Fi("blueprints/defense/capacity.txt").readString());
+        return ask;
+    }
+
+    /** Whether a block may go down here now, on ground the hand's own layout has nothing planned on. */
+    static boolean freeFor(expansion.econ.Hand hand, String name, int x, int y, int rotation){
+        Block b = Vars.content.block(name);
+        if(b == null || !Build.validPlace(b, us, x, y, rotation)) return false;
+        int off = -(b.size - 1) / 2;
+        for(int dx = 0; dx < b.size; dx++) for(int dy = 0; dy < b.size; dy++){
+            if(hand.works.grid != null && hand.works.grid.block(x + off + dx, y + off + dy) != null && Vars.world.tile(x + off + dx, y + off + dy).build == null) return false;
+        }
+        return true;
+    }
+
+    /** Whether a side has anything standing that makes units. */
+    static boolean makesUnits(Team team){
+        for(Building b : team.data().buildings) if(b.block instanceof mindustry.world.blocks.units.UnitFactory || b.block instanceof mindustry.world.blocks.units.Reconstructor || b.block instanceof mindustry.world.blocks.units.UnitAssembler) return true;
+        return false;
+    }
+
+    /** What a side starts with, and what the other side has, in words. */
+    static String landing(Team me, Team foe){
+        StringBuilder st = new StringBuilder("  at the start: our core " + me.core().block.name + " at " + me.core().tileX() + "," + me.core().tileY() + " holds");
+        for(Item item : Vars.content.items()) if(me.core().items.get(item) > 0) st.append(" ").append(item.name).append("=").append(me.core().items.get(item));
+        ObjectIntMap<String> ourGuns = new ObjectIntMap<>(), theirGuns = new ObjectIntMap<>();
+        for(Building b : me.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret || b.block instanceof mindustry.world.blocks.units.UnitFactory) ourGuns.increment(b.block.name);
+        for(Building b : foe.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret || b.block instanceof mindustry.world.blocks.units.UnitFactory || b.block instanceof mindustry.world.blocks.units.Reconstructor) theirGuns.increment(b.block.name);
+        float near = Float.MAX_VALUE;
+        for(CoreBlock.CoreBuild c : foe.cores()) near = Math.min(near, c.dst(me.core()) / Vars.tilesize);
+        st.append("; our turrets and yards ").append(ourGuns).append("; the other side's ").append(theirGuns).append(String.format("; its nearest core %.0f tiles off", near));
+        return st.toString();
     }
 
     /**
@@ -532,6 +729,51 @@ public class Match{
         return b.toString();
     }
 
+    /** Puts a patch of each kind of ground Erekir's tech needs that is not in reach of the core, on open ground near it. */
+    static void allGround(CoreBlock.CoreBuild core){
+        int cx = core.tileX(), cy = core.tileY();
+        ObjectIntMap<String> found = ResourceScan.census(cx, cy, 110);
+        Object[][] kinds = {
+            {"floor:thorium", Blocks.oreThorium, false},
+            {"floor:tungsten", Vars.content.block("ore-tungsten"), false},
+            {"liquid:slag", Blocks.slag, true},
+            {"liquid:arkycite", Blocks.arkyciteFloor, true},
+        };
+        int placed = 0;
+        for(Object[] k : kinds){
+            if(found.get((String)k[0], 0) >= 30 || k[1] == null) continue;
+            Tile at = openSquare(cx, cy, 9, placed);
+            if(at == null){
+                System.out.println("  no room near the core for " + k[0]);
+                continue;
+            }
+            for(int dx = 0; dx < 9; dx++) for(int dy = 0; dy < 9; dy++){
+                Tile t = Vars.world.tile(at.x + dx, at.y + dy);
+                if((Boolean)k[2]) t.setFloor(((Block)k[1]).asFloor());
+                else t.setOverlay((Block)k[1]);
+            }
+            placed++;
+            System.out.println("  put down " + k[0] + " at " + at.x + "," + at.y + " (the map had " + found.get((String)k[0], 0) + " tiles of it in reach)");
+        }
+    }
+
+    /** The corner of a square of open ground of this size some way out from (cx, cy), the n-th such going round. */
+    static Tile openSquare(int cx, int cy, int size, int n){
+        int seen = 0;
+        for(int r = 18; r <= 45; r += 3){
+            for(int a = 0; a < 360; a += 20){
+                int x = cx + (int)(Math.cos(Math.toRadians(a + n * 97)) * r), y = cy + (int)(Math.sin(Math.toRadians(a + n * 97)) * r);
+                boolean ok = true;
+                for(int dx = -1; dx <= size && ok; dx++) for(int dy = -1; dy <= size && ok; dy++){
+                    Tile t = Vars.world.tile(x + dx, y + dy);
+                    if(t == null || t.solid() || t.build != null || t.floor().isDeep() || t.floor().isLiquid || t.overlay() != Blocks.air) ok = false;
+                }
+                if(ok) return Vars.world.tile(x, y);
+            }
+        }
+        return null;
+    }
+
     /** Everything taken off but one core a side, the same core and the same items for both. */
     static void even(){
         CoreBlock.CoreBuild ours = us.core();
@@ -547,9 +789,9 @@ public class Match{
         }
         int ox = ours.tileX(), oy = ours.tileY(), tx = theirs.tileX(), ty = theirs.tileY();
         Block coreBlock = ours.block;
-        Seq<Building> all = new Seq<>();
-        for(Building b : Groups.build) if(b.team == us || b.team == them) all.add(b);
-        for(Building b : all) if(b.tile != null && b.tile.build == b) b.tile.remove();
+        //(every tile with a building of either side's cleared: taken off one by one, some stood, and the Brain, which opens as
+        //planned only from a bare core, did not)
+        for(Tile tile : Vars.world.tiles) if(tile.build != null && (tile.team() == us || tile.team() == them)) tile.setBlock(Blocks.air);
         Vars.world.tile(ox, oy).setNet(coreBlock, us, 0);
         Vars.world.tile(tx, ty).setNet(coreBlock, them, 0);
         for(Unit u : Groups.unit.copy(new Seq<>())) if(u.team == us || u.team == them) u.remove();

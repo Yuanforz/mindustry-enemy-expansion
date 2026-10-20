@@ -501,6 +501,41 @@ public class Lines{
     }
 
     static final int pocketSize = 60;
+
+    /**
+     * The same, counting ground a bridge could be led to over what stands in the way as got to: an input that sits behind a
+     * line or three is no less reachable for that.
+     */
+    public boolean pocketOverBridges(int x, int y, IntSet shut, int except){
+        if(bridge == null) return pocket(x, y, shut, except);
+        int range = ((DirectionBridge)bridge).range;
+        flood.clear();
+        floodSeen.clear();
+        floodSeen.add(Point2.pack(x, y));
+        flood.addLast(Point2.pack(x, y));
+        int found = 0;
+        boolean first = true;
+        while(!flood.isEmpty()){
+            if(++found >= pocketSize) return false;
+            int pos = flood.removeFirst(), px = Point2.x(pos), py = Point2.y(pos);
+            for(int d = 0; d < 4; d++){
+                if(first && d == except) continue;
+                for(int step = 1; step <= range; step++){
+                    int nx = px + Geometry.d4x(d) * step, ny = py + Geometry.d4y(d) * step, next = Point2.pack(nx, ny);
+                    boolean open = ground.open(nx, ny) && !shut.contains(next);
+                    if(open){
+                        if(floodSeen.add(next)) flood.addLast(next);
+                        break;
+                    }
+                    //only over what a bridge passes over: not past the edge of the map or through rock
+                    Tile tile = world.tile(nx, ny);
+                    if(tile == null || (tile.build == null && tile.solid())) break;
+                }
+            }
+            first = false;
+        }
+        return true;
+    }
     private final IntQueue flood = new IntQueue();
     private final IntSet floodSeen = new IntSet();
 

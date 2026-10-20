@@ -28,6 +28,8 @@ import mindustry.world.blocks.units.*;
 public class Sim{
     static int problems;
     static ObjectIntMap<String> begun = new ObjectIntMap<>(), finished = new ObjectIntMap<>(), turnedOut = new ObjectIntMap<>();
+    /** The minute its first unit came out of a yard of its own, or -1. */
+    static float firstUnitAt = -1f;
     static IntSet original = new IntSet();
     static int nearestToPlayer = Integer.MAX_VALUE;
     /** Of everything the enemy added: the furthest any of it is along the way from its own cores to the player's, as a part of that way. */
@@ -128,7 +130,10 @@ public class Sim{
             Boot.checking += System.nanoTime() - checkStart;
         });
         Events.on(UnitCreateEvent.class, e -> {
-            if(e.spawner != null && e.spawner.team == Vars.state.rules.waveTeam && !original.contains(e.spawner.tile.pos())) turnedOut.increment(e.unit.type.name);
+            if(e.spawner != null && e.spawner.team == Vars.state.rules.waveTeam && !original.contains(e.spawner.tile.pos())){
+                turnedOut.increment(e.unit.type.name);
+                if(firstUnitAt < 0f) firstUnitAt = (float)(Vars.state.tick / 3600f);
+            }
         });
         Events.on(BlockBuildEndEvent.class, e -> {
             if(e.team == Vars.state.rules.waveTeam && !e.breaking) finished.increment(e.tile.block().name);
@@ -198,7 +203,7 @@ public class Sim{
 
         for(int a = first; a < args.length; a++){
             Vars.logic.reset();
-            begun.clear(); finished.clear(); turnedOut.clear(); Boot.slowest = Boot.slowestGame = Boot.modShare = 0; nearestToPlayer = Integer.MAX_VALUE;
+            begun.clear(); finished.clear(); turnedOut.clear(); firstUnitAt = -1f; Boot.slowest = Boot.slowestGame = Boot.modShare = 0; nearestToPlayer = Integer.MAX_VALUE;
             SaveIO.load(new Fi(args[a]));
             Vars.state.set(State.playing);
             //a map file can carry the clock of whoever saved it; the game sets it to zero when a map is started
@@ -246,16 +251,31 @@ public class Sim{
     static int beyond, unbacked;
 
     /** Runs the world that is loaded for so many minutes of the game, watching, and says how it went. */
+    /** Run once a second of game time while a game is watched, when set: what the player's side does in a raid test. */
+    static Runnable perSecond;
+
     static void watch(int minutes, Team enemy){
         {
             firsts.clear();
             beyond = unbacked = 0;
             long start = System.nanoTime();
             for(int m = 1; m <= minutes; m++){
-                Boot.frames(3600);
+                if(perSecond == null){
+                    Boot.frames(3600);
+                }else{
+                    for(int second = 0; second < 60; second++){
+                        Boot.frames(60);
+                        perSecond.run();
+                    }
+                }
                 if(enemy.rules().fillItems || enemy.rules().infiniteResources) problem("the game's free resources for the enemy are on");
                 for(Net.Kind kind : new Net.Kind[]{Net.Kind.mine, Net.Kind.maker, Net.Kind.yard, Net.Kind.post}){
                     if(brain.count(kind) > 0 && !firsts.containsKey(kind.name())) firsts.put(kind.name(), m);
+                }
+                //what it was thinking, every minute, when asked for: -Dxp.notes=key,...
+                if(System.getProperty("xp.notes") != null){
+                    System.out.println(String.format("  min %2d: %s | mines=%d makers=%d yards=%d posts=%d | posture %s | units %d", m, stock(), brain.count(Net.Kind.mine), brain.count(Net.Kind.maker), brain.count(Net.Kind.yard), brain.count(Net.Kind.post), brain.director.posture, enemy.data().units.size));
+                    for(String key : System.getProperty("xp.notes").split(",")) System.out.println("           note " + key + ": " + brain.note(key));
                 }
                 if(m % 5 == 0 || m == minutes){
                     System.out.println(String.format("  min %2d: %s | mines=%d makers=%d yards=%d posts=%d | to build %d | aim=%s | new turrets=%d units from new yards=%s",
@@ -301,6 +321,11 @@ public class Sim{
                     if(ready) armed++; else System.out.println("    not ready to fire: " + b.block.name + " at " + b.tileX() + "," + b.tileY());
                 }
                 if(b instanceof UnitFactory.UnitFactoryBuild f && (f.progress <= 0f || f.efficiency < 0.3f) && b.enabled) System.out.println(String.format("    yard not turning anything out: %s at %d,%d: power %.0f%%, holds %s, wants %s", b.block.name, b.tileX(), b.tileY(), b.power == null ? 100f : b.power.status * 100f, f.items, f.currentPlan == -1 ? "nothing set" : java.util.Arrays.toString(((UnitFactory)b.block).plans.get(f.currentPlan).requirements)));
+                if(b.block == mindustry.content.Blocks.electrolyzer) System.out.println(String.format("    electrolyzer at %d,%d: power %.0f%%, efficiency %.0f%%, water %.1f hydrogen %.1f ozone %.1f",
+                    b.tileX(), b.tileY(), b.power == null ? 100f : b.power.status * 100f, b.efficiency * 100f, b.liquids.get(mindustry.content.Liquids.water), b.liquids.get(mindustry.content.Liquids.hydrogen), b.liquids.get(mindustry.content.Liquids.ozone)));
+                if(b instanceof Reconstructor.ReconstructorBuild r) System.out.println(String.format("    refabricator %s at %d,%d: power %.0f%%, hydrogen %.1f, holds %s, %s, progress %.0f%%, in front of %s",
+                    b.block.name, b.tileX(), b.tileY(), b.power == null ? 100f : b.power.status * 100f, b.liquids == null ? 0f : b.liquids.get(mindustry.content.Liquids.hydrogen), b.items,
+                    r.payload == null ? "no unit in it" : "holds a " + r.payload.unit.type.name, r.fraction() * 100f, r.back() == null ? "nothing" : r.back().block.name));
                 if(b instanceof UnitFactory.UnitFactoryBuild f){ yards++; if(f.progress > 0f || f.items.total() > 0) running++; else System.out.println("    not supplied: " + b.block.name + " at " + b.tileX() + "," + b.tileY() + (b.enabled ? "" : " (stopped: the enemy has all of that unit it may have)")); }
             }
             //what it built to make things has to be making them: watched for ten seconds more, as one that is

@@ -34,6 +34,70 @@ public class LiveCampaign{
         Core.settings.put("expansion-strongest", true);
         Events.on(ClientLoadEvent.class, e -> Core.app.post(() -> { stage = 0; frames = 0; }));
         Events.run(Trigger.update, LiveCampaign::step);
+        //drawn as its side sees it: the watcher belongs to no side, so that the core's unit is the mod's, and is that side only
+        //while the frame is drawn
+        //what its side can see, drawn from what the game keeps for that side, which is what the mod goes by: black where it has
+        //never looked, darkened where it looked once (it knows what stands there) and sees nothing now, clear where it sees now.
+        //the game's own fog picture is not used: it takes in what is uncovered only for the side the watcher is on as it
+        //happens, and the watcher is on no side outside the drawing, so that the core's unit stays the mod's
+        Events.run(Trigger.preDraw, () -> {
+            if(stage != 2) return;
+            Vars.player.team(Team.sharded);
+            sight = null;
+            if(!Vars.state.rules.fog || System.getProperty("xp.fogoff") != null) return;
+            //the minimap still goes by the game's own picture of the fog: that is made again from what the game has, once a second
+            if(Vars.state.rules.staticFog && frames % 60 == 0 && Vars.renderer != null && Vars.renderer.fog != null) Vars.renderer.fog.copyFromCpu();
+            float w = Core.camera.width, h = Core.camera.height;
+            sx = Math.max((int)((Core.camera.position.x - w / 2f) / Vars.tilesize) - 1, 0);
+            sy = Math.max((int)((Core.camera.position.y - h / 2f) / Vars.tilesize) - 1, 0);
+            sw = Math.min((int)(w / Vars.tilesize) + 3, Vars.world.width() - sx);
+            sh = Math.min((int)(h / Vars.tilesize) + 3, Vars.world.height() - sy);
+            if(sw <= 0 || sh <= 0) return;
+            sight = new byte[sw * sh];
+            boolean staticFog = Vars.state.rules.staticFog;
+            for(int y = 0; y < sh; y++){
+                for(int x = 0; x < sw; x++){
+                    int tx = sx + x, ty = sy + y;
+                    sight[x + y * sw] = (byte)(Vars.fogControl.isVisibleTile(Team.sharded, tx, ty) ? 2 : !staticFog || Vars.fogControl.isDiscovered(Team.sharded, tx, ty) ? 1 : 0);
+                }
+            }
+            //the other side's units it does not see now: those are hidden as the game hides them
+            hidden.clear();
+            for(mindustry.gen.Unit unit : mindustry.gen.Groups.unit){
+                if(unit.team != Team.sharded && unit.team != Team.derelict && !Vars.fogControl.isVisible(Team.sharded, unit.x, unit.y)) hidden.add(unit);
+            }
+            heldFog = true;
+            heldStatic = staticFog;
+            Vars.state.rules.fog = false;
+            Vars.state.rules.staticFog = false;
+        });
+        Events.run(Trigger.draw, () -> {
+            if(stage != 2 || sight == null) return;
+            arc.graphics.g2d.Draw.z(mindustry.graphics.Layer.fogOfWar);
+            for(int y = 0; y < sh; y++){
+                for(int x = 0; x < sw; x++){
+                    byte seen = sight[x + y * sw];
+                    if(seen == 2) continue;
+                    arc.graphics.g2d.Draw.color(0f, 0f, 0f, seen == 1 ? 0.62f : 0.96f);
+                    arc.graphics.g2d.Fill.rect((sx + x) * Vars.tilesize, (sy + y) * Vars.tilesize, Vars.tilesize, Vars.tilesize);
+                }
+            }
+            for(mindustry.gen.Unit unit : hidden){
+                if(!unit.isValid()) continue;
+                arc.graphics.g2d.Draw.color(0f, 0f, 0f, 1f);
+                arc.graphics.g2d.Fill.rect(unit.x, unit.y, unit.hitSize * 1.6f + 6f, unit.hitSize * 1.6f + 6f);
+            }
+            arc.graphics.g2d.Draw.color();
+        });
+        Events.run(Trigger.postDraw, () -> {
+            if(stage != 2) return;
+            Vars.player.team(Team.derelict);
+            if(heldFog){
+                Vars.state.rules.fog = true;
+                Vars.state.rules.staticFog = heldStatic;
+                heldFog = false;
+            }
+        });
         int speed = Integer.getInteger("xp.speed", 1);
         if(speed > 1) Core.app.addListener(new ApplicationListener(){
             @Override public void update(){
@@ -57,10 +121,18 @@ public class LiveCampaign{
                 Vars.player.clearUnit();
                 Vars.player.team(Team.derelict);
             }
-            Vars.state.rules.fog = false;
-            Vars.state.rules.staticFog = false;
+            //the fog stays as the game has it: with it off both sides played another game (the fifth sector, held 8 of 8 with
+            //it, was lost 7 of 8 without). what is drawn is what its side sees (xp.fogoff for the old way)
+            if(System.getProperty("xp.fogoff") != null){
+                Vars.state.rules.fog = false;
+                Vars.state.rules.staticFog = false;
+            }
             if(frames < 90 && Vars.state.rules.defaultTeam.core() != null) Core.camera.position.set(Vars.state.rules.defaultTeam.core());
-            if(frames == 200) Vars.ui.showInfoToast("第" + "一二三四五六七八九十".charAt(Math.max(Math.min(java.util.Arrays.asList(Campaign.line).indexOf(sector), 9), 0)) + "关 " + sector + " · 模组扮演玩家 · 困难 · 公平最强模式 · 科技全解锁 · 战争迷雾已关", 10f);
+            if(frames == 100 && System.getProperty("xp.zoom") != null){
+                Vars.renderer.minZoom = 0.2f;
+                Vars.renderer.setScale(Float.parseFloat(System.getProperty("xp.zoom")));
+            }
+            if(frames == 200) Vars.ui.showInfoToast("第" + "一二三四五六七八九十".charAt(Math.max(Math.min(java.util.Arrays.asList(Campaign.line).indexOf(sector), 9), 0)) + "关 " + sector + " · 模组扮演玩家 · 困难 · 公平最强模式 · 科技全解锁 · 战争迷雾照常（显示我方视野）", 10f);
             //a trial of the trial: a picture and a line of how it stands, then it closes
             String shot = System.getProperty("xp.shot");
             if(shot != null && frames == Integer.getInteger("xp.shotframe", 900)){
@@ -75,6 +147,12 @@ public class LiveCampaign{
             //the player's part in research, once a second of game time
             if(!Vars.state.isPaused() && (int)Vars.state.tick / 60 != lastSecond){
                 lastSecond = (int)Vars.state.tick / 60;
+                if(System.getProperty("xp.notes") != null && lastSecond % 10 == 0){
+                    for(String key : System.getProperty("xp.notes").split(",")) Log.info("[XP] t=@ note @: @", lastSecond, key, ExpansionMod.brain.note(key));
+                    Team me0 = Vars.state.rules.defaultTeam;
+                    if(me0.core() != null) Log.info("[XP] t=@ core @", lastSecond, me0.core().items);
+                    Log.info("[XP] t=@ reserve @", lastSecond, ExpansionMod.brain.reserveNote());
+                }
                 try{
                     Campaign.research();
                 }catch(Throwable t){
@@ -85,6 +163,11 @@ public class LiveCampaign{
     }
 
     static int lastSecond = -1;
+    /** What its side sees of the tiles in view, worked out before the frame is drawn: 0 never seen, 1 seen once, 2 seen now. */
+    static byte[] sight;
+    static int sx, sy, sw, sh;
+    static boolean heldFog, heldStatic;
+    static final arc.struct.Seq<mindustry.gen.Unit> hidden = new arc.struct.Seq<>();
 
     static void start(){
         Fi root = new Fi(System.getProperty("xp.root", "."));
@@ -135,8 +218,10 @@ public class LiveCampaign{
             enemy.rules().buildSpeedMultiplier *= planet.enemyBuildSpeedMultiplier;
             enemy.rules().unitFactoryActivationDelay = Math.max(enemy.rules().unitFactoryActivationDelay, planet.enemyFactoryActivationDelay);
             if(preset.captureWave > 0) rules.winWave = preset.captureWave;
-            rules.fog = false;
-            rules.staticFog = false;
+            if(System.getProperty("xp.fogoff") != null){
+                rules.fog = false;
+                rules.staticFog = false;
+            }
             Vars.state.set(State.playing);
             Vars.logic.play();
             Vars.state.wavetime *= planet.campaignRules.difficulty.waveTimeMultiplier;
@@ -147,6 +232,13 @@ public class LiveCampaign{
             stage = 2;
             frames = 0;
             Log.info("[XP] campaign @: researched @, bank @", sector, Campaign.researched.size, Campaign.bank);
+            StringBuilder open = new StringBuilder();
+            for(mindustry.world.Block block : Vars.content.blocks()) if(block.unlockedNow() && block.isOnPlanet(Planets.erekir)) open.append(block.name).append(' ');
+            StringBuilder opts = new StringBuilder();
+            for(expansion.Options.Option option : expansion.Options.all){
+                opts.append(option.name).append('=').append(option instanceof expansion.Options.Flag flag ? String.valueOf(flag.on()) : String.valueOf(((expansion.Options.Num)option).get())).append(' ');
+            }
+            Log.info("[XP] options: @", opts);
         });
     }
 }
