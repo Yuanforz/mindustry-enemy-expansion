@@ -1,5 +1,6 @@
 package expansion.econ;
 
+import arc.math.*;
 import arc.math.geom.*;
 import arc.struct.*;
 import expansion.Blueprint.Part;
@@ -82,9 +83,14 @@ public final class Hand extends mindustry.entities.units.AIController{
         if(now() < mendAt) return;
         mendAt = now() + 10f;
         arc.struct.IntSet now = new arc.struct.IntSet();
+        Seq<Part> mine = new Seq<>();
         for(int i = 0; i < Math.min(next, order.size()); i++){
             Part self = works.at.get(order.get(i));
-            if(self == null) continue;
+            if(self != null) mine.add(self);
+        }
+        //(and the radars it put down to see by)
+        mine.addAll(radars);
+        for(Part self : mine){
             Building b = Vars.world.build(self.x, self.y);
             if(debugPower && b != null && b.power != null && b.block.consPower != null && b.power.graph.producers.isEmpty()) System.out.println("    mend? " + b.block.name + " at " + b.tileX() + "," + b.tileY() + " part " + self.block.name + " batteries " + b.power.graph.batteries.size + " cut off before " + cutOff.contains(b.pos()));
             if(b == null || b.block != self.block || b.power == null || b.block.consPower == null || !b.power.graph.producers.isEmpty()) continue;
@@ -138,6 +144,7 @@ public final class Hand extends mindustry.entities.units.AIController{
         if(d.startsWith("building")) what = "building";
         else if(d.startsWith("putting back")) what = "putting back";
         else if(d.startsWith("a unit is sent to see")) what = "waiting to see ground";
+        else if(d.startsWith("a radar goes up")) what = "a radar going up";
         else if(d.startsWith("saving up")){
             //(the item most short of what it saves for)
             java.util.regex.Matcher m = java.util.regex.Pattern.compile("([a-z-]+) (\\d+)/(\\d+)").matcher(d);
@@ -214,8 +221,10 @@ public final class Hand extends mindustry.entities.units.AIController{
             Part where = works.at.get(m);
             //(once: the game works its fog out on a thread of its own)
             Tile dark = where == null ? null : unseen(where);
+            //(no unit to send: a radar put down on ground seen, within its reach of the place, and powered, to see it)
+            boolean radarGoing = dark != null && !canScout() && radar(dark);
             //waited too long for a look (no unit can get there): this one is put off to the end, and the next is begun
-            if(dark != null && fogSince[0] == next && now() - fogSince[1] > 45f){
+            if(dark != null && fogSince[0] == next && now() - fogSince[1] > (radarGoing ? 150f : 45f)){
                 skipped.add(next);
                 trouble.add(String.format("%s at %d,%d put off: nobody could get to see its ground", m.recipe.name, where.x, where.y));
                 next++;
@@ -224,6 +233,11 @@ public final class Hand extends mindustry.entities.units.AIController{
             if(dark != null && fogSince[0] != next){
                 fogSince[0] = next;
                 fogSince[1] = now();
+            }
+            if(dark != null && radarGoing){
+                doing = String.format("a radar goes up to see %d,%d for #%d %s (ground not seen can't be built on); digging meanwhile", where.x, where.y, next + 1, m.recipe.name);
+                dig(m.cost);
+                return;
             }
             if(dark != null){
                 doing = String.format("a unit is sent to see %d,%d for #%d %s (ground not seen can't be built on); digging meanwhile", where.x, where.y, next + 1, m.recipe.name);
@@ -390,6 +404,39 @@ public final class Hand extends mindustry.entities.units.AIController{
     public final Seq<Part> deferred = new Seq<>();
 
     /** Whether there is a unit (not the core unit) to send to have a look. */
+    /** Radars this hand has put down to see ground (built, or going up). */
+    public final Seq<Part> radars = new Seq<>();
+
+    /**
+     * A radar for seeing this tile: one of ours already within its reach of it (standing or going up), else a new one on
+     * the free ground seen that is nearest the tile within that reach. Whether there is one.
+     */
+    boolean radar(Tile dark){
+        Block r = Vars.content.block("radar");
+        if(r == null || !works.allowed.contains("radar")) return false;
+        float reach = r.fogRadius - 2f;
+        for(Part p : radars) if(Mathf.dst(p.x, p.y, dark.x, dark.y) <= reach) return true;
+        for(Building b : unit.team.data().buildings) if(b.block == r && Mathf.dst(b.tileX(), b.tileY(), dark.x, dark.y) <= reach) return true;
+        Tile best = null;
+        float bestD = Float.MAX_VALUE;
+        int rr = (int)reach;
+        for(int dx = -rr; dx <= rr; dx++) for(int dy = -rr; dy <= rr; dy++){
+            int x = dark.x + dx, y = dark.y + dy;
+            float d = Mathf.dst(0, 0, dx, dy);
+            if(d > reach || d >= bestD) continue;
+            if(!Vars.fogControl.isDiscovered(unit.team, x, y) || !mindustry.world.Build.validPlace(r, unit.team, x, y, 0)) continue;
+            if(works.grid != null && works.grid.block(x, y) != null) continue;
+            bestD = d;
+            best = Vars.world.tile(x, y);
+        }
+        if(best == null) return false;
+        Part p = new Part(r, best.x, best.y, 0, null);
+        radars.add(p);
+        deferred.add(p);
+        trouble.add(String.format("a radar at %d,%d to see %d,%d", best.x, best.y, dark.x, dark.y));
+        return true;
+    }
+
     boolean canScout(){
         for(Unit u : unit.team.data().units) if(u != unit && u.type != unit.type && !u.dead() && u.controller() instanceof mindustry.ai.types.CommandAI) return true;
         return false;

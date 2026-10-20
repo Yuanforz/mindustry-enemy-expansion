@@ -409,6 +409,8 @@ public final class Plan{
         }
         cat = ((Catalog)hit[0]).copy();
         field = ((Field)hit[1]).copy(cat);
+        //(a radar to see by, where they may be built: the core unit flies to it and puts it up, about three quarters of a minute)
+        if(allowed.contains("radar")) cat.radarAt = 45f;
     }
 
     /** Readings of the game this frame (see scan). */

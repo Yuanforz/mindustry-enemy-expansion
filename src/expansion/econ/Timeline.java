@@ -444,7 +444,7 @@ public final class Timeline{
      */
     float seenAt(Machine m){
         if(!m.unseen) return 0f;
-        float best = Float.POSITIVE_INFINITY;
+        float best = cat.radarAt;
         for(var e : cat.unitSpeed.entrySet()){
             float at = first[e.getKey()];
             if(!Float.isInfinite(at) && e.getValue() > 0f) best = Math.min(best, at + m.distance / e.getValue());
