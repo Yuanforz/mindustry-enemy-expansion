@@ -1906,7 +1906,7 @@ java ... xtest.DodgeLab build/test-data blueprints dodge|command 6 60 elude   # 
 - 之前的战役模式用的是经济基准的每区科技表，里面没有炮塔，两边都造不了撕裂（已改成 `xtest.Campaign` 的研究方式：此区之前的都算已占领，此区算已降落，科技树允许的全给，物品第一次进核心再放开新的）。
 - 改了之后 Brain 在 onset 仍然 2:15 被 8 台 stell 拆核心，一座炮塔都没放。Brain 分支在 `xtest.Campaign` 里是拿下过 onset 的（`test/campaign/after-onset.txt`），区别之一是那边保留了地图迷雾，这边关掉了：原版敌人没有迷雾就一开局直扑核心。到服务器上先跑 `-Dmatch.us=brain -Dmatch.fog=true` 的基线对照，再看 Operations 在迷雾下（只能在已探索地面建造）能不能照常铺开。
 
-线 2（纯规则 Brain，最强设置，even 模式）这一批已出的 14 局：胜 6（aegis、crossroads、marsh、onset、origin、stronghold），负 5（atlas、basin、caldera、intersect、lake），平 3。还没到"轻松超过"。输的局里看出来的问题：
+线 2（纯规则 Brain，最强设置，even 模式，batch `l2a`）共 20 局：胜 7（aegis、crossroads、marsh、onset、origin、stronghold、gen:2），负 9（atlas、basin、caldera、intersect、lake、gen:3–6），平 4（split、peaks、siege、gen:1）。还没到"轻松超过"。gen:3–6 四局都是 6–8 分钟被 Brain 的 3–5 台 stell 拆核心，我方 0 兵 0 炮塔：第一阶段的计划有 24–32 台机器，铍一直紧，第一台 stell 到 7 分钟还没出来，而 Brain 5 分钟就有兵。输的局里看出来的问题：
 - **执行器死等**：caldera 上计划把舰船工厂（要 250 硅）排在第一座硅炉之前，核心只有 200 硅，核心机又挖不了硅，于是从 2:00 等到 10:51 被拆，期间别的物品攒到 3800、一座炮塔没放；basin 上 tank-refabricator 等硅也等了 5 分钟。已加：一步的缺口 60 秒没有缩小就先放一边、做下一步，攒够了马上补回（`Hand.putOff`，`-Dxp.putoff=false` 关掉）。**还没在对局里验证**，到服务器上先跑 caldera、basin、intersect。模型为什么认为这一步能按时做成（"first elude at 2:58"）也要查：模型和执行器对硅从哪来的看法不一致。
 - **没有对手单位时不设防**：basin 上防御规划看到"对方现在没有兵"就放 0 座炮塔，后来 Brain 的 8 台 stell 来了直接拆核心。防御该按对方的产能（兵营、工厂、资源）预测，而不是按当下兵力。这就是线 1 说的压力曲线。
 
