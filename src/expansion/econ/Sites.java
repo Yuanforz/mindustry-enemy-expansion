@@ -188,6 +188,13 @@ public final class Sites{
             }
             Machine m = new Machine(r, item, factor, build.tileX(), build.tileY(), dst(field, build.tileX(), build.tileY()), new int[cat.size()], false, true);
             m.rotation = build.rotation;
+            //(one of the map's that is not working now, or whose output has nowhere to go, gives nothing as it stands: seen
+            //at once, before any income is measured; it may be taken up with lines of the plan's own. On crevice nine
+            //crushers stood with their sand backed up, the plan counted on them, and its furnace never got sand)
+            if(!r.makesUnits() && !producing(build)){
+                field.revivable.add(m);
+                continue;
+            }
             field.existing.add(m);
         }
         return field;
@@ -432,6 +439,13 @@ public final class Sites{
     }
 
     /** The recipe a standing building works by, if it is one the catalog has. */
+    /** Whether a building is making something that goes somewhere: working, and not full of what it makes. */
+    static boolean producing(Building build){
+        if(build.efficiency <= 0.01f && build.block.consPower != null) return false;
+        if(build.items != null && build.block.hasItems && build.block.itemCapacity > 0 && build.items.total() >= build.block.itemCapacity - 1) return false;
+        return true;
+    }
+
     static Recipe existing(Catalog cat, Building build){
         String name = build.block.name;
         if(build instanceof UnitFactory.UnitFactoryBuild f){

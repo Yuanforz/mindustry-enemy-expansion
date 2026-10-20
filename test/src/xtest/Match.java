@@ -199,6 +199,11 @@ public class Match{
         }
         Boot.frames(1);
 
+        if(Boolean.getBoolean("match.fogprobe")){
+            int seenNow = 0;
+            for(int x = 0; x < Vars.world.width(); x++) for(int y = 0; y < Vars.world.height(); y++) if(Vars.fogControl.isDiscovered(us, x, y)) seenNow++;
+            System.out.println("  fog probe at the start: " + seenNow + " tiles discovered of " + Vars.world.width() * Vars.world.height() + " (static fog " + rules.staticFog + ", fog " + rules.fog + ")");
+        }
         raids = new expansion.econ.Raids(us);
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == us) made.increment("us " + e.unit.type.name);
@@ -623,6 +628,11 @@ public class Match{
                 if(!tb.hasAmmo()) drySeconds++;
             }
             if(f % 3600 == 0 && f > 0) System.out.println(report(f / 60f, hand, stage));
+            if(f % 3600 == 0 && f > 0 && Boolean.getBoolean("match.fogprobe")){
+                int seenNow = 0;
+                for(int x = 0; x < Vars.world.width(); x++) for(int y = 0; y < Vars.world.height(); y++) if(Vars.fogControl.isDiscovered(us, x, y)) seenNow++;
+                System.out.println("  fog probe: " + seenNow + " tiles discovered");
+            }
             //the forecast of the other side's force, against what it turns out to have (-Dmatch.forecast=true)
             if(f % 3600 == 0 && Boolean.getBoolean("match.forecast") && us.core() != null){
                 int minute = f / 3600;

@@ -919,7 +919,7 @@ public final class Plan{
             Machine m = model.order.get(i);
             StringBuilder c = new StringBuilder();
             for(int k = 0; k < m.cost.length; k++) if(m.cost[k] > 0) c.append(' ').append(cat.get(k).name).append('=').append(m.cost[k]);
-            out.println(String.format("    order #%d %s%s: begun %s done %s; cost%s", i + 1, m.recipe.name, m.item >= 0 ? " (" + cat.get(m.item).name + ")" : "", time(model.begun[i]), time(model.finished[i]), c));
+            out.println(String.format("    order #%d %s%s at %d,%d%s: begun %s done %s; cost%s", i + 1, m.recipe.name, m.item >= 0 ? " (" + cat.get(m.item).name + ")" : "", m.x, m.y, m.unseen ? " (not seen)" : "", time(model.begun[i]), time(model.finished[i]), c));
         }
         StringBuilder st = new StringBuilder("    at the end the core held:");
         for(int k = 0; k < cat.size(); k++) if(cat.get(k).kind == Res.Kind.item && model.stock[k] >= 1f) st.append(' ').append(cat.get(k).name).append('=').append((int)model.stock[k]);
