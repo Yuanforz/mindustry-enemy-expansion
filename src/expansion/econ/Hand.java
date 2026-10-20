@@ -406,7 +406,9 @@ public final class Hand extends mindustry.entities.units.AIController{
                 best = d;
                 target = p;
             }
-            if(!(tile.build instanceof ConstructBuild site && site.current == p.block)){
+            //(a site is begun only within the core unit's building reach, as a player's: further off it stays a plan, and the game
+            //begins it once the unit has flown near)
+            if(!(tile.build instanceof ConstructBuild site && site.current == p.block) && unit.within(tile.worldx(), tile.worldy(), unit.type.buildRange)){
                 if(Build.validPlace(p.block, unit.team, p.x, p.y, p.rotation)){
                     Call.beginPlace(unit, p.block, unit.team, p.x, p.y, p.rotation, p.config);
                 }
