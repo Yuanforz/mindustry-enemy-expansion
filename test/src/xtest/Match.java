@@ -89,6 +89,8 @@ public class Match{
             SaveIO.load(map);
         }
         Rules rules = Vars.state.rules;
+        //the campaign's difficulty (-Dmatch.difficulty=eradication: the enemy's units and buildings hardier, as a player may set it)
+        Planets.erekir.campaignRules.difficulty = Difficulty.valueOf(System.getProperty("match.difficulty", "normal"));
         Planets.erekir.applyRules(rules, false);
         us = rules.defaultTeam;
         them = rules.waveTeam;
@@ -215,6 +217,9 @@ public class Match{
         }
         //a stage not all up after this long is left as it is, and the next begun
         float stageLimit = Float.parseFloat(System.getProperty("match.stagemin", "6")) * 3600f;
+        //each stage's own time: twice what its plan takes by the model, and never less than the least (a 22-machine thorium
+        //plan the model has up in 7 minutes was left at 20 of 22 after six, and nothing after it could be had)
+        float limitNow = stageLimit;
         String sector = expansion.defense.Tech.known(map.nameWithoutExtension()) ? map.nameWithoutExtension() : "atlas";
         expansion.defense.GameData.shapes();
         int stage = -1, climbSteps = 0;
@@ -237,7 +242,7 @@ public class Match{
             //(a stage is not left for want of time while what makes its units is not up yet, unless three times over: on lake,
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
             //(a stage is over once its own order is up, whatever it is mending meanwhile: under raids that never ends)
-            boolean over = paused == null && hand != null && (hand.orderDone() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
+            boolean over = paused == null && hand != null && (hand.orderDone() || f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
             if((hand == null || over) && (again || stage + 1 < stages.length) && us.core() != null){
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 if(!again) stage++;
@@ -321,6 +326,7 @@ public class Match{
                 again = climbing && plan != null;
                 System.out.println(String.format("  stage %d planned in %.1f s (wall)", stage + 1, (System.nanoTime() - p0) / 1e9f));
                 if(Boolean.getBoolean("xp.time")) System.out.print(expansion.econ.Took.report());
+                if(plan != null && plan.model != null) limitNow = Math.max(stageLimit, Math.min(plan.model.t, 3600f) * 2f * 60f);
                 if(plan != null && plan.model != null){
                     if(hand != null) before.add(hand);
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
