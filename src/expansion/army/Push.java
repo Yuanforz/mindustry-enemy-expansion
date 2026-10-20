@@ -288,11 +288,53 @@ public class Push{
         boolean air = fighters.allMatch(Unit::isFlying);
         //first what keeps the economy from what it lacks: the turrets over an ore it wants (the tungsten of a map is often
         //all under the other side's guns, and with it every unit of the second tier)
+        //what the map's tasks ask to have destroyed, the nearest of it that it can take (on onset the enemy core inside the
+        //first part of the map: until it falls the rest of the map stays shut)
+        Building task = null;
+        float taskDst = Float.MAX_VALUE;
+        for(Building b : asked){
+            if(b == null || !b.isValid() || b.team == army.team) continue;
+            if(guard(b, air) > all) continue;
+            if(reachable != null && !Reach.near(reachable, b.tileX(), b.tileY(), b.block.size / 2 + 2)) continue;
+            float d = Mathf.dst2(x, y, b.x, b.y);
+            if(d < taskDst){
+                taskDst = d;
+                task = b;
+            }
+        }
+        if(task != null) return onTheWay(x, y, task, all, air);
         Building opener = opener(all, air);
-        if(opener != null) return opener;
+        if(opener != null) return onTheWay(x, y, opener, all, air);
         Building best = nearest(first, x, y, all, air);
-        return best != null ? best : nearest(then, x, y, all, air);
+        if(best == null) best = nearest(then, x, y, all, air);
+        return best == null ? null : onTheWay(x, y, best, all, air);
     }
+
+    /**
+     * The target, or first a loaded turret of the other side's that reaches the way there (as the crow flies, from where
+     * the units are), the nearest of those it can take; null if one it can't take stands in the way. (On onset a wave
+     * sent for the enemy core walked past a breach that reached the road, and 17 of 24 units died to it while the core
+     * was never touched.)
+     */
+    @Nullable Building onTheWay(float x, float y, Building target, float can, boolean air){
+        Building best = null;
+        float bestD = Float.MAX_VALUE;
+        for(Threat.Gun g : army.threat.guns){
+            if(!g.loaded || g.build == target || g.build == null || !g.build.isValid() || (air ? !g.air : !g.ground)) continue;
+            float off = arc.math.geom.Intersector.distanceSegmentPoint(x, y, target.x, target.y, g.x, g.y);
+            if(off > g.range + 2f * Vars.tilesize) continue;
+            if(guard(g.build, air) > can) return null;
+            float d = Mathf.dst2(x, y, g.x, g.y);
+            if(d < bestD){
+                bestD = d;
+                best = g.build;
+            }
+        }
+        return best != null ? best : target;
+    }
+
+    /** What the map's tasks ask to have destroyed: gone for before anything else that can be taken (set from outside). */
+    public final Seq<Building> asked = new Seq<>();
 
     /** Items the economy lacks, whose ore under the other side's turrets is worth opening up. */
     public final ObjectSet<Item> want = new ObjectSet<>();

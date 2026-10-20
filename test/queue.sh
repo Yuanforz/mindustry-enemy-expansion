@@ -41,7 +41,7 @@ run(){
     rm -rf "$dir"; mkdir -p "$dir/state"
     java -XX:+UseSerialGC -XX:CICompilerCount=2 -Dxp.virtual=true -Dxp.syncpath=true -Dxp.syncfog=true -Dxp.state="$dir/state" -Dxp.sectors=1 "$@" -cp "$GAME_JAR:$snap/classes:$snap/test-classes" xtest.Campaign "$dir" blueprints build/test-maps/maps/erekir "$minutes" hard "$map" > "$log.log" 2> "$log.err"
     local row=$(grep -h "^  $map: " "$log.log" | head -1)
-    local w=$(case "$row" in *": WON"*) echo us;; *": LOST"*) echo enemy;; "") echo none;; *) echo -;; esac)
+    local w=$(case "$row" in *": WON"*) echo us;; *": LOST"*) echo enemy;; ""|*"could not be landed"*) echo none;; *) echo -;; esac)
     local at=$(grep -h "METRICS sector=$map " "$log.log" | sed 's/.*minute=\([0-9]*\).*/\1/')
     r="RESULT $name $mode winner=$w at ${at:-?}:00; ${row#*: }"
   else

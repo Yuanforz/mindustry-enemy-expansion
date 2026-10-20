@@ -260,7 +260,7 @@ public class Match{
             System.out.println("  researched for " + map.nameWithoutExtension() + ": " + blocks);
         }
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/posts,blueprints/plants,blueprints/modules"));
-        String[] stages = brainSide ? new String[0] : System.getProperty("match.stages", "stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
+        String[] stages = brainSide ? new String[0] : System.getProperty("match.stages", "stell:1|merui:1|elude:1|avert:1,stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
         //chosen from the game as it goes (expansion.army.Muster): what to make, and how many makers, each stage
         if(Boolean.getBoolean("match.auto")) stages = "auto,defend,auto,defend,auto,auto,auto,auto,auto,auto".split(",");
         //the other side has yards from the start (a base that came with the map) whose units can get to us: a defence first,
@@ -301,9 +301,20 @@ public class Match{
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
             //(a stage is over once its own order is up, whatever it is mending meanwhile: under raids that never ends)
             boolean over = paused == null && hand != null && (hand.orderDone() || f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
-            if((hand == null || over) && (again || stage + 1 < stages.length) && us.core() != null){
+            //what the map's tasks ask for, before the next of our own stages (in the campaign, once a stage of ours is up): a
+            //stage the same task asked for is not asked again for four minutes
+            expansion.econ.Asks.Ask task = null;
+            if((hand == null || over) && campaign && hand != null && us.core() != null && f % 60 == 0){
+                expansion.econ.Asks.Ask a = asks(hand, allowed, f);
+                if(a.stage != null && (a.by != lastTaskBy || f - lastTaskAt > 4 * 3600)) task = a;
+            }
+            if((hand == null || over) && (again || task != null || stage + 1 < stages.length) && us.core() != null){
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
-                if(!again) stage++;
+                if(task != null){
+                    lastTaskBy = task.by;
+                    lastTaskAt = f;
+                    System.out.println("  " + Plan.time(f / 60f) + ": a stage the map's tasks ask for, " + task.stage + ": " + task.why.toString("; "));
+                }else if(!again) stage++;
                 again = false;
                 //(the world as it stands when a stage is planned, kept for planning it again by itself: -Dmatch.save=dir, xtest.PlanAt)
                 if(System.getProperty("match.save") != null){
@@ -319,11 +330,11 @@ public class Match{
                 //no kind of this stage that can be made gets to the Brain's base: then the first that can be made, to hold our own
                 //(on intersect every stage was passed over, nothing was built, and the Brain's few units took the core)
                 boolean homeGuard = false;
-                String[] ways = stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
+                String[] ways = task != null ? new String[]{task.stage} : stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
                 //"climb:conquer": a step at a time towards the goal, each step the nearest of what its maker needs that nothing
                 //of ours makes yet (Plan.next), the goal itself last; the stage is taken again till then (at most 10 steps)
                 boolean climbing = false;
-                if(stages[stage].startsWith("climb:")){
+                if(task == null && stages[stage].startsWith("climb:")){
                     String goal = stages[stage].substring(6);
                     Plan probe = new Plan(System.out);
                     probe.gate = !Boolean.getBoolean("match.allblocks");
@@ -341,7 +352,7 @@ public class Match{
                 }
                 for(int pass = 0; pass < 2 && plan == null; pass++){
                 homeGuard = pass == 1;
-                if(homeGuard && stages[stage].startsWith("defend")) break;
+                if(homeGuard && ways[0].startsWith("defend")) break;
                 if(homeGuard) System.out.println("  stage " + (stage + 1) + ": nothing that can be made gets to the Brain's base; units to hold our own");
                 for(String way : ways){
                     st = way.split(":");
@@ -509,6 +520,19 @@ public class Match{
                 Campaign.research();
                 researchedOnly(blocks, allowed);
                 if(blocks.size() != had) System.out.println("  " + Plan.time(f / 60f) + ": researched now " + blocks);
+            }
+            //what the map's tasks ask to have put down or destroyed: blocks to the hand of now, targets to the army
+            if(campaign && hand != null && f % 600 == 300 && us.core() != null){
+                expansion.econ.Asks.Ask a = asks(hand, allowed, f);
+                for(expansion.Blueprint.Part p : a.parts){
+                    hand.deferred.add(p);
+                    taskGiven.put(p, f);
+                }
+                if(a.parts.size > 0) System.out.println("  " + Plan.time(f / 60f) + ": put down for the map's tasks: " + a.parts.size + " " + a.parts.first().block.name + " (" + a.why.toString("; ") + ")");
+                if(army != null){
+                    army.push.asked.clear();
+                    army.push.asked.addAll(a.targets);
+                }
             }
             long q0 = System.nanoTime();
             Boot.frames(1);
@@ -808,6 +832,23 @@ public class Match{
         return ask;
     }
 
+    /** The task that last asked for a stage, and when. */
+    static Object lastTaskBy;
+    static int lastTaskAt;
+    /** Blocks put down for the map's tasks, and when: not asked for again for three minutes, while they go up. */
+    static final Map<expansion.Blueprint.Part, Integer> taskGiven = new IdentityHashMap<>();
+
+    /** What the map's tasks ask of our side now. */
+    static expansion.econ.Asks.Ask asks(expansion.econ.Hand hand, Set<String> allowed, int f){
+        taskGiven.values().removeIf(at -> f - at > 3 * 3600);
+        Seq<expansion.Blueprint.Part> given = new Seq<>();
+        for(var p : taskGiven.keySet()){
+            Tile t = Vars.world.tile(p.x, p.y);
+            if(t != null && t.block() != p.block) given.add(p);
+        }
+        return expansion.econ.Asks.now(us, allowed, (b, x, y, r) -> freeFor(hand, b.name, x, y, r), given);
+    }
+
     /** Whether a block may go down here now, on ground the hand's own layout has nothing planned on. */
     static boolean freeFor(expansion.econ.Hand hand, String name, int x, int y, int rotation){
         Block b = Vars.content.block(name);
@@ -1005,6 +1046,9 @@ public class Match{
             b.append(String.format("%s cores %d (%.0f%%) blocks %d turrets %d items %d units %s; ", team == us ? "us" : "Brain", team.cores().size, max > 0 ? hp * 100 / max : 0f, team.data().buildings.size, turrets, items, units));
         }
         if(hand != null) b.append(String.format("our stage %d: %d of %d begun, %s", stage + 1, hand.next, hand.order.size(), hand.doing));
+        //the map's own tasks: how many done, and the one it waits on
+        var all = Vars.state.rules.objectives.all;
+        if(all.size > 0) b.append(String.format("; tasks %d/%d%s", all.count(o -> o.isCompleted()), all.size, Campaign.task(Vars.state.rules)));
         return b.toString();
     }
 
