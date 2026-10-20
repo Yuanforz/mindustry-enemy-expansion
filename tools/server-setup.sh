@@ -16,8 +16,8 @@ jar_url=https://github.com/Anuken/Mindustry/releases/download/v160.7/Mindustry.j
 GAME_JAR="${GAME_JAR:-$up/Mindustry.jar}"
 
 fetch(){
-  if command -v curl >/dev/null 2>&1; then curl -fL --retry 4 -o "$2" "$1"
-  elif command -v wget >/dev/null 2>&1; then wget -O "$2" "$1"
+  if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 4 -o "$2" "$1"
+  elif command -v wget >/dev/null 2>&1; then wget -q -O "$2" "$1"
   else echo "neither curl nor wget is installed"; exit 1
   fi
 }
