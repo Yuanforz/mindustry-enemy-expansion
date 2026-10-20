@@ -58,6 +58,13 @@ public class Match{
         //the path finders stepped with the game (else the same start plays out otherwise each time, and units wait on a
         //thread that lags behind); -Dxp.syncpath=false for the game's own threads
         if(System.getProperty("xp.syncpath") == null) System.setProperty("xp.syncpath", "true");
+        //and the fog worked out in step with the game too; the Brain's thinking timed by its steps, not the wall (else it
+        //plays worse the busier the machine: as xtest.Campaign's batches run it, test/one-run.sh)
+        if(System.getProperty("xp.syncfog") == null) System.setProperty("xp.syncfog", "true");
+        if(System.getProperty("xp.virtual") == null) System.setProperty("xp.virtual", "true");
+        //each run its own arrangement of the hash codes maps of blocks, items and units are gone through in
+        //(-Dxp.hashshuffle=n): with one for every run of a build, repeated runs play the same game
+        for(int i = Integer.getInteger("xp.hashshuffle", 0); i > 0; i--) System.identityHashCode(new Object());
         ExpansionMod[] mod = {null};
         Boot.boot(args[0], () -> mod[0] = new ExpansionMod());
         mod[0].init();
@@ -177,8 +184,10 @@ public class Match{
         if(campaign) Vars.state.wavetime *= Planets.erekir.campaignRules.difficulty.waveTimeMultiplier;
         Vars.state.tick = 0;
         Boot.frames(1);
-        //the whole map open, the way the map's own script opens it up (as the other tests run it, "open")
-        if(rules.limitMapArea){
+        //the whole map open, the way the map's own script opens it up (as the other tests run it, "open"); not in the
+        //campaign, where the map's own limit stands and its script opens it as its tasks are done, as xtest.Campaign plays
+        //it (opened, onset's enemy base was in reach from the first second: eight stells took the core at 2:16)
+        if(rules.limitMapArea && !campaign){
             int x = rules.limitX, y = rules.limitY, w = rules.limitWidth, h = rules.limitHeight;
             rules.limitMapArea = false;
             Vars.world.checkMapArea(x, y, w, h);
@@ -676,6 +685,9 @@ public class Match{
             if(b.block instanceof mindustry.world.blocks.units.Reconstructor re) for(var up : re.upgrades) kinds.add(up[1].name);
         }
         for(Unit u : foe.data().units) if(!u.spawnedByCore) kinds.add(u.type.name);
+        //(only fighting units of known kinds: the Brain's builder, an evoke not counted as the core's, left the kinds
+        //without the first tier's and the defence was planned against nothing: none on basin, stell took the core at 13:00)
+        kinds.removeIf(k -> expansion.defense.Foe.get(k) == null);
         if(kinds.isEmpty()) kinds.addAll(List.of("stell", "merui", "elude"));
         for(String k : kinds){
             var kind = expansion.defense.Foe.get(k);
@@ -709,6 +721,15 @@ public class Match{
             units.merge(e.key, (int)Math.ceil(have + e.value), Math::max);
         }
         ask.units.putAll(units);
+        //the map's waves (a sector the game's enemy plays by waves): those of the next few minutes, each from where it comes
+        //(the spawns, the map edge for air), sized by the largest of them (on intersect three stells of the first wave took
+        //a core with 3400 items in it and not one turret, for the defence looked only at the other side's yards)
+        int[] next = wavesAhead(seconds);
+        if(next != null){
+            DefenseRun.sources(ask, foe, next[0], next[1]);
+            for(Map<String, Integer> w : expansion.defense.GameData.waves(next[0], next[1])) for(var e : w.entrySet()) if(expansion.defense.Foe.get(e.getKey()) != null) ask.units.merge(e.getKey(), e.getValue(), Math::max);
+            System.out.println(String.format("  waves %d-%d come in the next %.0f minutes: largest of each %s", next[0], next[1], wavesHorizon / 60f, ask.units));
+        }
         for(CoreBlock.CoreBuild c : foe.cores()){
             expansion.defense.Planner.Source ground = new expansion.defense.Planner.Source(c.tileX(), c.tileY(), "Brain core " + c.tileX() + "," + c.tileY());
             for(var e : units.entrySet()){
@@ -821,7 +842,37 @@ public class Match{
      * Whether a side is under threat from the start: the other side's yards that stand already and make units that can get to
      * it, in words; null if none.
      */
+    /** How far ahead the waves a defence is planned against reach, in seconds (-Dmatch.waveahead=minutes). */
+    static float wavesHorizon = Float.parseFloat(System.getProperty("match.waveahead", "8")) * 60f;
+
+    /**
+     * The first and last of the waves due within the horizon (at least the next three, never past the wave that wins the
+     * sector), or null where the map sends none.
+     */
+    static int[] wavesAhead(float seconds){
+        Rules rules = Vars.state.rules;
+        if(!rules.waves || rules.spawns.isEmpty() || (!Vars.state.hasSpawns() && !(rules.wavesSpawnAtCores && rules.attackMode))) return null;
+        float spacing = Math.max(1f, rules.waveSpacing / 60f);
+        float toNext = Math.max(0f, Vars.state.wavetime / 60f);
+        int first = Math.max(1, Vars.state.wave);
+        int last = first + Math.max(2, (int)((wavesHorizon - toNext) / spacing));
+        if(rules.winWave > 0) last = Math.min(last, rules.winWave);
+        return last < first ? null : new int[]{first, last};
+    }
+
     static String earlyThreat(Team me, Team foe){
+        //waves on the way, with units that can get to us
+        int[] next = wavesAhead(0f);
+        if(next != null){
+            for(Map<String, Integer> w : expansion.defense.GameData.waves(next[0], next[1])){
+                for(String name : w.keySet()){
+                    mindustry.type.UnitType kind = Vars.content.unit(name);
+                    if(kind != null && (kind.flying || Vars.spawner.getSpawns().contains(t -> expansion.army.Reach.can(kind, foe, t.x, t.y, me.core().tileX(), me.core().tileY())))){
+                        return String.format("the map sends waves, the first in %.0f s, %s of them by the %d-th", Vars.state.wavetime / 60f, name, next[1]);
+                    }
+                }
+            }
+        }
         ObjectIntMap<String> yards = new ObjectIntMap<>();
         for(Building b : foe.data().buildings){
             mindustry.type.UnitType made = null;

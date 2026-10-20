@@ -713,6 +713,7 @@ public final class Layout{
             }
             for(var e : n.branch.entrySet()) lines.computeIfAbsent(branchOwner.get(e.getKey()), x -> new Seq<>()).addAll(e.getValue());
         }
+        bringForward();
         //where a bus with router docks is cut, and after which job
         cuts.clear();
         for(Router.Net n : nets){
@@ -781,6 +782,15 @@ public final class Layout{
 
     /** What a machine's turn puts up: the machine, the lines it owns, the nodes that power it. */
     public Seq<Part> job(Machine m){
+        Seq<Part> parts = own(m);
+        if(at.get(m) == null) return parts;
+        if(!lent.isEmpty()) parts.removeAll(q -> lent.contains(q));
+        parts.addAll(pulled.getOrDefault(m, new Seq<>()));
+        return parts;
+    }
+
+    /** A machine's own parts, before any are brought forward into an earlier job. */
+    Seq<Part> own(Machine m){
         Seq<Part> parts = new Seq<>();
         Part self = at.get(m);
         if(self == null) return parts;
@@ -789,6 +799,61 @@ public final class Layout{
         parts.addAll(lines.getOrDefault(m, new Seq<>()));
         parts.addAll(wires.getOrDefault(m, new Seq<>()));
         return parts;
+    }
+
+    /**
+     * Parts of a later job a line of an earlier one runs into, brought forward into that earlier job (by machine), and
+     * the set of them (left out of their own job's). A line ends where it hands on, and what it hands on to must be up
+     * with it: on a generated map a furnace's graphite line was routed into the router at the port of a silicon module
+     * the order had last, and the furnace (fourth) starved for want of that one router for the whole game.
+     */
+    public final Map<Machine, Seq<Part>> pulled = new HashMap<>();
+    final Set<Part> lent = Collections.newSetFromMap(new IdentityHashMap<>());
+
+    static boolean carries(Block b){
+        return b.size == 1 && (b instanceof Duct || b instanceof DuctRouter || b instanceof DirectionBridge || b instanceof OverflowDuct || b instanceof DuctJunction);
+    }
+
+    /** Works out what is brought forward (see {@link #pulled}). */
+    void bringForward(){
+        pulled.clear();
+        lent.clear();
+        //who owns each tile's part, by the first job that has it
+        Map<Integer, Object[]> owner = new HashMap<>();
+        for(int i = 0; i < order.size(); i++){
+            for(Part p : own(order.get(i))){
+                if(!carries(p.block)) continue;
+                owner.putIfAbsent(Point2.pack(p.x, p.y), new Object[]{i, p});
+            }
+        }
+        for(int i = 0; i < order.size(); i++){
+            Machine m = order.get(i);
+            Seq<Part> todo = new Seq<>();
+            for(Part p : own(m)) if(carries(p.block)) todo.add(p);
+            while(!todo.isEmpty()){
+                Part p = todo.pop();
+                //where it hands on: a duct to its front, a bridge to the next bridge it reaches along its facing or past that
+                //its front (a router hands on to all round, which a line ends in, not runs on through)
+                if(p.block instanceof DuctRouter) continue;
+                Object[] o = null;
+                if(p.block instanceof DirectionBridge db){
+                    //the next bridge it reaches along its facing, the way the game links them; with none, its front
+                    for(int d = 1; d <= db.range && o == null; d++){
+                        Object[] at = owner.get(Point2.pack(p.x + Geometry.d4x(p.rotation) * d, p.y + Geometry.d4y(p.rotation) * d));
+                        if(at != null && ((Part)at[1]).block instanceof DirectionBridge && ((Part)at[1]).rotation == p.rotation) o = at;
+                    }
+                }
+                if(o == null) o = owner.get(Point2.pack(p.x + Geometry.d4x(p.rotation), p.y + Geometry.d4y(p.rotation)));
+                if(o == null) continue;
+                Part q = (Part)o[1];
+                if((int)o[0] > i && !lent.contains(q)){
+                    lent.add(q);
+                    pulled.computeIfAbsent(m, x -> new Seq<>()).add(q);
+                    o[0] = i;
+                    todo.add(q);
+                }
+            }
+        }
     }
 
     static boolean standsAlready(Part p){

@@ -95,7 +95,10 @@ public final class Watch{
     public java.util.function.IntPredicate notBuilt = i -> false;
 
     /** Looks at the jobs done so far (the first {@code done} of the order). */
+    int lastDone;
+
     public void update(int done){
+        lastDone = done;
         float now = (float)(Vars.state.tick / 60.0);
         if(now < at) return;
         at = now + every;
@@ -169,6 +172,47 @@ public final class Watch{
     }
 
     /** How each machine ran, as shares of the time since it was built. */
+    /** Where a line of ducts and bridges that starts at this one goes: the block it ends in, or the tile it stops at. */
+    /** What the order has planned on a tile: which step's part, and whether that step is begun. */
+    String planned(int x, int y){
+        for(int i = 0; i < order.size(); i++){
+            for(Part p : layout.job(order.get(i))){
+                int s = p.block.size, lo = -(s - 1) / 2;
+                if(x >= p.x + lo && x < p.x + lo + s && y >= p.y + lo && y < p.y + lo + s){
+                    Machine m = order.get(i);
+                    String kind = layout.bodies.containsKey(m) && layout.bodies.get(m).contains(p, true) ? "its body" : layout.lines.containsKey(m) && layout.lines.get(m).contains(p, true) ? "its lines" : "its wires";
+                    return String.format(" (planned there: %s r%d, in %s of #%d %s, %s%s)", p.block.name, p.rotation, kind, i + 1, m.recipe.name, i < lastDone ? "begun" : "not begun", notBuilt.test(i) ? ", put off" : "");
+                }
+            }
+        }
+        return " (nothing planned there)";
+    }
+
+    String trace(Building from){
+        Building at = from;
+        IntSet seen = new IntSet();
+        int steps = 0;
+        while(steps++ < 400 && seen.add(at.pos())){
+            Building next;
+            if(at instanceof mindustry.world.blocks.distribution.DirectionBridge.DirectionBridgeBuild bridge){
+                next = bridge.findLink();
+                if(next == null) next = at.front();
+            }else if(at.block instanceof mindustry.world.blocks.distribution.Duct || at.block instanceof mindustry.world.blocks.distribution.DuctRouter || at.block.rotate && at.block.group == BlockGroup.transportation){
+                next = at.front();
+            }else{
+                StringBuilder held = new StringBuilder();
+                if(at.items != null) at.items.each((item, n) -> held.append(item.name).append('=').append(n).append(' '));
+                return String.format("%d steps, into %s at %d,%d holding [%s]", steps - 1, at.block.name, at.tileX(), at.tileY(), held.toString().trim());
+            }
+            if(next == null){
+                Tile ahead = at.tile.nearby(at.rotation);
+                return String.format("%d steps, stops at %s %d,%d r%d, before %s", steps, at.block.name, at.tileX(), at.tileY(), at.rotation, ahead == null ? "the map edge" : ahead.block().name + " at " + ahead.x + "," + ahead.y + planned(ahead.x, ahead.y));
+            }
+            at = next;
+        }
+        return steps >= 400 ? "more than 400 steps" : "a loop at " + at.tileX() + "," + at.tileY();
+    }
+
     public String report(Catalog cat){
         StringBuilder out = new StringBuilder();
         for(var e : seconds.entrySet()){
@@ -181,6 +225,19 @@ public final class Watch{
             out.append(String.format("  (%.0f s)\n", total));
             StringBuilder c = changes.get(e.getKey());
             if(c != null) out.append("        ").append(c.length() > 300 ? c.substring(0, 300) + " ..." : c).append('\n');
+            //one that is starved or blocked now: where it is, what it holds, and what it touches (what should feed it or
+            //take from it)
+            Part self = layout.at.get(e.getKey());
+            Building b = self == null ? null : Vars.world.build(self.x, self.y);
+            if(b != null && c != null && (c.toString().trim().endsWith("starved") || c.toString().trim().endsWith("blocked"))){
+                StringBuilder by = new StringBuilder();
+                for(Building o : b.proximity) by.append(' ').append(o.block.name).append('@').append(o.tileX()).append(',').append(o.tileY()).append(o.block.rotate ? " r" + o.rotation : "");
+                StringBuilder held = new StringBuilder();
+                if(b.items != null) b.items.each((item, n) -> held.append(item.name).append('=').append(n).append(' '));
+                if(b.liquids != null) b.liquids.each((l, n) -> { if(n > 0.1f) held.append(l.name).append('=').append((int)n).append(' '); });
+                out.append(String.format("        at %d,%d holds [%s], touches:%s\n", b.tileX(), b.tileY(), held.toString().trim(), by.length() == 0 ? " nothing" : by));
+                if(c.toString().trim().endsWith("blocked")) for(Building o : b.proximity) if(o.block.rotate && o.front() != b) out.append("        its line from ").append(o.tileX()).append(',').append(o.tileY()).append(": ").append(trace(o)).append('\n');
+            }
         }
         return out.toString();
     }

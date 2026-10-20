@@ -5246,7 +5246,7 @@ public class Brain{
         //impact drills that never ran, for want of a vent to put a condenser on)
         liquids(data);
         Blueprint well = springFor(Liquids.water);
-        if(well != null && Planner.ventBlock(well) != null && waterWanted - waterMade > 5f && powerMade - powerWanted > Planner.ventBlock(well).consPower.usage * 60f && data.core() != null){
+        if(well != null && Planner.ventBlock(well) != null && waterWanted - waterMade > 5f && powerMade - powerWanted > (Planner.ventBlock(well).consPower == null ? 0f : Planner.ventBlock(well).consPower.usage) * 60f && data.core() != null){
             notes.put("vents", "water " + (int)waterMade + "/" + (int)waterWanted + " a second, power " + (int)powerMade + "/" + (int)powerWanted + ": a condenser");
             Project well_ = provideLiquid(Liquids.water, data.core().tileX(), data.core().tileY(), data);
             if(well_ != null || saving) return well_;
