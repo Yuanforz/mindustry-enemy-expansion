@@ -106,7 +106,7 @@ public class Match{
         mindustry.ai.RtsAI squads = new mindustry.ai.RtsAI(us.data());
         //and our army layer over it (-Dmatch.us=rts for the squad AI alone, or army:parts); the Brain is played as the main
         //line has it, without the layer (-Dmatch.brainarmy=true to give it the layer too)
-        String ours = System.getProperty("match.us", "army:defaults,push");
+        String ours = System.getProperty("match.us", "army:defaults,push,hold");
         expansion.army.Army army = ours.startsWith("army") ? new expansion.army.Army(us, expansion.army.Army.Flags.parse(ours)) : null;
         if(!Boolean.getBoolean("match.brainarmy")) System.setProperty("xp.noarmy", "true");
         System.out.println("  our units: " + (army == null ? "the squad AI alone" : "the squad AI with the army layer: " + army.flags.toString().trim()));
@@ -423,18 +423,21 @@ public class Match{
 
     /**
      * The ways for an "auto" stage, best first: the kinds Muster puts forward, each weighed by the model alone (nothing laid
-     * out): the strongest whose first unit the model has inside six minutes, else the soonest; the rest after it, as the
+     * out): the one with the most strength out by the horizon (Muster.horizon), its first unit counted in; the rest after it, as the
      * ways to fall back on. What the stronger ones lacked is what the army goes to open up.
      */
     static String[] autoWays(int f, int stage, List<String> blocks, Set<String> allowed, List<Design> library, expansion.army.Army army){
         List<expansion.army.Muster.Aim> aims = expansion.army.Muster.aims(us, them, blocks);
         System.out.println("  stage " + (stage + 1) + ": kinds to weigh " + aims);
         String chosen = null;
-        float soonest = Float.MAX_VALUE;
-        String soonestWay = null;
+        float bestValue = 0f;
         Set<String> lacking = new TreeSet<>();
-        for(int i = 0; i < aims.size() && chosen == null; i++){
+        //each weighed by what it has out by the horizon: an early kind that is weak, a strong one that comes late, alike
+        float strongestHad = 0f;
+        for(int i = 0; i < aims.size(); i++){
             var aim = aims.get(i);
+            //(weaker than one already found that has something out: not worth weighing)
+            if(chosen != null && aim.by(expansion.army.Muster.horizon, 0f) <= bestValue) continue;
             Plan p = new Plan(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
             p.gate = true;
             p.widen = true;
@@ -446,22 +449,22 @@ public class Match{
                 dry = null;
             }
             float first = dry == null ? Float.POSITIVE_INFINITY : dry.model.first[dry.unit];
-            System.out.println(String.format("    %s: %s", aim, Float.isInfinite(first) ? "can't be had" + (p.lacking.isEmpty() ? "" : ", lacking " + p.lacking) : "first at " + Plan.time(first)));
+            float value = Float.isInfinite(first) ? 0f : aim.by(expansion.army.Muster.horizon, first);
+            System.out.println(String.format("    %s: %s", aim, Float.isInfinite(first) ? "can't be had" + (p.lacking.isEmpty() ? "" : ", lacking " + p.lacking) : String.format("first at %s, worth %.3g by %s", Plan.time(first), value, Plan.time(expansion.army.Muster.horizon))));
             if(Float.isInfinite(first)){
-                //(the step up that lacks least is the one to open up for)
-                if(chosen == null && !p.lacking.isEmpty() && (lacking.isEmpty() || p.lacking.size() < lacking.size())){
+                //(the step up that lacks least is the one to open up for, if stronger than what can be had)
+                if(aim.strength > strongestHad && !p.lacking.isEmpty() && (lacking.isEmpty() || p.lacking.size() < lacking.size())){
                     lacking.clear();
                     lacking.addAll(p.lacking);
                 }
                 continue;
             }
-            if(chosen == null && first <= 6f * 60f) chosen = aim.toString();
-            if(first < soonest){
-                soonest = first;
-                soonestWay = aim.toString();
+            strongestHad = Math.max(strongestHad, aim.strength);
+            if(value > bestValue){
+                bestValue = value;
+                chosen = aim.toString();
             }
         }
-        if(chosen == null) chosen = soonestWay;
         if(army != null){
             army.push.want.clear();
             for(String name : lacking) if(Vars.content.item(name) != null) army.push.want.add(Vars.content.item(name));

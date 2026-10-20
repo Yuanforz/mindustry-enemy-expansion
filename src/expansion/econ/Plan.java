@@ -60,7 +60,8 @@ public final class Plan{
     }
 
     static int maxRadius(){
-        return Math.max(baseRadius, Math.max(Vars.world.width(), Vars.world.height()) / 2);
+        //(twice as far at most: further out the places to weigh grow past what the planner can go through in a few seconds)
+        return Math.max(baseRadius, Math.min(baseRadius * 2, Math.max(Vars.world.width(), Vars.world.height()) / 2));
     }
     /** Put before the plan's heading line (a map's name, say). */
     public String label = "";
@@ -131,6 +132,7 @@ public final class Plan{
         }
         check("after the scan");
         planner = new Planner(cat, field);
+        planner.rough = dry;
         t0 = Took.start();
         Recipes.modules(cat, library, allowed);
         Took.end("plan: modules", t0);

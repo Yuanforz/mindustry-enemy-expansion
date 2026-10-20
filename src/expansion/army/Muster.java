@@ -25,12 +25,27 @@ public final class Muster{
         public final int makers;
         public final float strength;
         public final boolean reaches;
+        /** Seconds a maker takes for one, and how many there is room for under the cap. */
+        public final float seconds;
+        public final int room;
 
-        Aim(UnitType type, int makers, float strength, boolean reaches){
+        Aim(UnitType type, int makers, float strength, boolean reaches, float seconds, int room){
             this.type = type;
             this.makers = makers;
             this.strength = strength;
             this.reaches = reaches;
+            this.seconds = seconds;
+            this.room = room;
+        }
+
+        /**
+         * The strength it has out by a time to come (seconds from now), its first unit at first: as many as its makers
+         * turn out by then, no more than there is room for, times what one is worth.
+         */
+        public float by(float horizon, float first){
+            if(first >= horizon) return 0f;
+            float made = Math.min(room, 1f + makers * (horizon - first) / Math.max(1f, seconds));
+            return made * strength;
         }
 
         @Override
@@ -42,6 +57,8 @@ public final class Muster{
     /** How many minutes the cap should take to fill, at most, by the makers asked for. */
     public static float refill = Float.parseFloat(System.getProperty("army.refill", "3"));
     public static int maxMakers = Integer.getInteger("army.makers", 4);
+    /** How far ahead the strength an aim brings is weighed, in seconds. */
+    public static float horizon = Float.parseFloat(System.getProperty("army.horizon", "480"));
 
     /**
      * The kinds to make, best first: of what these blocks make (fabricators and refabricators), what reaches the foe's cores
@@ -68,7 +85,7 @@ public final class Muster{
             float strength = type.dpsEstimate * type.health * (1f + type.armor / 20f);
             //makers: enough to fill the room under the cap in the refill time
             int makers = Math.max(1, Math.min(maxMakers, (int)Math.ceil(room * e.getValue() / (refill * 60f))));
-            out.add(new Aim(type, makers, strength, Reach.toFoe(type, team, foe)));
+            out.add(new Aim(type, makers, strength, Reach.toFoe(type, team, foe), e.getValue(), room));
         }
         boolean any = out.stream().anyMatch(a -> a.reaches);
         if(any) out.removeIf(a -> !a.reaches);

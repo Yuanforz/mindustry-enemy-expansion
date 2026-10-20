@@ -78,7 +78,9 @@ public class Push{
         }
         //held back by the allotment (the other side over all is the stronger), it may still go to open up an ore it wants:
         //that is a fight with the few turrets over it, which the local guard weighs, not one with the whole base
-        boolean opening = !go && !want.isEmpty();
+        //(and only while its army outweighs the other side's in the field: the units that open the ore are the ones home
+        //would need, and on basin a few stells sent off by the fourth minute left the core bare to the first wave)
+        boolean opening = !go && !want.isEmpty() && strength(fighters) > army.threat.enemyDps * army.threat.enemyHealth;
         if(!go && opening && target != null && !openingTarget) target = null;
         if((!go && !opening) || fighters.size < 4){
             release(fighters);
@@ -238,11 +240,14 @@ public class Push{
         float d = home.dst(target);
         if(back >= d) return new Vec2(home.x, home.y);
         Vec2 at = new Vec2();
-        //along the line from the target back home: the first open tile from that far out
+        //along the line from the target back home: the first open tile from that far out that no turret of the other side's
+        //reaches (one gathering under another turret on the way is shot to pieces before it goes in)
+        boolean[] shot = expansion.econ.Sites.danger(team);
+        int w = Vars.world.width();
         for(float t = back; t < d; t += Vars.tilesize){
             at.set(target.x, target.y).lerp(home.x, home.y, t / d);
             var tile = Vars.world.tileWorld(at.x, at.y);
-            if(tile != null && !tile.solid() && !tile.floor().isDeep()) return at;
+            if(tile != null && !tile.solid() && !tile.floor().isDeep() && !shot[tile.x + tile.y * w]) return at;
         }
         return new Vec2(home.x, home.y);
     }
