@@ -294,6 +294,12 @@ public final class Hand extends mindustry.entities.units.AIController{
     /** Jobs put off because nobody could get to see their ground, by place in the order; the one being built again. */
     public final IntSeq skipped = new IntSeq();
     int retrying = -1;
+    /** For seeing a job get no further: the job, how many of its parts were left, since when. */
+    Seq<Part> stallJob;
+    int stallLeft;
+    float stallSince;
+    /** How long a job may get no further before it is put off, in seconds. */
+    public static float stallTime = Float.parseFloat(System.getProperty("xp.stall", "60"));
     final float[] fogSince = {-1f, 0f};
 
     /** Parts put off because their ground has not been seen and there was no unit to send. */
@@ -358,11 +364,13 @@ public final class Hand extends mindustry.entities.units.AIController{
         boolean all = true;
         Part target = null;
         float best = Float.MAX_VALUE;
+        int left = 0;
         for(Part p : job){
             Tile tile = Vars.world.tile(p.x, p.y);
             if(tile == null) continue;
             if(tile.block() == p.block && tile.build != null && !(tile.build instanceof ConstructBuild)) continue;
             all = false;
+            left++;
             float d = unit.dst(tile.worldx(), tile.worldy());
             if(d < best){
                 best = d;
@@ -411,6 +419,31 @@ public final class Hand extends mindustry.entities.units.AIController{
         if(all && repairing){
             repairing = false;
             job = null;
+            unit.plans.clear();
+            return;
+        }
+        //a job that gets no further for a long while (a part that will not go down where the other side's units stand and
+        //fire, say) is put off to the end, and the next begun: one wall line that never finished kept the breaches behind it
+        //from going up on aegis for four minutes, while the core held two thousand items
+        if(job != stallJob || left < stallLeft){
+            stallJob = job;
+            stallLeft = left;
+            stallSince = now();
+        }else if(!all && now() - stallSince > stallTime){
+            stallJob = null;
+            if(repairing){
+                trouble.add(String.format("putting back %d parts given up after %.0f s with no progress", left, stallTime));
+                repairing = false;
+            }else if(retrying >= 0){
+                trouble.add(String.format("#%d %s given up again after %.0f s with no progress", retrying + 1, machine == null ? "" : machine.recipe.name, stallTime));
+                retrying = -1;
+            }else{
+                trouble.add(String.format("#%d %s put off after %.0f s with no progress (%d parts left)", next + 1, machine == null ? "" : machine.recipe.name, stallTime, left));
+                skipped.add(next);
+                next++;
+            }
+            job = null;
+            machine = null;
             unit.plans.clear();
             return;
         }

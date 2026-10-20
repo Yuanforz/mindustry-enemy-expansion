@@ -423,6 +423,30 @@ public class Match{
         ObjectIntMap<String> now = new ObjectIntMap<>();
         for(Unit u : foe.data().units) if(!u.spawnedByCore) now.increment(u.type.name);
         for(var e : now) if(expansion.defense.Foe.get(e.key) != null) units.merge(e.key, (int)Math.ceil(e.value * 1.5f), Math::max);
+        //and what its yards will have made by the time this defence is up and the next is planned: each yard's rate over
+        //the next few minutes, on top of what it has (eleven yards on one sector made sixty units in four minutes, against a
+        //defence planned for ten)
+        float ahead = Float.parseFloat(System.getProperty("match.ahead", "3"));
+        ObjectFloatMap<String> coming = new ObjectFloatMap<>();
+        for(Building b : foe.data().buildings){
+            if(b.block instanceof mindustry.world.blocks.units.UnitFactory uf && b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild yard){
+                int plan = yard.currentPlan >= 0 ? yard.currentPlan : 0;
+                if(uf.plans.isEmpty()) continue;
+                var up = uf.plans.get(Math.min(plan, uf.plans.size - 1));
+                coming.increment(up.unit.name, 0f, ahead * 3600f / Math.max(60f, up.time));
+            }else if(b.block instanceof mindustry.world.blocks.units.Reconstructor re && re.upgrades.size > 0){
+                //(an upgrade takes a unit of the tier below: it adds one of this tier and takes one of that)
+                var up = re.upgrades.first();
+                float n = ahead * 3600f / Math.max(60f, re.constructTime);
+                coming.increment(up[1].name, 0f, n);
+                coming.increment(up[0].name, 0f, -n);
+            }
+        }
+        for(var e : coming){
+            if(expansion.defense.Foe.get(e.key) == null || e.value <= 0f) continue;
+            int have = now.get(e.key, 0);
+            units.merge(e.key, (int)Math.ceil(have + e.value), Math::max);
+        }
         ask.units.putAll(units);
         for(CoreBlock.CoreBuild c : foe.cores()){
             expansion.defense.Planner.Source ground = new expansion.defense.Planner.Source(c.tileX(), c.tileY(), "Brain core " + c.tileX() + "," + c.tileY());
