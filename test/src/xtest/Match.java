@@ -174,7 +174,7 @@ public class Match{
         List<String> blocks = new ArrayList<>(Plan.erekir());
         Collections.sort(blocks);
         Set<String> allowed = new HashSet<>(blocks);
-        List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/posts,blueprints/modules"));
+        List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/posts,blueprints/plants,blueprints/modules"));
         String[] stages = System.getProperty("match.stages", "stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
         //a stage not all up after this long is left as it is, and the next begun
         float stageLimit = Float.parseFloat(System.getProperty("match.stagemin", "6")) * 3600f;
