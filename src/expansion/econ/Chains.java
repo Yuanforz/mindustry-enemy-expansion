@@ -18,6 +18,8 @@ public final class Chains{
     public float power = Float.POSITIVE_INFINITY;
     /** The recipe that gives each its cost. */
     public final Recipe[] by;
+    /** What can be had without a maker: dug by hand, or made by the map's own machines. */
+    final boolean[] given;
 
     public Chains(Catalog cat, Field field){
         this.cat = cat;
@@ -33,10 +35,16 @@ public final class Chains{
             if(s.ground == Recipe.Ground.vent) vents[0] = true;
             else if(s.item >= 0) best[s.ground.ordinal()][s.item] = Math.max(best[s.ground.ordinal()][s.item], s.factor);
         }
+        //what can be had without a maker: in the core now, dug by hand, or made by the map's own machines
+        given = new boolean[n];
+        for(int k = 0; k < n; k++) given[k] = field.handRate(cat, k) > 0f;
+        for(Machine m : field.existing) for(int k = 0; k < n; k++) if(m.out(k) > 1e-4f) given[k] = true;
         for(int round = 0; round < 40; round++){
             boolean changed = false;
             for(Recipe r : cat.recipes){
                 if(r.makesUnits()) continue;
+                //(a machine that costs what can't be had at all makes nothing: a large cliff crusher where no surge alloy is)
+                if(!buildable(r, given)) continue;
                 float spent = r.totalCost();
                 if(r.powerUse > 0f) spent += r.powerUse * power;
                 for(int k = 0; k < n; k++) if(r.in[k] > 0f) spent += r.in[k] * cost[k];
@@ -66,10 +74,23 @@ public final class Chains{
         }
     }
 
+    /** Whether what building this costs can be had: each item of it in the core already, or to be had some way. */
+    boolean buildable(Recipe r, boolean[] given){
+        for(int k = 0; k < r.cost.length; k++) if(r.cost[k] > 0f && r.cost[k] > field.stock[k] && !given[k] && Float.isInfinite(cost[k])) return false;
+        return true;
+    }
+
+    /** Whether a recipe can be built and fed at all: what it costs to build to be had, and what it takes in to be made. */
+    public boolean feasible(Recipe r){
+        if(!buildable(r, given)) return false;
+        for(int k = 0; k < cost.length; k++) if(r.in[k] > 0f && !given[k] && Float.isInfinite(cost[k])) return false;
+        return !(r.powerUse > 0f && Float.isInfinite(power));
+    }
+
     /** What making this a second with this recipe costs, inputs and power included; infinite if some input can't be made. */
     public float costOf(Recipe r, int res){
         float rate = r.out[res];
-        if(rate <= 0f) return Float.POSITIVE_INFINITY;
+        if(rate <= 0f || !buildable(r, given)) return Float.POSITIVE_INFINITY;
         float spent = r.totalCost();
         if(r.powerUse > 0f) spent += r.powerUse * power;
         for(int k = 0; k < cost.length; k++) if(r.in[k] > 0f) spent += r.in[k] * cost[k];

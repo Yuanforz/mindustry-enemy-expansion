@@ -199,7 +199,8 @@ public final class Planner{
         for(Recipe r : cat.recipes){
             if(r.ground == Recipe.Ground.none) continue;
             boolean gives = r.out[res] > 0f || r.perFactor[res] > 0f;
-            if(!gives) continue;
+            //(one that can't be built or fed here is no maker: a large cliff crusher where there is no surge alloy or hydrogen)
+            if(!gives || (chains != null && !chains.feasible(r))) continue;
             for(Field.Site s : free){
                 if(s.ground != r.ground || (r.perFactor[res] > 0f && s.item != res)) continue;
                 double d = Math.hypot(s.x - tx, s.y - ty) - (r.perFactor[res] > 0f ? r.perFactor[res] * s.factor : r.out[res]) * 2;
@@ -308,7 +309,7 @@ public final class Planner{
         Field.Site bestSite = null;
         Recipe bestRecipe = null;
         for(Recipe r : cat.recipes){
-            if(r.ground == Recipe.Ground.none || r.perFactor[res] <= 0f || !first(r, res)) continue;
+            if(r.ground == Recipe.Ground.none || r.perFactor[res] <= 0f || !first(r, res) || (chains != null && !chains.feasible(r))) continue;
             Field.Site site = peek(r, res);
             if(site != null && (bestSite == null || r.perFactor[res] * site.factor / cost(r) > bestRecipe.perFactor[res] * bestSite.factor / cost(bestRecipe))){
                 bestSite = site;

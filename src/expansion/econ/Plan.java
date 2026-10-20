@@ -355,6 +355,9 @@ public final class Plan{
                     || b instanceof mindustry.world.blocks.units.Reconstructor rc && rc.upgrades.contains(u -> u[1].name.equals(unitName));
                 if(makes && unpaid.containsKey(b.name)) lacking.addAll(unpaid.get(b.name));
             }
+            StringBuilder makers = new StringBuilder();
+            for(Recipe r : cat.recipes) if(r.makesUnits()) makers.append(' ').append(r.name);
+            out.println("  nothing in the catalog makes " + unitName + (unit < 0 ? " (not in it at all)" : "") + "; what makes units:" + makers + (lacking.isEmpty() ? "" : "; lacking " + lacking));
             return false;
         }
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;

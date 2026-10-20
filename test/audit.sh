@@ -21,7 +21,7 @@ for line in sys.stdin:
         def sec(t):
             if t in ("never", "not"): return None
             a, b = t.split(":"); return int(a) * 60 + int(b)
-        mod, game = sec(m.group(2)), sec(m.group(3))
+        mod, game = sec(m.group(2).rstrip(";")), sec(m.group(3).rstrip(";"))
         if game is None: never += 1
         elif mod and mod < 3600: late.append(game / max(mod, 1))
 total = sum(spent.values()) or 1

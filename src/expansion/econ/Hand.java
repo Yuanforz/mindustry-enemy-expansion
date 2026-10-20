@@ -265,7 +265,7 @@ public final class Hand extends mindustry.entities.units.AIController{
                     saveSince[0] = next;
                     saveSince[1] = now();
                     saveSince[2] = shortNow;
-                }else if(putOff && now() - saveSince[1] > stallTime && next + 1 < order.size()){
+                }else if(putOff && now() - saveSince[1] > stallTime){
                     skipped.add(next);
                     trouble.add(String.format("#%d %s put off: %s, none of it come in for %.0f s", next + 1, m.recipe.name, shortOf(need), stallTime));
                     pending = null;
