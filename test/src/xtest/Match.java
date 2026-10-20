@@ -217,6 +217,7 @@ public class Match{
         });
 
         if(Boolean.getBoolean("match.turrets")) for(Building b : us.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret t) System.out.println(String.format("  our turret %s at %d,%d range %.0f tiles", b.block.name, b.tileX(), b.tileY(), t.range / Vars.tilesize));
+        System.out.println(String.format("  building: ours at %.2fx (the team's multiplier %.2f, the rules' %.2f, the core unit's speed %.2f), the other side's at %.2fx", rules.buildSpeed(us), us.rules().buildSpeedMultiplier, rules.buildSpeedMultiplier, ((CoreBlock)us.core().block).unitType.buildSpeed, rules.buildSpeed(them)));
         System.out.println(String.format("MATCH %s (%s): we have %d core(s), %d blocks; the Brain %d core(s), %d blocks", map.nameWithoutExtension(), mode, us.cores().size, us.data().buildings.size, them.cores().size, them.data().buildings.size));
         System.out.println(landing(us, them));
 
