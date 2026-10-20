@@ -181,7 +181,12 @@ public class Match{
         Time.setDeltaProvider(() -> 1f);
         Vars.logic.play();
         //(the time between waves, as the campaign's difficulty has it)
-        if(campaign) Vars.state.wavetime *= Planets.erekir.campaignRules.difficulty.waveTimeMultiplier;
+        //(and after every wave: the game times the next by the spacing times the multiplier only in a real campaign, which
+        //this is not, so the spacing itself is made what it would be there)
+        if(campaign){
+            Vars.state.wavetime *= Planets.erekir.campaignRules.difficulty.waveTimeMultiplier;
+            rules.waveSpacing *= Planets.erekir.campaignRules.difficulty.waveTimeMultiplier;
+        }
         Vars.state.tick = 0;
         Boot.frames(1);
         //the whole map open, the way the map's own script opens it up (as the other tests run it, "open"); not in the
@@ -266,12 +271,18 @@ public class Match{
         }
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/posts,blueprints/plants,blueprints/modules"));
         String[] stages = brainSide ? new String[0] : System.getProperty("match.stages", "stell:1|merui:1|elude:1|avert:1,stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
+        //the command layer (-Dmatch.command=steady|balanced|aggressive): each stage chosen by looking ahead, no list
+        expansion.ops.Command command = null;
+        if(System.getProperty("match.command") != null && !brainSide){
+            command = new expansion.ops.Command(us, them);
+            command.posture = expansion.ops.Command.Posture.of(System.getProperty("match.command"));
+        }
         //chosen from the game as it goes (expansion.army.Muster): what to make, and how many makers, each stage
         if(Boolean.getBoolean("match.auto")) stages = "auto,defend,auto,defend,auto,auto,auto,auto,auto,auto".split(",");
         //the other side has yards from the start (a base that came with the map) whose units can get to us: a defence first,
         //before the economy, as a player sets the first breaches down before the first fabricator (-Dmatch.early=false: not)
         String early = earlyThreat(us, them);
-        if(early != null && stages.length > 0 && System.getProperty("match.early", "true").equals("true") && !stages[0].startsWith("defend")){
+        if(command == null && early != null && stages.length > 0 && System.getProperty("match.early", "true").equals("true") && !stages[0].startsWith("defend")){
             String[] more = new String[stages.length + 1];
             more[0] = "defend";
             System.arraycopy(stages, 0, more, 1, stages.length);
@@ -305,7 +316,7 @@ public class Match{
             //(a stage is not left for want of time while what makes its units is not up yet, unless three times over: on lake,
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
             //(a stage is over once its own order is up, whatever it is mending meanwhile: under raids that never ends)
-            boolean over = paused == null && hand != null && (hand.orderDone() || f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
+            boolean over = paused == null && hand != null && (hand.orderDone() || f - stageFrom > limitNow && (command != null || makerUp(hand) || f - stageFrom > limitNow * 3));
             //what the map's tasks ask for, before the next of our own stages (in the campaign, once a stage of ours is up): a
             //stage the same task asked for is not asked again for four minutes
             expansion.econ.Asks.Ask task = null;
@@ -313,7 +324,7 @@ public class Match{
                 expansion.econ.Asks.Ask a = asks(hand, allowed, f);
                 if(a.stage != null && (a.by != lastTaskBy || f - lastTaskAt > 4 * 3600)) task = a;
             }
-            if((hand == null || over) && (again || task != null || stage + 1 < stages.length) && us.core() != null){
+            if((hand == null || over) && (again || task != null || command != null || stage + 1 < stages.length) && us.core() != null){
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 if(task != null){
                     lastTaskBy = task.by;
@@ -335,12 +346,33 @@ public class Match{
                 //no kind of this stage that can be made gets to the Brain's base: then the first that can be made, to hold our own
                 //(on intersect every stage was passed over, nothing was built, and the Brain's few units took the core)
                 boolean homeGuard = false;
-                String[] ways = task != null ? new String[]{task.stage} : stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
+                //(with the command layer: what it weighs best now; its stages are not a list)
+                String spec = command != null ? "command" : stages[stage];
+                defendFromStock = false;
+                String[] ways;
+                if(task != null) ways = new String[]{task.stage};
+                else if(command != null){
+                    int fNow = f;
+                    expansion.ops.Command.Candidate best = command.decide(blocks, allowed, library, fromStock -> {
+                        stockOnly = fromStock;
+                        try{
+                            return defence(us, them, sector, fNow / 60f, "weighing a defence" + (fromStock ? " from stock" : "") + ": ");
+                        }finally{
+                            stockOnly = false;
+                        }
+                    }, income(us, f));
+                    System.out.print(command.log);
+                    if(best == null) ways = new String[0];
+                    else if(best.defence > 0){
+                        ways = new String[]{"defend"};
+                        defendFromStock = best.defence == 1;
+                    }else ways = new String[]{best.stage()};
+                }else ways = stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
                 //"climb:conquer": a step at a time towards the goal, each step the nearest of what its maker needs that nothing
                 //of ours makes yet (Plan.next), the goal itself last; the stage is taken again till then (at most 10 steps)
                 boolean climbing = false;
-                if(task == null && stages[stage].startsWith("climb:")){
-                    String goal = stages[stage].substring(6);
+                if(task == null && spec.startsWith("climb:")){
+                    String goal = spec.substring(6);
                     Plan probe = new Plan(System.out);
                     probe.gate = !Boolean.getBoolean("match.allblocks");
                     String aim = null;
@@ -377,7 +409,14 @@ public class Match{
                     try{
                         if(st[0].equals("defend")){
                             lastDefenceAt = f;
-                            expansion.defense.Planner.Plan dp = defence(us, them, sector, f / 60f, p.label);
+                            stockOnly = defendFromStock;
+                            expansion.defense.Planner.Plan dp;
+                            try{
+                                dp = defence(us, them, sector, f / 60f, p.label);
+                            }finally{
+                                stockOnly = false;
+                            }
+                            p.payFromStock = defendFromStock;
                             //(it pays for itself out of what the core holds and brings in; built of what is near at hand; the one
                             //put first for a threat from the start is its first module only)
                             p.income = income(us, f);
@@ -385,7 +424,7 @@ public class Match{
                             if(stage == 0 && early != null) p.maxModules = 1;
                             plan = p.defend(us, blocks, allowed, dp, feedable);
                         }else{
-                            plan = p.make(us, blocks, allowed, library, st[0], Float.parseFloat(st[1]), null);
+                            plan = p.make(us, blocks, allowed, library, st[0], Float.parseFloat(st[1]), income(us, f));
                         }
                     }catch(Throwable t){
                         System.out.println("  stage " + (stage + 1) + " (" + way + ") could not be planned: " + t);
@@ -402,6 +441,9 @@ public class Match{
                 System.out.println(String.format("  stage %d planned in %.1f s (wall)", stage + 1, (System.nanoTime() - p0) / 1e9f));
                 if(Boolean.getBoolean("xp.time")) System.out.print(expansion.econ.Took.report());
                 if(plan != null && plan.model != null) limitNow = Math.max(stageLimit, Math.min(plan.model.t, 3600f) * 2f * 60f);
+                //(the command layer weighs again once a stage falls behind its model by half again and a minute: what is
+                //found then, it plans from)
+                if(command != null && plan != null && plan.model != null) limitNow = Math.max(120f * 60f, (Math.min(plan.model.t, 3600f) * 1.5f + 60f) * 60f);
                 if(plan != null && plan.model != null){
                     if(hand != null) before.add(hand);
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
@@ -559,6 +601,31 @@ public class Match{
                 if(!tb.hasAmmo()) drySeconds++;
             }
             if(f % 3600 == 0 && f > 0) System.out.println(report(f / 60f, hand, stage));
+            //the forecast of the other side's force, against what it turns out to have (-Dmatch.forecast=true)
+            if(f % 3600 == 0 && Boolean.getBoolean("match.forecast") && us.core() != null){
+                int minute = f / 3600;
+                expansion.ops.Forecast fc = new expansion.ops.Forecast(us, them, 300f, 10f);
+                expansion.ops.Force now = fc.total(0f);
+                StringBuilder fb = new StringBuilder(String.format("    forecast at %d: theirs now %s; foretold", minute, now));
+                for(int back : new int[]{1, 3, 5}){
+                    Float was = foretold.get(minute * 100 + back);
+                    fb.append(String.format(" %d min ago %s", back, was == null ? "-" : String.format("%.3g", was)));
+                }
+                //what it makes: foretold for the next three minutes, and what it made in the last three
+                int madeNow = 0;
+                for(var e : made) if(e.key.startsWith("them ")) madeNow += e.value;
+                madeAt.put(minute, madeNow);
+                Integer made3 = madeAt.get(minute - 3);
+                Float said3 = foretold.get(minute * 100 + 93);
+                fb.append(String.format("; made in the last 3 min %s (foretold %s)", made3 == null ? "-" : String.valueOf(madeNow - made3), said3 == null ? "-" : String.valueOf(Math.round(said3))));
+                foretold.put((minute + 3) * 100 + 93, (float)(fc.total(180f).count - now.count));
+                fb.append("; at our core in 1/3/5 min:");
+                for(int ahead : new int[]{1, 3, 5}){
+                    foretold.put((minute + ahead) * 100 + ahead, fc.total(ahead * 60f).strength());
+                    fb.append(' ').append(fc.atCore(ahead * 60f));
+                }
+                System.out.println(fb.append("; ").append(fc.notes));
+            }
             if(f % 3600 == 0 && f > 0 && coreHurt.size > 0){
                 StringBuilder ch = new StringBuilder("    our core hit by:");
                 for(var e : coreHurt) ch.append(' ').append(e.key).append(' ').append((int)e.value).append(';');
@@ -585,6 +652,14 @@ public class Match{
             }
             if(f % (3600 * 3) == 0 && f > 0 && hand != null && Boolean.getBoolean("match.watch")) System.out.print(hand.watch.report(hand.works.cat));
             if(f % 3600 == 0 && us.core() != null) for(Item item : Vars.content.items()) lastMinute.put(item.name, us.core().items.get(item));
+            if(f % 3600 == 0 && f > 0 && us == Vars.state.rules.defaultTeam){
+                receivedRate.clear();
+                for(Item item : Vars.content.items()){
+                    int n = Vars.state.stats.coreItemCount.get(item, 0), was = receivedBefore.get(item.name, 0);
+                    if(n > was) receivedRate.put(item.name, (n - was) / 60f);
+                    receivedBefore.put(item.name, n);
+                }
+            }
             if(f == 600 || (f % 3600 == 0 && Boolean.getBoolean("match.brainlog"))) System.out.println("  the Brain: active " + brain.active() + "; " + brain.status().replace("\n", "; "));
             if(us.cores().isEmpty()){
                 winner = campaign ? "enemy" : "Brain";
@@ -871,6 +946,8 @@ public class Match{
     }
     /** Whether the defence being planned is to be paid for out of what the core holds now, with nothing built to pay for it. */
     static boolean stockOnly;
+    /** Whether the defence the command layer chose now is to be paid out of stock. */
+    static boolean defendFromStock;
     static float pressureEdge = Float.parseFloat(System.getProperty("match.pressure", "1.5"));
 
     /**
@@ -900,6 +977,10 @@ public class Match{
         }
         return new float[]{tDps * tHp, oDps * oHp, n};
     }
+
+    /** What the forecast said the other side's whole force would be, by minute * 100 + how many minutes ahead it was said. */
+    static final Map<Integer, Float> foretold = new HashMap<>();
+    static final Map<Integer, Integer> madeAt = new HashMap<>();
 
     /** The task that last asked for a stage, and when. */
     static Object lastTaskBy;
@@ -998,12 +1079,19 @@ public class Match{
     static Map<String, Float> income(Team team, int frame){
         Map<String, Float> out = new HashMap<>();
         if(team.core() == null || frame < 3600) return out;
+        //(for the side the game keeps count for, what came into its cores over the last whole minute, whatever was spent
+        //meanwhile: the gain alone understates what comes in while the core unit builds)
+        if(team == Vars.state.rules.defaultTeam && !receivedRate.isEmpty()) return new HashMap<>(receivedRate);
         for(Item item : Vars.content.items()){
             int have = team.core().items.get(item), before = lastMinute.get(item.name, have);
             if(have > before) out.put(item.name, (have - before) / 60f);
         }
         return out;
     }
+
+    /** What came into our cores a second over the last whole minute (the game's own count), and that count a minute ago. */
+    static final Map<String, Float> receivedRate = new HashMap<>();
+    static final ObjectIntMap<String> receivedBefore = new ObjectIntMap<>();
 
     /**
      * The ways for an "auto" stage, best first: the kinds Muster puts forward, each weighed by the model alone (nothing laid

@@ -48,6 +48,11 @@ public final class Muster{
             return made * strength;
         }
 
+        /** The same kind with another number of makers. */
+        public Aim withMakers(int n){
+            return new Aim(type, n, strength, reaches, seconds, room);
+        }
+
         @Override
         public String toString(){
             return type.name + ":" + makers;
