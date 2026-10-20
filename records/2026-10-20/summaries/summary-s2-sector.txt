@@ -1,0 +1,18 @@
+RESULT onset sector winner=Brain at 2:53; units made us 0 them 6, lost us 0 them 0; blocks lost us 4 them 0; planning took 8s; our turrets dry 0 of 0 turret-seconds
+RESULT aegis sector winner=Brain at 9:31; units made us 11 them 37, lost us 11 them 24; blocks lost us 183 them 10; planning took 32s; our turrets dry 161 of 495 turret-seconds
+RESULT lake sector winner=Brain at 23:54; units made us 0 them 46, lost us 0 them 36; blocks lost us 747 them 0; planning took 21s; our turrets dry 1682 of 5420 turret-seconds
+RESULT intersect sector winner=- at 25:00; units made us 16 them 2, lost us 0 them 0; blocks lost us 349 them 94; planning took 172s; our turrets dry 3482 of 3482 turret-seconds
+RESULT atlas sector winner=- at 25:00; units made us 38 them 65, lost us 21 them 63; blocks lost us 43 them 1760; planning took 25s; our turrets dry 24 of 4500 turret-seconds
+RESULT split sector winner=- at 25:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 0 them 0; planning took 12s; our turrets dry 0 of 0 turret-seconds
+RESULT basin sector winner=Brain at 8:27; units made us 8 them 81, lost us 6 them 13; blocks lost us 219 them 0; planning took 5s; our turrets dry 0 of 0 turret-seconds
+RESULT marsh sector winner=Brain at 5:35; units made us 10 them 21, lost us 10 them 2; blocks lost us 195 them 0; planning took 10s; our turrets dry 0 of 0 turret-seconds
+RESULT peaks sector winner=- at 25:00; units made us 17 them 2, lost us 6 them 1; blocks lost us 4 them 0; planning took 50s; our turrets dry 2655 of 8264 turret-seconds
+RESULT ravine sector winner=none: the Brain has no core on this map (a sector of waves)
+RESULT caldera-erekir sector winner=- at 25:00; units made us 50 them 29, lost us 44 them 28; blocks lost us 31 them 28; planning took 9s; our turrets dry 0 of 0 turret-seconds
+RESULT stronghold sector winner=Brain at 7:03; units made us 14 them 67, lost us 14 them 18; blocks lost us 233 them 1; planning took 13s; our turrets dry 212 of 737 turret-seconds
+RESULT crevice sector winner=none: the Brain has no core on this map (a sector of waves)
+RESULT siege sector winner=Brain at 5:38; units made us 12 them 70, lost us 12 them 10; blocks lost us 1323 them 0; planning took 9s; our turrets dry 193 of 402 turret-seconds
+RESULT crossroads sector winner=Brain at 17:00; units made us 20 them 33, lost us 20 them 2; blocks lost us 7250 them 72; planning took 17s; our turrets dry 17 of 1894 turret-seconds
+RESULT karst sector winner=none: the Brain has no core on this map (a sector of waves)
+RESULT origin sector winner=- at 25:00; units made us 55 them 261, lost us 14 them 69; blocks lost us 210 them 18; planning took 35s; our turrets dry 1570 of 16877 turret-seconds
+TOTAL: won 0, lost 8, drew 6, not played 3 of 17

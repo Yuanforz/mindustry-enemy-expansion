@@ -1,0 +1,5 @@
+RESULT aegis sector winner=Brain at 3:30; units made us 0 them 10, lost us 0 them 0; blocks lost us 125 them 0; planning took 22s; our turrets dry 33 of 198 turret-seconds
+RESULT lake sector winner=Brain at 4:27; units made us 0 them 12, lost us 0 them 4; blocks lost us 99 them 0; planning took 16s; our turrets dry 129 of 522 turret-seconds
+RESULT marsh sector winner=Brain at 2:59; units made us 0 them 19, lost us 0 them 0; blocks lost us 104 them 0; planning took 19s; our turrets dry 0 of 0 turret-seconds
+RESULT basin sector winner=Brain at 4:19; units made us 5 them 27, lost us 5 them 1; blocks lost us 610 them 0; planning took 86s; our turrets dry 0 of 0 turret-seconds
+TOTAL: won 0, lost 4, drew 0, not played 0 of 4

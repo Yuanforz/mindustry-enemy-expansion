@@ -1,0 +1,18 @@
+RESULT onset even winner=us at 6:56; units made us 9 them 0, lost us 0 them 0; blocks lost us 0 them 5; planning took 44s; our turrets dry 0 of 0 turret-seconds
+RESULT aegis even winner=us at 6:40; units made us 10 them 0, lost us 5 them 0; blocks lost us 0 them 2; planning took 32s; our turrets dry 0 of 0 turret-seconds
+RESULT lake even winner=us at 9:00; units made us 13 them 0, lost us 2 them 0; blocks lost us 0 them 13; planning took 21s; our turrets dry 0 of 0 turret-seconds
+RESULT intersect even winner=- at 25:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 1 them 0; planning took 8s; our turrets dry 0 of 0 turret-seconds
+RESULT atlas even winner=- at 25:00; units made us 45 them 0, lost us 24 them 0; blocks lost us 0 them 559; planning took 93s; our turrets dry 0 of 0 turret-seconds
+RESULT split even winner=- at 25:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 0 them 0; planning took 6s; our turrets dry 0 of 0 turret-seconds
+RESULT basin even winner=us at 16:50; units made us 22 them 0, lost us 12 them 0; blocks lost us 0 them 45; planning took 323s; our turrets dry 0 of 0 turret-seconds
+RESULT marsh even winner=us at 7:28; units made us 12 them 0, lost us 0 them 0; blocks lost us 0 them 27; planning took 65s; our turrets dry 0 of 0 turret-seconds
+RESULT peaks even winner=- at 25:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 0 them 0; planning took 10s; our turrets dry 0 of 0 turret-seconds
+RESULT ravine even none: Exception in thread "main" java.lang.NullPointerException: Cannot invoke "mindustry.world.blocks.storage.CoreBlock$CoreBuild.tileX()" because "<local1>" is null
+RESULT caldera-erekir even winner=us at 10:28; units made us 6 them 0, lost us 0 them 0; blocks lost us 0 them 96; planning took 12s; our turrets dry 0 of 0 turret-seconds
+RESULT stronghold even winner=us at 10:15; units made us 22 them 0, lost us 4 them 0; blocks lost us 0 them 143; planning took 23s; our turrets dry 0 of 0 turret-seconds
+RESULT crevice even none: Exception in thread "main" java.lang.NullPointerException: Cannot invoke "mindustry.world.blocks.storage.CoreBlock$CoreBuild.tileX()" because "<local1>" is null
+RESULT siege even winner=us at 7:20; units made us 21 them 0, lost us 5 them 0; blocks lost us 0 them 70; planning took 70s; our turrets dry 0 of 0 turret-seconds
+RESULT crossroads even winner=us at 5:21; units made us 12 them 0, lost us 0 them 0; blocks lost us 0 them 9; planning took 40s; our turrets dry 0 of 0 turret-seconds
+RESULT karst even none: Exception in thread "main" java.lang.NullPointerException: Cannot invoke "mindustry.world.blocks.storage.CoreBlock$CoreBuild.tileX()" because "<local1>" is null
+RESULT origin even winner=- at 25:00; units made us 50 them 30, lost us 32 them 27; blocks lost us 527 them 258; planning took 79s; our turrets dry 0 of 1346 turret-seconds
+TOTAL: won 9, lost 0, drew 5 of 17

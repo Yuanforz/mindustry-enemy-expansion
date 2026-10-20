@@ -3,6 +3,8 @@
 # Usage: ./test.sh bench [-v] [-only name] [blueprint files...]
 set -e
 cd "$(dirname "$0")"
+# a JDK that tools/server-setup.sh downloaded next to the repository, when there is one
+[ -x ../jdk/bin/javac ] && PATH="$(cd .. && pwd)/jdk/bin:$PATH"
 GAME_JAR="${GAME_JAR:-../Mindustry.jar}"
 # SNAP=<dir>: run on the classes copied there (by test/suite.sh) and build nothing, so that the source can be worked on meanwhile
 if [ -n "$SNAP" ]; then

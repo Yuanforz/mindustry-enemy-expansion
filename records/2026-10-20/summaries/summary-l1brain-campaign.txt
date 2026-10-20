@@ -1,0 +1,8 @@
+RESULT onset campaign winner=enemy at 2:16; units made us 0 them 8, lost us 0 them 0; blocks lost us 1 them 0; planning took 0s; our turrets dry 0 of 0 turret-seconds
+RESULT aegis campaign winner=enemy at 4:20; units made us 0 them 10, lost us 0 them 0; blocks lost us 108 them 0; planning took 0s; our turrets dry 26 of 215 turret-seconds
+RESULT lake campaign winner=- at 60:00; units made us 0 them 132, lost us 0 them 130; blocks lost us 490 them 0; planning took 0s; our turrets dry 53 of 10800 turret-seconds
+RESULT intersect campaign winner=enemy at 18:07; units made us 10 them 0, lost us 10 them 4; blocks lost us 608 them 3; planning took 0s; our turrets dry 0 of 0 turret-seconds
+RESULT atlas campaign winner=- at 60:00; units made us 100 them 246, lost us 76 them 241; blocks lost us 721 them 16; planning took 0s; our turrets dry 25 of 10800 turret-seconds
+RESULT split campaign winner=- at 60:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 0 them 0; planning took 0s; our turrets dry 0 of 0 turret-seconds
+RESULT basin campaign winner=enemy at 7:14; units made us 6 them 72, lost us 6 them 13; blocks lost us 154 them 0; planning took 0s; our turrets dry 78 of 553 turret-seconds
+TOTAL: won 0, lost 0, drew 3, not played 0 of 7

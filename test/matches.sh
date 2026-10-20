@@ -5,6 +5,8 @@
 #   JOBS=2 by default; TAG=name keeps this batch's logs apart; STAGES=... our stages (Match's -Dmatch.stages);
 #   OPTS="-Dmatch.us=rts ..." more options for every game.
 cd "$(dirname "$0")/.."
+# a JDK that tools/server-setup.sh downloaded next to the repository, when there is one
+[ -x ../jdk/bin/javac ] && PATH="$(cd .. && pwd)/jdk/bin:$PATH"
 GAME_JAR="${GAME_JAR:-../Mindustry.jar}"
 minutes="${1:-25}"; mode="${2:-even}"; shift 2
 MAPS="${*:-onset aegis lake intersect atlas split basin marsh peaks ravine caldera-erekir stronghold crevice siege crossroads karst origin}"

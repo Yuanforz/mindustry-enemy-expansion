@@ -1,0 +1,11 @@
+  stage 2: climbing to conquer, next tungsten:0.3 (conquer <- module:unit-conquer-own lacks thorium (the core has 0) <- large-plasma-bore lacks tungsten (the core has 0))
+  stage 2: climbing to conquer, next oxide:0.3 (conquer <- module:unit-conquer-own lacks thorium (the core has 0) <- large-plasma-bore lacks oxide (the core has 0))
+  stage 2: climbing to conquer, next thorium:0.3 (conquer <- module:unit-conquer-own lacks thorium (the core has 0))
+  stage 2: climbing to conquer, no way there here (conquer: nothing here makes it (module:unit-conquer-own wants carbide, cyanogen))
+  stage 3: climbing to collaris, no way there here (collaris: nothing here makes it (module:unit-collaris-own wants carbide, cyanogen; module:c-unit-collaris-1 wants arkycite; module:c-unit-collaris-2 wants arkycite; module:c-unit-collaris-3 wants arkycite))
+  stage 4: climbing to disrupt, no way there here (disrupt: nothing here makes it (module:unit-disrupt-own wants carbide, cyanogen))
+  stage 5: climbing to malign, no way there here (malign: nothing here makes it (module:post-malign wants phase-fabric))
+  stage 6: climbing to scathe, no way there here (scathe: nothing here makes it (module:post-scathe wants carbide))
+  stage 7: climbing to titan, now the goal (titan)
+  stage 8: climbing to afflict, no way there here (afflict <- module:post-afflict lacks surge-alloy (the core has 0), which can't be made here (eruption-drill wants no free place on floorOre; impact-drill wants no free place on floorOre; large-plasma-bore wants no free place on wallOre; plasma-bore wants no free place on wallOre; module:surge-alloy-slag wants slag; module:surge-alloy-phase wants p
+RESULT gen-40 sandbox winner=- at 90:00; units made us 18 them 0, lost us 2 them 0; blocks lost us 0 them 0; planning took 183s; our turrets dry 0 of 0 turret-seconds

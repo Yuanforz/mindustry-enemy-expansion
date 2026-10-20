@@ -1,0 +1,18 @@
+RESULT onset sector winner=Brain at 2:54; units made us 0 them 8, lost us 0 them 0; blocks lost us 4 them 0; planning took 8s; our turrets dry 0 of 0 turret-seconds
+RESULT aegis sector winner=- at 25:00; units made us 35 them 89, lost us 20 them 88; blocks lost us 532 them 1179; planning took 46s; our turrets dry 495 of 2622 turret-seconds
+RESULT lake sector winner=Brain at 22:59; units made us 0 them 45, lost us 0 them 38; blocks lost us 1086 them 0; planning took 58s; our turrets dry 119 of 3834 turret-seconds
+RESULT intersect sector winner=Brain at 20:27; units made us 0 them 6, lost us 0 them 0; blocks lost us 947 them 0; planning took 19s; our turrets dry 0 of 0 turret-seconds
+RESULT atlas sector winner=- at 25:00; units made us 42 them 99, lost us 23 them 96; blocks lost us 49 them 1850; planning took 26s; our turrets dry 24 of 4500 turret-seconds
+RESULT split sector winner=- at 25:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 0 them 0; planning took 5s; our turrets dry 0 of 0 turret-seconds
+RESULT basin sector winner=Brain at 8:40; units made us 10 them 73, lost us 5 them 13; blocks lost us 104 them 0; planning took 6s; our turrets dry 0 of 0 turret-seconds
+RESULT marsh sector winner=Brain at 5:44; units made us 9 them 22, lost us 9 them 3; blocks lost us 545 them 5; planning took 10s; our turrets dry 0 of 0 turret-seconds
+RESULT peaks sector winner=- at 25:00; units made us 0 them 2, lost us 29 them 1; blocks lost us 2 them 0; planning took 18s; our turrets dry 5000 of 12949 turret-seconds
+RESULT ravine sector winner=us at 0:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 0 them 0; planning took 0s; our turrets dry 2 of 2 turret-seconds
+RESULT caldera-erekir sector winner=- at 25:00; units made us 37 them 29, lost us 33 them 28; blocks lost us 26 them 17; planning took 68s; our turrets dry 0 of 0 turret-seconds
+RESULT stronghold sector winner=Brain at 8:00; units made us 16 them 74, lost us 16 them 21; blocks lost us 793 them 7; planning took 21s; our turrets dry 333 of 878 turret-seconds
+RESULT crevice sector winner=us at 0:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 0 them 0; planning took 0s; our turrets dry 0 of 0 turret-seconds
+RESULT siege sector winner=Brain at 5:56; units made us 13 them 74, lost us 12 them 19; blocks lost us 1624 them 0; planning took 9s; our turrets dry 253 of 466 turret-seconds
+RESULT crossroads sector winner=Brain at 18:53; units made us 21 them 37, lost us 21 them 3; blocks lost us 4564 them 122; planning took 28s; our turrets dry 39 of 2999 turret-seconds
+RESULT karst sector winner=us at 0:00; units made us 0 them 0, lost us 0 them 0; blocks lost us 0 them 0; planning took 0s; our turrets dry 0 of 1 turret-seconds
+RESULT origin sector winner=- at 25:00; units made us 63 them 241, lost us 23 them 72; blocks lost us 102 them 30; planning took 36s; our turrets dry 1781 of 18147 turret-seconds
+TOTAL: won 3, lost 8, drew 6 of 17
