@@ -421,6 +421,8 @@ public final class Plan{
             //core do not make an eruption drill, which costs 150 of it, one that can be paid for)
             if(field.handDistance != null && k < field.handDistance.length && !Float.isInfinite(field.handDistance[k])) depth[k] = 0;
         }
+        //what machines of ours already make is there (their places on the ground are taken by them, so the scan finds none)
+        for(Machine m : field.existing) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) depth[k] = 0;
         //places on the ground, by block, and what each gives
         Map<String, Set<Integer>> placed = new HashMap<>();
         boolean vents = false;
