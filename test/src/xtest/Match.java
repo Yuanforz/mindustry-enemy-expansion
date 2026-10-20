@@ -328,6 +328,11 @@ public class Match{
             System.out.println(String.format("  unfinished: %s at %d,%d (there %s%s); valid %b; dark %.0f; in the map area %b; the builder at %.0f tiles", p.block.name, p.x, p.y, tile.block().name,
                 tile.build instanceof mindustry.world.blocks.ConstructBlock.ConstructBuild cb ? String.format(", %.0f%% built", cb.progress * 100) : "", Build.validPlace(p.block, us, p.x, p.y, p.rotation), Vars.world.getDarkness(p.x, p.y), Vars.world.isInMapArea(p.x, p.y),
                 hand.unit() == null ? -1f : hand.unit().dst(tile.worldx(), tile.worldy()) / Vars.tilesize));
+            StringBuilder on = new StringBuilder();
+            float ts = Vars.tilesize, size = p.block.size * ts;
+            mindustry.entities.Units.nearby(null, p.x * ts + p.block.offset - size / 2f, p.y * ts + p.block.offset - size / 2f, size, size, u -> on.append(' ').append(u.type.name).append('(').append(u.controller().getClass().getSimpleName())
+                .append(u.controller() instanceof mindustry.ai.types.CommandAI ai ? ai.targetPos == null ? ", no order" : String.format(", told to %.0f,%.0f", ai.targetPos.x / ts, ai.targetPos.y / ts) : "").append(')'));
+            if(on.length() > 0) System.out.println("    standing on it:" + on);
         }
         Seq<String> who = hurt.keys().toSeq().sort(k -> -hurt.get(k, 0f));
         StringBuilder hb = new StringBuilder("  what hurt our units most:");
