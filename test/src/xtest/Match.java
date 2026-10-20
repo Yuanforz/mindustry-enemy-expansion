@@ -513,6 +513,54 @@ public class Match{
             placed++;
             System.out.println("  put down " + k[0] + " at " + at.x + "," + at.y + " (the map had " + found.get((String)k[0], 0) + " tiles of it in reach)");
         }
+        //thorium in rock: thorium on the floor is dug only by the eruption drill, which costs thorium to build; the way in is
+        //a large plasma bore on thorium in a wall. A strip of it on the rock face nearest the core that open ground meets
+        if(found.get("wall:thorium", 0) < 12) wallOre(cx, cy, Blocks.wallOreThorium, 24);
+    }
+
+    /** Ore put into the rock face nearest (cx, cy), from 15 tiles out: up to n tiles of rock that open ground touches. */
+    static void wallOre(int cx, int cy, Block ore, int n){
+        Tile start = null;
+        float best = Float.MAX_VALUE;
+        for(int dx = -50; dx <= 50; dx++) for(int dy = -50; dy <= 50; dy++){
+            float d = (float)Math.hypot(dx, dy);
+            if(d < 15 || d > 50 || d >= best) continue;
+            Tile t = Vars.world.tile(cx + dx, cy + dy);
+            if(face(t)){
+                best = d;
+                start = t;
+            }
+        }
+        if(start == null){
+            System.out.println("  no rock face near the core for " + ore.name);
+            return;
+        }
+        //along the face from there
+        IntSeq queue = new IntSeq();
+        IntSet seen = new IntSet();
+        queue.add(start.pos());
+        seen.add(start.pos());
+        int put = 0;
+        for(int i = 0; i < queue.size && put < n; i++){
+            Tile t = Vars.world.tile(queue.get(i));
+            t.setOverlay(ore);
+            put++;
+            for(int[] d : new int[][]{{1, 0}, {0, 1}, {-1, 0}, {0, -1}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}}){
+                Tile o = Vars.world.tile(t.x + d[0], t.y + d[1]);
+                if(o != null && seen.add(o.pos()) && face(o)) queue.add(o.pos());
+            }
+        }
+        System.out.println("  put " + ore.name + " into " + put + " tiles of rock from " + start.x + "," + start.y);
+    }
+
+    /** A tile of plain rock beside open ground that can be built on. */
+    static boolean face(Tile t){
+        if(t == null || !t.block().isStatic() || !t.solid() || t.overlay() != Blocks.air || t.block().itemDrop != null) return false;
+        for(int[] d : new int[][]{{1, 0}, {0, 1}, {-1, 0}, {0, -1}}){
+            Tile o = Vars.world.tile(t.x + d[0], t.y + d[1]);
+            if(o != null && !o.solid() && o.build == null && !o.floor().isLiquid && o.floor().placeableOn) return true;
+        }
+        return false;
     }
 
     /** The corner of a square of open ground of this size some way out from (cx, cy), the n-th such going round. */

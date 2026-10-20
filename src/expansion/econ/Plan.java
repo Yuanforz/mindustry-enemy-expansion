@@ -125,6 +125,7 @@ public final class Plan{
         Took.end("plan: order", t0);
         out.println("######## " + label + unitName + " from " + machines + "; the model has it done by " + time(model.t)
             + ", first " + unitName + " at " + time(model.first[unit]) + "; " + model.order.size() + " machines");
+        if(Boolean.getBoolean("xp.order")) dumpOrder();
         //never got to: nothing laid out (a later stage may ask for something the map has no way to make)
         if(Float.isInfinite(model.first[unit]) || Float.isNaN(model.first[unit])) return null;
 
@@ -293,8 +294,10 @@ public final class Plan{
     }
 
     /**
-     * The blocks of these whose materials can be had now (see {@link #gate}): what the core holds, what the core unit digs,
-     * and what a machine that can itself be paid for makes here out of what can be had (round till nothing more comes in).
+     * The blocks of these whose materials can be had now (see {@link #gate}): enough of each in the core, or made here: what
+     * the core unit digs, and what a machine that can itself be paid for makes here out of what is made here (round till
+     * nothing more comes in). So a miner that costs what it mines (the eruption drill and floor thorium) is not one until
+     * that comes in some other way (a large plasma bore on thorium in rock) or the core holds enough.
      */
     List<String> gated(List<String> blocks, Team me){
         CoreBlock.CoreBuild core = me.core();
@@ -302,8 +305,8 @@ public final class Plan{
         for(int k = 0; k < cat.size(); k++){
             Res r = cat.get(k);
             if(r.kind == Res.Kind.item){
-                Item item = Vars.content.item(r.name);
-                if(item != null && core.items.get(item) > 0) had[k] = true;
+                //(what the core holds counts only towards paying for a block, below, not as a supply: ten thorium in the core
+                //do not make an eruption drill, which costs 150 of it, one that can be paid for)
                 if(field.handDistance != null && k < field.handDistance.length && !Float.isInfinite(field.handDistance[k])) had[k] = true;
             }
         }
@@ -490,6 +493,19 @@ public final class Plan{
         if(best == null) return null;
         planner.free.remove(best);
         return planner.machine(bestRecipe, best);
+    }
+
+    /** (debug, -Dxp.order) the model's order: each machine, when begun and done, what it costs, and what the core held at the end. */
+    void dumpOrder(){
+        for(int i = 0; i < model.order.size(); i++){
+            Machine m = model.order.get(i);
+            StringBuilder c = new StringBuilder();
+            for(int k = 0; k < m.cost.length; k++) if(m.cost[k] > 0) c.append(' ').append(cat.get(k).name).append('=').append(m.cost[k]);
+            out.println(String.format("    order #%d %s%s: begun %s done %s; cost%s", i + 1, m.recipe.name, m.item >= 0 ? " (" + cat.get(m.item).name + ")" : "", time(model.begun[i]), time(model.finished[i]), c));
+        }
+        StringBuilder st = new StringBuilder("    at the end the core held:");
+        for(int k = 0; k < cat.size(); k++) if(cat.get(k).kind == Res.Kind.item && model.stock[k] >= 1f) st.append(' ').append(cat.get(k).name).append('=').append((int)model.stock[k]);
+        out.println(st);
     }
 
     public static String time(float s){

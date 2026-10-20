@@ -137,7 +137,9 @@ public final class Planner{
             if(cost <= field.stock[k] || field.handRate(cat, k) > 0f) continue;
             boolean made = false;
             for(Machine m : field.existing) if(m.out(k) > 1e-4f) made = true;
-            for(Machine m : plan) if(m.out(k) > 1e-4f) made = true;
+            //(a maker that costs this to build is no maker of it till it comes in some other way: an eruption drill digs
+            //thorium and costs 150 of it)
+            for(Machine m : plan) if(m.out(k) > 1e-4f && (OLDFIRST || m.recipe.cost[k] <= field.stock[k])) made = true;
             if(made) continue;
             sofar = plan;
             Machine add = maker(k, 0.1f, false);
@@ -286,12 +288,27 @@ public final class Planner{
         //a crafter (or module) that makes it, the one whose whole chain is cheapest; none at all if a drill is cheaper
         Recipe crafter = chains == null ? null : chains.bestCrafter(res);
         if(chains == null) for(Recipe r : cat.recipes) if(r.ground == Recipe.Ground.none && r.out[res] > 0f){ crafter = r; break; }
+        if(crafter != null && !first(crafter, res)){
+            //the cheapest that can go up before any of it comes in
+            Recipe other = null;
+            float otherCost = Float.POSITIVE_INFINITY;
+            for(Recipe r : cat.recipes){
+                if(r.ground != Recipe.Ground.none || r.makesUnits() || r.out[res] <= 0f || !first(r, res)) continue;
+                float c = chains.costOf(r, res);
+                if(c < otherCost){
+                    otherCost = c;
+                    other = r;
+                }
+            }
+            //(none: maybe a machine on the ground, below)
+            crafter = other != null && (chains.by[res] == null || chains.by[res].ground == Recipe.Ground.none || !first(chains.by[res], res)) ? other : null;
+        }
         if(crafter != null) return machine(crafter, null);
         //else a machine on the ground: the best place for any recipe that can dig it
         Field.Site bestSite = null;
         Recipe bestRecipe = null;
         for(Recipe r : cat.recipes){
-            if(r.ground == Recipe.Ground.none || r.perFactor[res] <= 0f) continue;
+            if(r.ground == Recipe.Ground.none || r.perFactor[res] <= 0f || !first(r, res)) continue;
             Field.Site site = peek(r, res);
             if(site != null && (bestSite == null || r.perFactor[res] * site.factor / cost(r) > bestRecipe.perFactor[res] * bestSite.factor / cost(bestRecipe))){
                 bestSite = site;
@@ -301,6 +318,19 @@ public final class Planner{
         if(bestSite == null) return null;
         free.remove(bestSite);
         return machine(bestRecipe, bestSite);
+    }
+
+    /**
+     * Whether a maker of this, built by this recipe, can go up before any of it comes in: it costs no more of it than the
+     * core holds, or the plan (or the map) already has a maker of it that can. A miner that costs what it mines (the
+     * eruption drill digs thorium and costs 150 of it) comes only after another way in (a large plasma bore on thorium in
+     * rock). General: the same holds for anything, whatever it is.
+     */
+    boolean first(Recipe r, int res){
+        if(OLDFIRST || r.cost[res] <= field.stock[res]) return true;
+        for(Machine m : field.existing) if(m.out(res) > 1e-4f) return true;
+        for(Machine m : sofar) if(m.out(res) > 1e-4f && m.recipe.cost[res] <= field.stock[res]) return true;
+        return false;
     }
 
     /** The machines of the plan so far, for {@link #nearestVent}. */
@@ -559,13 +589,18 @@ public final class Planner{
         List<Machine> key = quick && ordering ? new ArrayList<>(seq) : null;
         if(key != null){
             float[] known = scored.get(key);
-            if(known != null && (int)known[3] == unit) return new float[]{known[0], known[1], known[2]};
+            if(known != null && (int)known[4] == unit) return new float[]{known[0], known[1], known[2], known[3]};
         }
         Timeline t = new Timeline(cat, field, seq);
         t.watched = quick ? unit : -1;
         t.runToGoal(unit, limit);
-        float[] out = {reached(t, unit) ? t.t : Float.POSITIVE_INFINITY, t.first[unit], spent(seq)};
-        if(key != null) scored.put(key, new float[]{out[0], out[1], out[2], unit});
+        //(of two that never get there, the one that gets more of its machines up is nearer: with a chain of makers a step at
+        //a time, from silicon to tungsten to oxide to thorium, an order that begins at the top waits for good on its first
+        //machine, and without this the search could not tell it from one that begins at the bottom)
+        int up = 0;
+        for(float f : t.finished) if(!Float.isNaN(f) && !Float.isInfinite(f)) up++;
+        float[] out = {reached(t, unit) ? t.t : Float.POSITIVE_INFINITY, t.first[unit], -up, spent(seq)};
+        if(key != null) scored.put(key, new float[]{out[0], out[1], out[2], out[3], unit});
         return out;
     }
 
@@ -589,8 +624,16 @@ public final class Planner{
         if(c != 0) return c;
         c = Double.compare(seconds(a[1]), seconds(b[1]));
         if(c != 0) return c;
+        //(more machines up first, for orders that never get there; then less spent)
+        if(a.length > 3 && b.length > 3 && !OLDSCORE){
+            c = Float.compare(a[2], b[2]);
+            if(c != 0) return c;
+            return Float.compare(a[3], b[3]);
+        }
         return Float.compare(a.length > 2 ? a[2] : 0f, b.length > 2 ? b[2] : 0f);
     }
+
+    static final boolean OLDSCORE = Boolean.getBoolean("xp.oldscore"), OLDFIRST = Boolean.getBoolean("xp.oldfirst");
 
     static double seconds(float t){
         return Float.isInfinite(t) || Float.isNaN(t) ? Double.POSITIVE_INFINITY : Math.round(t);
@@ -686,7 +729,9 @@ public final class Planner{
         List<Machine> rest = following(n.left, guide);
         t.reorder(rest);
         t.runToGoal(unit, limit);
-        return new float[]{reached(t, unit) ? t.t : Float.POSITIVE_INFINITY, t.first[unit], spent(n.done) + spent(rest)};
+        int up = 0;
+        for(float f : t.finished) if(!Float.isNaN(f) && !Float.isInfinite(f)) up++;
+        return new float[]{reached(t, unit) ? t.t : Float.POSITIVE_INFINITY, t.first[unit], -up, spent(n.done) + spent(rest)};
     }
 
     List<Machine> rollout(List<Machine> plant, int unit, List<Machine> guide){

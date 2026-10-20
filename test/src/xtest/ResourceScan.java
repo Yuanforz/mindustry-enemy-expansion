@@ -41,9 +41,10 @@ public class ResourceScan{
             int have = 0;
             StringBuilder missing = new StringBuilder();
             for(String w : wanted){
-                //tungsten and thorium count once, from a wall or the floor
-                if(w.equals("wall:tungsten") || w.equals("wall:thorium")) continue;
-                boolean ok = found.get(w, 0) > 0 || (w.equals("floor:tungsten") && found.get("wall:tungsten", 0) > 0) || (w.equals("floor:thorium") && found.get("wall:thorium", 0) > 0);
+                //tungsten counts once, from a wall or the floor. Thorium only from rock: on the floor it is dug by the eruption
+                //drill alone, which costs thorium to build, so floor thorium without thorium in rock can't be started on
+                if(w.equals("wall:tungsten") || w.equals("floor:thorium")) continue;
+                boolean ok = found.get(w, 0) > 0 || (w.equals("floor:tungsten") && found.get("wall:tungsten", 0) > 0);
                 if(ok) have++;
                 else missing.append(' ').append(w);
             }
