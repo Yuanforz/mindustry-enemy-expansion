@@ -120,8 +120,45 @@ public final class Hand extends mindustry.entities.units.AIController{
         return (float)(Vars.state.tick / 60.0);
     }
 
+    /** Seconds the core unit spent on what, for the audit: building, saving up (by the item most short), waiting to see ground, putting back, idle. */
+    public final arc.struct.ObjectIntMap<String> spent = new arc.struct.ObjectIntMap<>();
+    float spentAt = -1f;
+
+    void account(){
+        float t = now();
+        if(spentAt < 0f){
+            spentAt = t;
+            return;
+        }
+        int dt = Math.round(t - spentAt);
+        if(dt <= 0) return;
+        spentAt = t;
+        String d = doing == null ? "" : doing;
+        String what;
+        if(d.startsWith("building")) what = "building";
+        else if(d.startsWith("putting back")) what = "putting back";
+        else if(d.startsWith("a unit is sent to see")) what = "waiting to see ground";
+        else if(d.startsWith("saving up")){
+            //(the item most short of what it saves for)
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("([a-z-]+) (\\d+)/(\\d+)").matcher(d);
+            String worst = "?";
+            float most = -1f;
+            while(m.find()){
+                float shortBy = Float.parseFloat(m.group(3)) - Float.parseFloat(m.group(2));
+                if(shortBy > most){
+                    most = shortBy;
+                    worst = m.group(1);
+                }
+            }
+            what = "saving for " + worst;
+        }else if(d.contains("all built") || d.isEmpty()) what = "idle";
+        else what = "other";
+        spent.increment(what, dt);
+    }
+
     @Override
     public void updateUnit(){
+        account();
         rally();
         offload();
         tell();

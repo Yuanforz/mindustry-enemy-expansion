@@ -122,8 +122,11 @@ public final class Command{
     public float horizon = Float.parseFloat(System.getProperty("ops.horizon", "720")), step = 10f;
     /** The discount's time scale: what is foretold this many seconds off counts 1/e as much (-Dops.discount). */
     public static float discount = Float.parseFloat(System.getProperty("ops.discount", "600"));
-    /** How much slower the game is than the economy model, in the two economy scenarios (the bench has it at 0.93-1.19). */
-    public static float[] lags = {1f, 1.3f};
+    /**
+     * How much slower the game is than the economy model, in the two economy scenarios: as the model, and as slow as the
+     * bench has seen it (93-119% of the model's time on the campaign maps, 97-103% on generated maps with no enemy).
+     */
+    public static float[] lags = {1f, 1.15f};
     /**
      * How much of a unit's estimated damage a second lands on a core under siege with nothing of ours about it (measured on
      * a generated map: four stells, 144 a second by the game's estimate, took 2100 health off a core in 27 s, 78 a second;
@@ -620,6 +623,16 @@ public final class Command{
             }
         }
         o.army = away == null ? units : away.copy().add(units);
+        //past the horizon, valued at its leaf: what the other side has gathered and not yet sent, against what holds our
+        //home. One that outweighs it takes the core once it comes, after the siege it needs (a defence that only keeps
+        //them waiting is not one that holds them: a part of one up held the core in the model only as long as they waited)
+        Force hold = units.copy().add(fixed).add(new Force(0f, coreHp, 0));
+        Force coming = theirs.copy();
+        if(siege != null) coming.add(siege);
+        if(coming.count > 0 && coming.strength() >= hold.strength()){
+            Force left = coming.copy().scl(hold.strength() <= 0f ? 1f : (float)Math.sqrt(1f - hold.strength() / coming.strength()));
+            o.lost = forecast.steps * step + walk + coreHp / Math.max(1f, left.dps * siegeEfficiency);
+        }
         return o;
     }
 

@@ -123,6 +123,8 @@ public final class Watch{
             Building b = Vars.world.build(self.x, self.y);
             int st = state(b, self);
             s[st] += every;
+            //(starved: of what, for the audit)
+            if(st == 1 && b != null) for(String lack : lacking(b)) starvedOf.increment(lack, Math.round(every));
             float r = rate(b);
             if(!Float.isNaN(r)){
                 float[] acc = rates.computeIfAbsent(m, x -> new float[4]);
@@ -159,6 +161,31 @@ public final class Watch{
 
     static String clock(float seconds){
         return String.format("%d:%02d", (int)seconds / 60, (int)seconds % 60);
+    }
+
+    /** Seconds machines stood starved, by what they lacked (an item or liquid they take that they hold too little of). */
+    public final ObjectIntMap<String> starvedOf = new ObjectIntMap<>();
+
+    /** Each machine's seconds by state (running, starved, blocked, no power, missing). */
+    public Iterable<float[]> secondsByState(){
+        return seconds.values();
+    }
+
+    /** What a building takes that it holds too little of to work. */
+    static Seq<String> lacking(Building b){
+        Seq<String> out = new Seq<>();
+        if(b.block.consumers == null) return out;
+        for(var c : b.block.consumers){
+            if(c instanceof mindustry.world.consumers.ConsumeItems ci && b.items != null){
+                for(var st : ci.items) if(b.items.get(st.item) < st.amount) out.add(st.item.name);
+            }else if(c instanceof mindustry.world.consumers.ConsumeLiquid cl && b.liquids != null){
+                if(b.liquids.get(cl.liquid) < cl.amount * 2f) out.add(cl.liquid.name);
+            }
+        }
+        if(b.block instanceof mindustry.world.blocks.units.UnitFactory uf && b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild ub && ub.currentPlan >= 0 && b.items != null){
+            for(var st : uf.plans.get(ub.currentPlan).requirements) if(b.items.get(st.item) < st.amount) out.add(st.item.name);
+        }
+        return out;
     }
 
     static int state(Building b, Part p){

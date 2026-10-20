@@ -348,6 +348,8 @@ public class Match{
             if((hand == null || over) && !commandWaits && (again || task != null || command != null || stage + 1 < stages.length) && us.core() != null){
                 if(command != null) lastDecisionAt = f;
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
+                //(the audit: what the model said of the stage against what came of it)
+                if(hand != null && stageModel != null) stageAudit.add(String.format("  audit: stage %d (%d jobs): the model had it all up by %s, the game %s; it lasted %s", stage + 1, hand.order.size(), Plan.time(stageModel.t), hand.orderDone() ? Plan.time((f - stageFrom) / 60f) : "not (left at " + hand.next + ")", Plan.time((f - stageFrom) / 60f)));
                 if(task != null){
                     lastTaskBy = task.by;
                     lastTaskAt = f;
@@ -769,6 +771,28 @@ public class Match{
             }
         }
         if(hand != null) for(String tr : hand.trouble) System.out.println("  could not put down: " + tr);
+        //the audit: where the time went against the model, over every stage
+        {
+            List<expansion.econ.Hand> all = new ArrayList<>(before);
+            if(hand != null && !all.contains(hand)) all.add(hand);
+            ObjectIntMap<String> spent = new ObjectIntMap<>(), starved = new ObjectIntMap<>();
+            float[] states = new float[expansion.econ.Watch.states.length];
+            for(expansion.econ.Hand h : all){
+                for(var e : h.spent) spent.increment(e.key, e.value);
+                for(var e : h.watch.starvedOf) starved.increment(e.key, e.value);
+                for(float[] st : h.watch.secondsByState()) for(int i = 0; i < states.length; i++) states[i] += st[i];
+            }
+            StringBuilder a = new StringBuilder("  audit: the core unit's time:");
+            spent.keys().toSeq().sort((x, y) -> spent.get(y) - spent.get(x)).each(k -> a.append(' ').append(k).append(' ').append(spent.get(k)).append(" s;"));
+            a.append(" machines' time:");
+            float total = 0f;
+            for(float v : states) total += v;
+            for(int i = 0; i < states.length; i++) if(states[i] > 0) a.append(String.format(" %s %.0f%%", expansion.econ.Watch.states[i], 100f * states[i] / Math.max(1f, total)));
+            a.append("; starved of:");
+            starved.keys().toSeq().sort((x, y) -> starved.get(y) - starved.get(x)).each(k -> a.append(' ').append(k).append(' ').append(starved.get(k)).append(" s"));
+            System.out.println(a);
+            for(String line : stageAudit) System.out.println(line);
+        }
         if(hand != null && hand.job != null) for(var p : hand.job){
             Tile tile = Vars.world.tile(p.x, p.y);
             if(tile.block() == p.block) continue;
@@ -978,6 +1002,8 @@ public class Match{
         for(Building b : me.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t && t.hasAmmo() && b.within(home, 12 * Vars.tilesize)) return true;
         return false;
     }
+    /** For the audit: each stage's model against the game. */
+    static final List<String> stageAudit = new ArrayList<>();
     /** When the command layer last weighed. */
     static int lastDecisionAt = -100000;
     /** The model of the stage under way, for telling whether the stage is behind it. */
