@@ -49,6 +49,9 @@ public class Match{
     static final ObjectIntMap<String> lastMinute = new ObjectIntMap<>();
 
     public static void main(String[] args){
+        //the path finders stepped with the game (else the same start plays out otherwise each time, and units wait on a
+        //thread that lags behind); -Dxp.syncpath=false for the game's own threads
+        if(System.getProperty("xp.syncpath") == null) System.setProperty("xp.syncpath", "true");
         ExpansionMod[] mod = {null};
         Boot.boot(args[0], () -> mod[0] = new ExpansionMod());
         mod[0].init();
@@ -123,6 +126,9 @@ public class Match{
             core.items.clear();
             for(ItemStack stack : rules.loadout) core.items.set(stack.item, stack.amount);
         }
+        //the game gives the side of the waves no unit cap at all (Units.getCap); where the two sides are to start alike (even,
+        //gen) ours gets none either. In a sector it keeps the cap a player has there.
+        if((mode.equals("even") || generated) && !sandbox && !Boolean.getBoolean("match.cap")) us.ignoreUnitCap = true;
         //the squad AI, which the game runs for its AI sides only: run here for ours by hand
         us.rules().rtsAi = true;
         mindustry.ai.RtsAI squads = new mindustry.ai.RtsAI(us.data());
@@ -274,6 +280,7 @@ public class Match{
                 old.watch.repairs.clear();
             }
             Boot.frames(1);
+            ControlSync.step();
             squads.update();
             if(army != null) army.update();
             if(f % 60 == 0) for(Building b : us.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild tb){
