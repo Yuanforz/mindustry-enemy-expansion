@@ -110,7 +110,10 @@ public class Match{
         Planets.erekir.applyRules(rules, false);
         us = rules.defaultTeam;
         them = rules.waveTeam;
-        rules.fog = false;
+        //the fog off unless asked (-Dmatch.fog=true keeps the map's own, as the campaign plays it: the game's enemy then sees
+        //only what its units and buildings see, and a side builds only on ground it has seen. xtest.Campaign, where the
+        //Brain took onset, plays with it; here the Brain lost onset to eight stells at 2:15 with the fog off)
+        if(!Boolean.getBoolean("match.fog")) rules.fog = false;
         rules.coreIncinerates = true;
         rules.infiniteResources = false;
         SectorPreset preset = Vars.content.getByName(ContentType.sector, map.nameWithoutExtension());
@@ -170,6 +173,8 @@ public class Match{
         System.out.println("  our units: " + (army == null ? "the squad AI alone" : "the squad AI with the army layer: " + army.flags.toString().trim()));
         Time.setDeltaProvider(() -> 1f);
         Vars.logic.play();
+        //(the time between waves, as the campaign's difficulty has it)
+        if(campaign) Vars.state.wavetime *= Planets.erekir.campaignRules.difficulty.waveTimeMultiplier;
         Vars.state.tick = 0;
         Boot.frames(1);
         //the whole map open, the way the map's own script opens it up (as the other tests run it, "open")
@@ -227,16 +232,22 @@ public class Match{
         Set<String> allowed = new HashSet<>(blocks);
         //in the campaign, both our side and the Brain in its place have what a player has researched by this sector (the
         //economy bench's list of it); every Erekir block besides that is held back
-        if(campaign && isTechSector(map.nameWithoutExtension())){
-            Set<String> known = new HashSet<>(EconRun.logisticsOf(map.nameWithoutExtension()));
-            for(String[] row : EconLab.tech){
-                for(int i = 1; i < row.length; i++) known.add(row[i]);
-                if(row[0].equals(map.nameWithoutExtension())) break;
+        //(xtest.Campaign's research, free: everything the game's tech tree allows once the sectors before are taken and this
+        //one landed on, and, as the sector is played, whatever more it comes to allow: an item first got hold of)
+        if(campaign && preset != null){
+            for(ContentType type : ContentType.all) for(mindustry.ctype.Content c : Vars.content.getBy(type)) if(c instanceof UnlockableContent u) u.clearUnlock();
+            for(TechTree.TechNode node : TechTree.all) node.reset();
+            for(String name : Campaign.line){
+                SectorPreset at = Vars.content.getByName(ContentType.sector, name);
+                if(at == null) continue;
+                Campaign.landed.add(at);
+                if(name.equals(preset.name)) break;
+                Campaign.taken.add(at);
             }
-            blocks.retainAll(known);
-            allowed = new HashSet<>(blocks);
-            Set<String> may = new HashSet<>(known);
-            brain.unlocked = content -> !(content instanceof Block) || may.contains(content.name) || !((Block)content).isOnPlanet(Planets.erekir) || content instanceof CoreBlock;
+            Campaign.unlockFree();
+            Campaign.grant();
+            brain.unlocked = UnlockableContent::unlocked;
+            researchedOnly(blocks, allowed);
             System.out.println("  researched for " + map.nameWithoutExtension() + ": " + blocks);
         }
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/posts,blueprints/plants,blueprints/modules"));
@@ -483,6 +494,12 @@ public class Match{
                     if(tile != null && tile.build == null && !hand.watch.repairs.contains(p, true)) hand.watch.repairs.add(p);
                 }
                 old.watch.repairs.clear();
+            }
+            if(campaign && preset != null && f % 60 == 0){
+                int had = blocks.size();
+                Campaign.research();
+                researchedOnly(blocks, allowed);
+                if(blocks.size() != had) System.out.println("  " + Plan.time(f / 60f) + ": researched now " + blocks);
             }
             long q0 = System.nanoTime();
             Boot.frames(1);
@@ -883,6 +900,18 @@ public class Match{
 
     /** Wall time spent each frame (-Dmatch.prof): the game's frame (with the units' controllers), the units' path finder, the squad AI, the army layer. */
     static final long[] prof = new long[4];
+
+    /** Keeps of the Erekir blocks those researched by now (in the campaign), in the planner's list and set. */
+    static void researchedOnly(List<String> blocks, Set<String> allowed){
+        blocks.clear();
+        for(String name : Plan.erekir()){
+            Block b = Vars.content.block(name);
+            if(b != null && b.unlocked()) blocks.add(name);
+        }
+        Collections.sort(blocks);
+        allowed.clear();
+        allowed.addAll(blocks);
+    }
 
     static boolean isTechSector(String name){
         for(String[] row : EconLab.tech) if(row[0].equals(name)) return true;
