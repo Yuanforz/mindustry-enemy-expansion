@@ -41,6 +41,11 @@ public class Match{
     static int blocksLostUs, blocksLostThem;
     static final ObjectFloatMap<String> hurt = new ObjectFloatMap<>();
     static final ObjectIntMap<String> died = new ObjectIntMap<>();
+    static final ObjectFloatMap<String> blockHurt = new ObjectFloatMap<>();
+    /** Where raiders take what we built (-Dmatch.guard=false: no turret put down for it). */
+    static expansion.econ.Raids raids;
+    static int guards, feeds;
+    static final ObjectIntMap<String> blocksLostKind = new ObjectIntMap<>();
     /** Seconds our turrets stood, and of those, with no ammunition. */
     static int turretSeconds, drySeconds;
     /** What the last defence planned could feed turrets with. */
@@ -122,9 +127,17 @@ public class Match{
         }
         Boot.frames(1);
 
+        raids = new expansion.econ.Raids(us);
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == us) made.increment("us " + e.unit.type.name);
             if(e.unit.team == them) made.increment("them " + e.unit.type.name);
+        });
+        //who hurts our buildings, and which: by the kind of attacker, and by the block hit
+        Events.on(BuildDamageEvent.class, e -> {
+            if(e.build == null || e.build.team != us || e.source == null) return;
+            Object owner = e.source.owner;
+            String who = owner instanceof Building b ? b.block.name : owner instanceof Unit u ? "unit " + u.type.name : String.valueOf(owner);
+            blockHurt.put(who, blockHurt.get(who, 0f) + e.source.damage);
         });
         //who hurts our units: by the block or unit that fired, damage summed
         Events.on(UnitDamageEvent.class, e -> {
@@ -142,10 +155,15 @@ public class Match{
         Events.on(UnitDestroyEvent.class, e -> lostUnits.increment(e.unit.team == us ? "us" : e.unit.team == them ? "them" : "other"));
         Events.on(BlockDestroyEvent.class, e -> {
             if(e.tile.team() == us && Boolean.getBoolean("match.losses")) System.out.println(String.format("    lost %s at %d,%d at %s", e.tile.block().name, e.tile.x, e.tile.y, Plan.time((float)(Vars.state.tick / 60.0))));
-            if(e.tile.team() == us) blocksLostUs++;
+            raids.lost(e.tile);
+            if(e.tile.team() == us){
+                blocksLostUs++;
+                blocksLostKind.increment(e.tile.block().name);
+            }
             else if(e.tile.team() == them) blocksLostThem++;
         });
 
+        if(Boolean.getBoolean("match.turrets")) for(Building b : us.data().buildings) if(b.block instanceof mindustry.world.blocks.defense.turrets.Turret t) System.out.println(String.format("  our turret %s at %d,%d range %.0f tiles", b.block.name, b.tileX(), b.tileY(), t.range / Vars.tilesize));
         System.out.println(String.format("MATCH %s (%s): we have %d core(s), %d blocks; the Brain %d core(s), %d blocks", map.nameWithoutExtension(), mode, us.cores().size, us.data().buildings.size, them.cores().size, them.data().buildings.size));
 
         //our stages
@@ -161,6 +179,11 @@ public class Match{
         int stage = -1;
         float stageFrom = 0f;
         expansion.econ.Hand hand = null;
+        //a guard put down where raiders take what we built: the stage's hand waits meanwhile
+        expansion.econ.Hand paused = null;
+        int guardFrom = 0;
+        boolean guarding = !"false".equals(System.getProperty("match.guard"));
+        Map<Long, float[]> lossBook = new HashMap<>();
         //the stages before: what of them goes missing is put back too, where its tile is empty
         List<expansion.econ.Hand> before = new ArrayList<>();
         Unit builder = null;
@@ -171,7 +194,7 @@ public class Match{
             //the next stage, planned from what stands, once the last is all up (or has had its time)
             //(a stage is not left for want of time while what makes its units is not up yet, unless three times over: on lake,
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
-            boolean over = hand != null && (hand.done() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
+            boolean over = paused == null && hand != null && (hand.done() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
             if((hand == null || over) && stage + 1 < stages.length && us.core() != null){
                 if(hand != null && !hand.done()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 stage++;
@@ -230,11 +253,78 @@ public class Match{
                     //its own jobs before putting back what raiders broke, every stage (a stage put off till every raid's damage
                     //is mended never gets its factory up: lake, raided from the second minute on, made no unit in twenty)
                     hand.urgent = true;
+                    hand.watch.losses = lossBook;
                     //our units are the squad AI's to lead (a unit told where to wait is left alone by it)
                     hand.rallyUnits = false;
                     Intent.current = plan.works.intent();
                     hand.intent = Intent.current;
                     if(builder != null && !builder.dead()) builder.controller(hand);
+                }
+            }
+            //a guard up, or out of time: the stage's hand takes over again
+            if(paused != null && (hand.done() || f - guardFrom > 60 * 240)){
+                System.out.println("  " + Plan.time(f / 60f) + ": guard " + (hand.done() ? "up" : "left at " + hand.next + " of " + hand.order.size()) + "; back to stage " + (stage + 1));
+                before.add(hand);
+                hand = paused;
+                paused = null;
+                if(builder != null && !builder.dead()) builder.controller(hand);
+            }
+            //a place being raided that nothing of ours that can hit the raiders reaches: a turret for it (or, where one of ours
+            //stands dry in reach, ammunition led to it)
+            if(guarding && paused == null && hand != null && f % 300 == 150 && us.core() != null){
+                expansion.defense.Guard.Raid raid = raids.hottest(false);
+                if(raid != null){
+                    long g0 = System.nanoTime();
+                    raids.guarding(raid.x, raid.y);
+                    Plan gp = new Plan(System.out);
+                    gp.gate = !Boolean.getBoolean("match.allblocks");
+                    gp.label = "guard at " + Plan.time(f / 60f) + ": ";
+                    StringBuilder notes = new StringBuilder();
+                    Plan made = null;
+                    try{
+                        if(raids.covered(raid.x, raid.y, raid.air, true)){
+                            //a turret of ours reaches it but stands dry: a line to it is all
+                            defenceAsk(sector);
+                            made = gp.defend(us, blocks, allowed, null, feedable);
+                            if(made != null) feeds++;
+                            System.out.println("  " + Plan.time(f / 60f) + ": raided, " + raid + "; a dry turret of ours reaches it: fed" + (made == null ? " (no way)" : ""));
+                        }else{
+                            expansion.defense.Planner.Ask ask = defenceAsk(sector);
+                            expansion.econ.Hand now = hand;
+                            CoreBlock.CoreBuild c = us.core();
+                            List<expansion.defense.Planner.Plan> ways = expansion.defense.Guard.plans(ask, raid, c.tileX(), c.tileY(), (block, x, y, rot) -> freeFor(now, block, x, y, rot), raids.feed(), 4, notes);
+                            if(ways.isEmpty()) System.out.print("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + notes);
+                            //the first way whose supply can be laid (a turret standing dry is so many items for nothing)
+                            for(expansion.defense.Planner.Plan dp : ways){
+                                Plan tryPlan = new Plan(System.out);
+                                tryPlan.gate = gp.gate;
+                                tryPlan.label = gp.label;
+                                Plan got = tryPlan.defend(us, blocks, allowed, dp, feedable);
+                                boolean fed = got != null && got.works != null;
+                                if(fed) for(Object[] u : got.works.unfed()) if(expansion.econ.Defence.is((Machine)u[1])) fed = false;
+                                System.out.println("  " + Plan.time(f / 60f) + ": raided, " + raid + "; " + dp.notes.get(0) + (fed ? "" : ": its supply can't be laid"));
+                                if(fed){
+                                    made = got;
+                                    guards++;
+                                    break;
+                                }
+                            }
+                        }
+                    }catch(Throwable t){
+                        System.out.println("  guard could not be planned: " + t);
+                        t.printStackTrace(System.out);
+                        made = null;
+                    }
+                    planSeconds += (System.nanoTime() - g0) / 1e9f;
+                    if(made != null && made.model != null && !made.model.order.isEmpty()){
+                        paused = hand;
+                        guardFrom = f;
+                        hand = new expansion.econ.Hand(made.works, made.model.order);
+                        hand.urgent = true;
+                        hand.rallyUnits = false;
+                        hand.watch.losses = lossBook;
+                        if(builder != null && !builder.dead()) builder.controller(hand);
+                    }
                 }
             }
             CoreBlock.CoreBuild home = us.core();
@@ -296,6 +386,13 @@ public class Match{
         for(int i = 0; i < Math.min(8, who.size); i++) hb.append(String.format(" %s %.0f;", who.get(i), hurt.get(who.get(i), 0f)));
         System.out.println(hb);
         System.out.println("  where our units died: " + died);
+        Seq<String> bw = blockHurt.keys().toSeq().sort(k -> -blockHurt.get(k, 0f));
+        StringBuilder bb = new StringBuilder("  what hurt our buildings most:");
+        for(int i = 0; i < Math.min(8, bw.size); i++) bb.append(String.format(" %s %.0f;", bw.get(i), blockHurt.get(bw.get(i), 0f)));
+        System.out.println(bb);
+        System.out.println("  our blocks lost, by kind: " + blocksLostKind);
+        if(hand != null) System.out.println("  repairs held back under fire: " + hand.watch.heldBack + ", parts put back: " + hand.watch.repaired);
+        System.out.println("  raids: losses to raiders by kind " + raids.byKind + "; guards put down " + guards + ", dry turrets fed " + feeds);
         if(hand != null && Boolean.getBoolean("match.grids")) for(int i = 0; i < hand.order.size(); i++){
             StringBuilder nodes = new StringBuilder();
             for(var p : hand.works.job(hand.order.get(i))) if(p.block.name.equals("beam-node")) nodes.append(" ").append(p.x).append(",").append(p.y).append(Vars.world.tile(p.x, p.y).block() == p.block ? "" : "(missing)");
@@ -324,6 +421,47 @@ public class Match{
      * elude, then their refits), our tech of the sector, and what the economy can feed turrets with.
      */
     static expansion.defense.Planner.Plan defence(String sector, float seconds, String label){
+        expansion.defense.Planner.Ask ask = defenceAsk(sector);
+        Map<String, Integer> units = new TreeMap<>();
+        float minute = seconds / 60f;
+        //what the Brain may send: what it has now, half as many again, and at least what its yards could have made by now
+        //(the kinds: what its yards make and what it has; before it has any, all three of the first tier)
+        int early = Math.max(4, Math.min(10, 3 + (int)(minute / 2))), later = Math.min(6, 2 + (int)(minute / 4));
+        Set<String> kinds = new TreeSet<>();
+        for(Building b : them.data().buildings){
+            if(b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0){
+                kinds.add(((mindustry.world.blocks.units.UnitFactory)yard.block).plans.get(yard.currentPlan).unit.name);
+            }
+            if(b.block instanceof mindustry.world.blocks.units.Reconstructor re) for(var up : re.upgrades) kinds.add(up[1].name);
+        }
+        for(Unit u : them.data().units) if(!u.spawnedByCore) kinds.add(u.type.name);
+        if(kinds.isEmpty()) kinds.addAll(List.of("stell", "merui", "elude"));
+        for(String k : kinds){
+            var foe = expansion.defense.Foe.get(k);
+            if(foe != null) units.put(k, foe.tier <= 1 ? early : later);
+        }
+        ObjectIntMap<String> now = new ObjectIntMap<>();
+        for(Unit u : them.data().units) if(!u.spawnedByCore) now.increment(u.type.name);
+        for(var e : now) if(expansion.defense.Foe.get(e.key) != null) units.merge(e.key, (int)Math.ceil(e.value * 1.5f), Math::max);
+        ask.units.putAll(units);
+        for(CoreBlock.CoreBuild c : them.cores()){
+            expansion.defense.Planner.Source ground = new expansion.defense.Planner.Source(c.tileX(), c.tileY(), "Brain core " + c.tileX() + "," + c.tileY());
+            for(var e : units.entrySet()){
+                ground.units.put(e.getKey(), e.getValue());
+                ground.moves.add(expansion.defense.Foe.get(e.getKey()).move);
+            }
+            ask.sources.add(ground);
+        }
+        if(ask.sources.isEmpty()) return null;
+        long t0 = System.nanoTime();
+        expansion.defense.Planner.Plan plan = new expansion.defense.Planner(ask).plan();
+        System.out.println(String.format("######## %sthe defence planner (tech of %s, fed with %s, budget %s) against %s: %d placements in %.0f ms", label, sector, ask.supply, ask.budget, units, plan.placements.size(), (System.nanoTime() - t0) / 1e6));
+        System.out.print(plan.describe());
+        return plan;
+    }
+
+    /** What the defence planner is asked with for our side now: the ground, our tech that can be paid for, what can be fed, the budget, the modules. */
+    static expansion.defense.Planner.Ask defenceAsk(String sector){
         expansion.defense.Planner.Ask ask = new expansion.defense.Planner.Ask();
         CoreBlock.CoreBuild core = us.core();
         ask.terrain = expansion.defense.GameData.terrain(us);
@@ -372,42 +510,18 @@ public class Match{
         }
         ask.modules = expansion.defense.Battery.parse(new Fi("blueprints/defense/modules.txt").readString());
         ask.capacity = expansion.defense.Capacity.parse(new Fi("blueprints/defense/capacity.txt").readString());
-        //what the Brain may send: what it has now, half as many again, and at least what its yards could have made by now
-        //(the kinds: what its yards make and what it has; before it has any, all three of the first tier)
-        Map<String, Integer> units = new TreeMap<>();
-        float minute = seconds / 60f;
-        int early = Math.max(4, Math.min(10, 3 + (int)(minute / 2))), later = Math.min(6, 2 + (int)(minute / 4));
-        Set<String> kinds = new TreeSet<>();
-        for(Building b : them.data().buildings){
-            if(b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0){
-                kinds.add(((mindustry.world.blocks.units.UnitFactory)yard.block).plans.get(yard.currentPlan).unit.name);
-            }
-            if(b.block instanceof mindustry.world.blocks.units.Reconstructor re) for(var up : re.upgrades) kinds.add(up[1].name);
+        return ask;
+    }
+
+    /** Whether a block may go down here now, on ground the hand's own layout has nothing planned on. */
+    static boolean freeFor(expansion.econ.Hand hand, String name, int x, int y, int rotation){
+        Block b = Vars.content.block(name);
+        if(b == null || !Build.validPlace(b, us, x, y, rotation)) return false;
+        int off = -(b.size - 1) / 2;
+        for(int dx = 0; dx < b.size; dx++) for(int dy = 0; dy < b.size; dy++){
+            if(hand.works.grid != null && hand.works.grid.block(x + off + dx, y + off + dy) != null && Vars.world.tile(x + off + dx, y + off + dy).build == null) return false;
         }
-        for(Unit u : them.data().units) if(!u.spawnedByCore) kinds.add(u.type.name);
-        if(kinds.isEmpty()) kinds.addAll(List.of("stell", "merui", "elude"));
-        for(String k : kinds){
-            var foe = expansion.defense.Foe.get(k);
-            if(foe != null) units.put(k, foe.tier <= 1 ? early : later);
-        }
-        ObjectIntMap<String> now = new ObjectIntMap<>();
-        for(Unit u : them.data().units) if(!u.spawnedByCore) now.increment(u.type.name);
-        for(var e : now) if(expansion.defense.Foe.get(e.key) != null) units.merge(e.key, (int)Math.ceil(e.value * 1.5f), Math::max);
-        ask.units.putAll(units);
-        for(CoreBlock.CoreBuild c : them.cores()){
-            expansion.defense.Planner.Source ground = new expansion.defense.Planner.Source(c.tileX(), c.tileY(), "Brain core " + c.tileX() + "," + c.tileY());
-            for(var e : units.entrySet()){
-                ground.units.put(e.getKey(), e.getValue());
-                ground.moves.add(expansion.defense.Foe.get(e.getKey()).move);
-            }
-            ask.sources.add(ground);
-        }
-        if(ask.sources.isEmpty()) return null;
-        long t0 = System.nanoTime();
-        expansion.defense.Planner.Plan plan = new expansion.defense.Planner(ask).plan();
-        System.out.println(String.format("######## %sthe defence planner (tech of %s, fed with %s, budget %s) against %s: %d placements in %.0f ms", label, sector, ask.supply, ask.budget, units, plan.placements.size(), (System.nanoTime() - t0) / 1e6));
-        System.out.print(plan.describe());
-        return plan;
+        return true;
     }
 
     /** Whether what makes the stage's units is up (true for a stage that makes none). */
