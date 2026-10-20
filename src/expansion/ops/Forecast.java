@@ -25,6 +25,12 @@ public final class Forecast{
     public final int steps;
     /** For each step: what can be at the core by then, and what the other side has in all by then (wherever it is). */
     public final Force[] at, all;
+    /**
+     * The same apart: what the other side's own army has by then (its units and what its yards make), counted where it
+     * is; and what of the map's waves has come to our core by then. The first it sends when it chooses, the second come
+     * when the map sends them.
+     */
+    public final Force[] army, waves;
     /** Notes for the log: where the force comes from. */
     public final StringBuilder notes = new StringBuilder();
 
@@ -39,9 +45,13 @@ public final class Forecast{
         steps = Math.max(1, (int)Math.ceil(horizon / step));
         at = new Force[steps + 1];
         all = new Force[steps + 1];
+        army = new Force[steps + 1];
+        waves = new Force[steps + 1];
         for(int i = 0; i <= steps; i++){
             at[i] = new Force();
             all[i] = new Force();
+            army[i] = new Force();
+            waves[i] = new Force();
         }
         home = me.core();
         if(home == null) return;
@@ -58,13 +68,22 @@ public final class Forecast{
 
     /** Puts n of a kind in from a time on, arriving at the core after walking from (x, y), in world units. */
     void put(UnitType type, float n, float from, float x, float y){
+        put(type, n, from, x, y, false);
+    }
+
+    void put(UnitType type, float n, float from, float x, float y, boolean wave){
         int made = stepOf(from);
         if(made < 0) return;
         for(int i = made; i <= steps; i++) all[i].add(type, n);
-        if(!reaches(type, x, y)) return;
+        boolean gets = reaches(type, x, y);
+        if(!wave && gets) for(int i = made; i <= steps; i++) army[i].add(type, n);
+        if(!gets) return;
         int there = stepOf(from + walk(type, x, y));
         if(there < 0) return;
-        for(int i = there; i <= steps; i++) at[i].add(type, n);
+        for(int i = there; i <= steps; i++){
+            at[i].add(type, n);
+            if(wave) waves[i].add(type, n);
+        }
     }
 
     /** Seconds a unit of a kind takes to walk from (x, y) to the core: the way as the crow flies, a third again for the bends. */
@@ -92,6 +111,7 @@ public final class Forecast{
             if(u.spawnedByCore || !u.type.canAttack || u.dead()) continue;
             int there = reaches(u.type, u.x, u.y) ? stepOf(walk(u.type, u.x, u.y)) : -1;
             for(int i = 0; i <= steps; i++) all[i].add(u);
+            if(there >= 0) for(int i = 0; i <= steps; i++) army[i].add(u);
             if(there >= 0) for(int i = there; i <= steps; i++) at[i].add(u);
             n++;
         }
@@ -166,7 +186,7 @@ public final class Forecast{
                         sx = Mathf.clamp(Vars.world.unitWidth() / 2f + Angles.trnsx(angle, far), 0, Vars.world.unitWidth());
                         sy = Mathf.clamp(Vars.world.unitHeight() / 2f + Angles.trnsy(angle, far), 0, Vars.world.unitHeight());
                     }
-                    put(g.type, n * worth, t, sx, sy);
+                    put(g.type, n * worth, t, sx, sy, true);
                     sent += n;
                 }
             }

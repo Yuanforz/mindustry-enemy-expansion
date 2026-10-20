@@ -33,6 +33,14 @@ public final class Force{
         return new Force(dps, health, count);
     }
 
+    /** Scaled: so much of it (dps and health alike, as a body that has lost that part of its members). */
+    public Force scl(float f){
+        dps *= f;
+        health *= f;
+        count = Math.round(count * f);
+        return this;
+    }
+
     public Force add(Force o){
         dps += o.dps;
         health += o.health;

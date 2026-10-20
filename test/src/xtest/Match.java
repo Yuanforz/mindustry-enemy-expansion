@@ -348,24 +348,24 @@ public class Match{
                 boolean homeGuard = false;
                 //(with the command layer: what it weighs best now; its stages are not a list)
                 String spec = command != null ? "command" : stages[stage];
-                defendFromStock = false;
                 String[] ways;
                 if(task != null) ways = new String[]{task.stage};
                 else if(command != null){
                     int fNow = f;
-                    expansion.ops.Command.Candidate best = command.decide(blocks, allowed, library, fromStock -> {
-                        stockOnly = fromStock;
-                        try{
-                            return defence(us, them, sector, fNow / 60f, "weighing a defence" + (fromStock ? " from stock" : "") + ": ");
-                        }finally{
-                            stockOnly = false;
+                    expansion.ops.Command.Candidate best = command.decide(blocks, allowed, library, new expansion.ops.Command.Defences(){
+                        public expansion.defense.Planner.Plan plan(){
+                            return defence(us, them, sector, fNow / 60f, "weighing a defence: ");
+                        }
+
+                        public Collection<String> feedable(){
+                            return feedable;
                         }
                     }, income(us, f));
                     System.out.print(command.log);
                     if(best == null) ways = new String[0];
-                    else if(best.defence > 0){
+                    else if(best.modules > 0){
                         ways = new String[]{"defend"};
-                        defendFromStock = best.defence == 1;
+                        defendModules = best.modules;
                     }else ways = new String[]{best.stage()};
                 }else ways = stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
                 //"climb:conquer": a step at a time towards the goal, each step the nearest of what its maker needs that nothing
@@ -409,14 +409,9 @@ public class Match{
                     try{
                         if(st[0].equals("defend")){
                             lastDefenceAt = f;
-                            stockOnly = defendFromStock;
-                            expansion.defense.Planner.Plan dp;
-                            try{
-                                dp = defence(us, them, sector, f / 60f, p.label);
-                            }finally{
-                                stockOnly = false;
-                            }
-                            p.payFromStock = defendFromStock;
+                            expansion.defense.Planner.Plan dp = defence(us, them, sector, f / 60f, p.label);
+                            //(as many modules as the command layer weighed)
+                            if(command != null) p.maxModules = defendModules;
                             //(it pays for itself out of what the core holds and brings in; built of what is near at hand; the one
                             //put first for a threat from the start is its first module only)
                             p.income = income(us, f);
@@ -923,8 +918,7 @@ public class Match{
         for(Item item : Vars.content.items()){
             int have = core.items.get(item);
             int income = Math.max(0, have - lastMinute.get(item.name, have));
-            //(a defence wanted at once: what the core holds now, and nothing more)
-            int budget = stockOnly ? have : Math.max(floor.getOrDefault(item.name, 0), have + Math.round(income * budgetMinutes));
+            int budget = Math.max(floor.getOrDefault(item.name, 0), have + Math.round(income * budgetMinutes));
             if(budget > 0) ask.budget.put(item.name, budget);
         }
         ask.modules = expansion.defense.Battery.parse(new Fi("blueprints/defense/modules.txt").readString());
@@ -944,10 +938,8 @@ public class Match{
         for(Building b : me.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t && t.hasAmmo() && b.within(home, 12 * Vars.tilesize)) return true;
         return false;
     }
-    /** Whether the defence being planned is to be paid for out of what the core holds now, with nothing built to pay for it. */
-    static boolean stockOnly;
-    /** Whether the defence the command layer chose now is to be paid out of stock. */
-    static boolean defendFromStock;
+    /** How many modules of the defence the command layer chose (Integer.MAX_VALUE: all). */
+    static int defendModules = Integer.MAX_VALUE;
     static float pressureEdge = Float.parseFloat(System.getProperty("match.pressure", "1.5"));
 
     /**

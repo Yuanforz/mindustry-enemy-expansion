@@ -94,6 +94,12 @@ public class Options{
     army = flag("military", "army", true).strong(true),
     cores = flag("military", "cores", true).strong(true);
     public static final Num
+    /**
+     * How the command layer weighs safety against an early push (expansion.ops.Command.Posture): 0 steady (a wide margin
+     * over the threat at home, strength and economy count most), 1 balanced, 2 aggressive (a thin margin, the push as
+     * early as it can go). Not set by the strongest mode: none of the three is the strongest everywhere.
+     */
+    posture = num("military", "posture", 1, 0, 2, 1, "posture"),
     yardsPerCore = num("military", "yards-per-core", 3, 0, 8, 1, "").strong(8),
     unitCap = num("military", "unit-cap", 100, 25, 400, 25, "percent").strong(400),
     unitMost = num("military", "unit-most", 40, 10, 200, 10, "").strong(200),

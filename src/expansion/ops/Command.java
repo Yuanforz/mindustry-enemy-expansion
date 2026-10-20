@@ -1,6 +1,5 @@
 package expansion.ops;
 
-import arc.math.*;
 import arc.struct.*;
 import expansion.army.*;
 import expansion.defense.Placement;
@@ -12,71 +11,84 @@ import mindustry.type.*;
 import mindustry.world.*;
 import mindustry.world.blocks.defense.turrets.*;
 import mindustry.world.blocks.storage.*;
-import mindustry.world.blocks.units.*;
 
 import java.io.*;
 import java.util.*;
 
 /**
- * The command layer: what to do next, chosen by looking ahead. Each candidate is a macro-action made of what the side
- * already knows how to do (a stage of the economy that makes a kind of unit with so many makers, with or without a
- * defence put first, paid out of the core's stock or by more economy), played forward in an abstract model to a
- * horizon: the economy model gives when its units come out, the defence planner what turrets it puts down and the cost
- * gives when; the forecast gives what of the other side's force can be at our core by each moment. Every candidate is
- * scored by one objective and the best is taken; the choice is made again at each stage, and sooner when the forecast
- * changes. (Search over scripted macro-actions in a forward model: Puppet Search, Barriga et al. 2015; MCPlan, Chung et
- * al. 2005. Fights by Lanchester's square law.)
+ * The command layer: what to do next, chosen by looking ahead (see docs/COMMAND.md).
  *
- * The objective, the same for any map and either side:
- * - at no moment may what can be at our core outweigh what holds it by more than the posture's margin allows (a plan that
- *   loses the core is worth nothing): the excess is a penalty that outweighs everything else;
- * - then: the earlier our army outweighs what the other side has, at home and in the field, the better (when a push can
- *   go); and the stronger our army at the horizon, the better.
- * The posture sets how much safety is bought and how much the early push is worth.
+ * Candidates are macro-actions made of what the side already knows how to do: a stage of the economy that makes a kind
+ * of unit with so many makers, with or without a defence of so many modules put first. Each is worked out by the
+ * economy model alone (no layout): its build order played forward with what comes in over time, so a defence of what is
+ * not held yet is bought when the income has paid for it, and one of what nothing makes comes with the makers of that.
+ * Then each is played forward to a horizon in an abstract game against the other side, in several scenarios: the economy
+ * as the model has it or a third slower; the other side as it is seen (its army, its yards, the map's waves) or also
+ * building yards as fast as we could; and sending its army once it outweighs what holds our home by half, as much, or
+ * twice. Fights by Lanchester's square law; a side beaten at home is besieged, its core taken down at the winner's damage
+ * a second while what it turns out meanwhile fights on.
+ *
+ * Each game is scored by one objective, discounted in time (what is foretold further off counts less, being less sure):
+ * our core falling is the worst there is, the sooner the worse; taking the other side's cores is the best, the sooner the
+ * better; otherwise the strength of the army at the horizon. The scenarios' scores are put together by the posture's
+ * attitude to risk: the worst of them (steady), the mean of the worse half (balanced: the conditional value at risk), or
+ * the mean (aggressive). The best is taken, and only its first step is acted on: the choice is made again at the next
+ * stage, and sooner when a stage falls behind its model (receding horizon, as model predictive control does).
+ * (Search over scripted macro-actions in a forward model: Puppet Search, Barriga et al. 2015; MCPlan, Chung et al. 2005.)
  */
 public final class Command{
-    /** How careful: the margin over the threat that holding home needs, and the weights of an early push and of strength. */
+    /** How careful: how the scenarios are put together, how much the other side is feared, when our army goes out, what strength is worth. */
     public enum Posture{
-        steady(2.0f, 0.5f, 3f),
-        balanced(1.4f, 1f, 2f),
-        aggressive(1.0f, 2f, 1f);
+        steady(Risk.worst, 1.2f, 2.5f, 3f),
+        balanced(Risk.worseHalf, 1f, 2f, 2f),
+        aggressive(Risk.mean, 1f, 1.4f, 1f);
 
-        /** What holds the core must outweigh what can come by this much (in Lanchester strength). */
-        public final float margin;
-        /** Score lost a minute the push waits; score a tenfold of army strength at the horizon is worth. */
-        public final float perMinute, perTenfold;
+        public final Risk risk;
+        /** How much stronger the other side is taken to be than the forecast says. */
+        public final float foeScale;
+        /** How much our army must outweigh the other side's army and its base's turrets to go out. */
+        public final float pushEdge;
+        /** Score a tenfold of army strength at the horizon is worth (before the discount). */
+        public final float perTenfold;
 
-        Posture(float margin, float perMinute, float perTenfold){
-            this.margin = margin;
-            this.perMinute = perMinute;
+        Posture(Risk risk, float foeScale, float pushEdge, float perTenfold){
+            this.risk = risk;
+            this.foeScale = foeScale;
+            this.pushEdge = pushEdge;
             this.perTenfold = perTenfold;
         }
 
+        /** By name; anything else (as "setting"): what the mod's setting says. */
         public static Posture of(String name){
             for(Posture p : values()) if(p.name().equals(name)) return p;
-            return balanced;
+            return values()[arc.math.Mathf.clamp(expansion.Options.posture.get(), 0, 2)];
         }
     }
 
-    /** A defence the side could put first: the defence planner's plan for now, paid out of stock or by economy. */
+    /** How the scenarios' scores make one. */
+    public enum Risk{worst, worseHalf, mean}
+
+    /** The defence planner, as the game stands now, and what our turrets can be fed with. */
     public interface Defences{
-        /** The defence planner's plan, or null; fromStock: no more than the core holds. */
-        expansion.defense.Planner.Plan plan(boolean fromStock);
+        /** The defence planner's plan for now (its own sizing against what is coming), or null. */
+        expansion.defense.Planner.Plan plan();
+
+        Collection<String> feedable();
     }
 
     /** One way to go, as it played out in the model. */
     public static final class Candidate{
         public final Muster.Aim aim;
-        /** 0: no defence first; 1: from stock; 2: paid by economy. */
-        public final int defence;
-        public float score, worst, attackAt = Float.POSITIVE_INFINITY, firstUnit = Float.POSITIVE_INFINITY, defenceAt;
-        public Force atHorizon = new Force();
+        /** How many modules of the defence go first (0: none, Integer.MAX_VALUE: all it plans). */
+        public final int modules;
+        public float score, firstUnit = Float.POSITIVE_INFINITY, defenceDone;
         public int turrets;
-        public String note = "";
+        /** The scenario worst for it, as it played out. */
+        public Outcome outcome;
 
-        Candidate(Muster.Aim aim, int defence){
+        Candidate(Muster.Aim aim, int modules){
             this.aim = aim;
-            this.defence = defence;
+            this.modules = modules;
         }
 
         public String stage(){
@@ -85,9 +97,20 @@ public final class Command{
 
         @Override
         public String toString(){
-            return String.format("%s%s: score %.1f, worst threat/hold %.2f, push at %s, first unit %s, army at horizon %s%s", stage(),
-                defence == 0 ? "" : defence == 1 ? " after a defence from stock (" + turrets + " turrets by " + Plan.time(defenceAt) + ")" : " after a defence paid for (" + turrets + " turrets by " + Plan.time(defenceAt) + ")",
-                score, worst, Float.isInfinite(attackAt) ? "never" : Plan.time(attackAt), Float.isInfinite(firstUnit) ? "never" : Plan.time(firstUnit), atHorizon, note);
+            String d = modules == 0 ? "" : String.format(" after a defence of %s (%d turrets, all up by %s)", modules == Integer.MAX_VALUE ? "all modules" : modules + " module(s)", turrets, Float.isInfinite(defenceDone) ? "never" : Plan.time(defenceDone));
+            return String.format("%s%s: score %.1f, first unit %s; at worst: %s", stage(), d, score, Float.isInfinite(firstUnit) ? "never" : Plan.time(firstUnit), outcome);
+        }
+    }
+
+    /** One scenario: how much slower the game goes than the model, whether the other side also builds yards as fast as we could, when it sends its army. */
+    static final class Scenario{
+        final float lag, sendAt;
+        final boolean mirror;
+
+        Scenario(float lag, boolean mirror, float sendAt){
+            this.lag = lag;
+            this.mirror = mirror;
+            this.sendAt = sendAt;
         }
     }
 
@@ -95,141 +118,191 @@ public final class Command{
     public Posture posture = Posture.balanced;
     /** How far ahead it looks, and the step of the model, in seconds. */
     public float horizon = Float.parseFloat(System.getProperty("ops.horizon", "720")), step = 10f;
-    /** How much longer the game takes than the economy model (see unitCurve; -Dops.lag). */
-    public static float lag = Float.parseFloat(System.getProperty("ops.lag", "1.1"));
-    /** How many kinds of unit it weighs at most. */
+    /** The discount's time scale: what is foretold this many seconds off counts 1/e as much (-Dops.discount). */
+    public static float discount = Float.parseFloat(System.getProperty("ops.discount", "600"));
+    /** How much slower the game is than the economy model, in the two economy scenarios (the bench has it at 0.93-1.19). */
+    public static float[] lags = {1f, 1.3f};
+    /**
+     * How much of a unit's estimated damage a second lands on a core under siege (measured: two or three stells, 72-108 a
+     * second by the game's estimate, took 2300 health off a core in two minutes, about 19 a second; -Dops.siege).
+     */
+    public static float siegeEfficiency = Float.parseFloat(System.getProperty("ops.siege", "0.25"));
+    /** When the other side sends its army: once it outweighs what holds our home by this much. */
+    static final float[] sendAts = {0.5f, 1f, 2f};
+    /** How many kinds of unit get more makers weighed, at most. */
     public int kinds = Integer.getInteger("ops.kinds", 4);
-    /** The last choice, all candidates weighed, and the forecast it was made against. */
     public final List<Candidate> weighed = new ArrayList<>();
     public Forecast forecast;
     public final StringBuilder log = new StringBuilder();
-    /** How many of the other side's buildings stood when it was last looked at: a side whose count grows is building. */
-    int foeBlocksBefore = -1;
-    boolean foeBuilds;
 
     public Command(Team me, Team foe){
         this.me = me;
         this.foe = foe;
     }
 
-    /**
-     * The best way to go now, weighing up to {@link #kinds} kinds of unit, each with no defence first, with one from
-     * stock, and with one paid for by economy. Null if nothing can be had.
-     */
+    /** The best way to go now, or null if nothing can be had. */
     public Candidate decide(List<String> blocks, Set<String> allowed, List<Design> library, Defences defences, Map<String, Float> income){
         long t0 = System.nanoTime();
         log.setLength(0);
         weighed.clear();
         forecast = new Forecast(me, foe, horizon, step);
-        int foeBlocks = foe.data().buildings.size;
-        if(foeBlocksBefore >= 0 && foeBlocks > foeBlocksBefore + 5) foeBuilds = true;
-        foeBlocksBefore = foeBlocks;
-        boolean foeHasYards = false;
-        for(Building b : foe.data().buildings) if(b.block instanceof UnitFactory) foeHasYards = true;
-        //a side that builds and has no yard yet: it will, as fast as we could (counted below from our fastest way)
-        boolean mirror = !foeHasYards && (foeBuilds || foeBlocks <= foe.cores().size + 2) && foe.core() != null;
 
-        //the kinds to weigh, each with its economy worked out by the model alone
-        //every kind with one maker first (the first tier is what can be had soonest, the second what is strongest, and
-        //only the model says which is worth it); then, of those that can be had, more makers (how many is a choice too)
-        List<Muster.Aim> all = Muster.aims(me, foe, blocks);
-        List<Muster.Aim> aims = new ArrayList<>();
-        for(Muster.Aim aim : all) aims.add(aim.withMakers(1));
-        List<Object[]> curves = new ArrayList<>();
-        weigh(aims, curves, blocks, allowed, library, income);
+        //every kind with one maker (only the model says whether the first tier soon or the second later is worth more);
+        //then, of those that can be had, more makers (how many is a choice too). Every kind: one that cannot get to the other
+        //side's base still holds ours; only one that can goes out.
+        List<Muster.Aim> all = Muster.aims(me, foe, blocks, true);
+        List<Muster.Aim> ones = new ArrayList<>();
+        for(Muster.Aim aim : all) ones.add(aim.withMakers(1));
+        List<Object[]> stages = new ArrayList<>();
+        weigh(ones, stages, blocks, allowed, library, income);
         List<Muster.Aim> more = new ArrayList<>();
-        for(Object[] c : curves){
+        for(Object[] c : stages){
             Muster.Aim one = (Muster.Aim)c[0];
             for(Muster.Aim aim : all) if(aim.type == one.type && aim.makers > 1) more.add(aim);
         }
         more.sort((a, b) -> Float.compare(b.strength, a.strength));
         if(more.size() > kinds) more = more.subList(0, kinds);
-        weigh(more, curves, blocks, allowed, library, income);
-        if(curves.isEmpty()){
+        weigh(more, stages, blocks, allowed, library, income);
+        if(stages.isEmpty()){
             log.append("  command: nothing can be had\n");
             return null;
         }
-        //the other side, as fast as our fastest
-        Force[] mirrored = null;
-        if(mirror){
-            Force[] fastest = null;
-            float best = Float.POSITIVE_INFINITY;
-            for(Object[] c : curves){
-                Force[] curve = (Force[])c[1];
-                float first = firstOf(curve);
-                if(first < best){
-                    best = first;
-                    fastest = curve;
-                }
-            }
-            if(fastest != null){
-                float walk = walkTime();
-                mirrored = new Force[fastest.length];
-                int shift = Math.round(walk / step);
-                for(int i = 0; i < fastest.length; i++) mirrored[i] = i - shift >= 0 ? fastest[i - shift] : new Force();
-                log.append(String.format("  command: the other side builds and has no yard: counted as making units as fast as we could, walked here in %.0f s\n", walk));
+
+        //the other side building as fast as we could: our fastest way to units, walked here (for the mirror scenarios)
+        Plan fastest = null;
+        float soonest = Float.POSITIVE_INFINITY;
+        for(Object[] c : stages){
+            Plan p = (Plan)c[1];
+            if(p.model.first[p.unit] < soonest){
+                soonest = p.model.first[p.unit];
+                fastest = p;
             }
         }
 
-        //defences that could go first
-        expansion.defense.Planner.Plan[] dp = new expansion.defense.Planner.Plan[3];
+        //defences of so many modules, each with the economy that pays for and feeds it, worked out by the model
+        expansion.defense.Planner.Plan dp = null;
         if(defences != null){
-            try{ dp[1] = defences.plan(true); }catch(Throwable t){ dp[1] = null; }
-            try{ dp[2] = defences.plan(false); }catch(Throwable t){ dp[2] = null; }
+            try{
+                dp = defences.plan();
+            }catch(Throwable t){
+                log.append("  command: the defence planner failed: ").append(t).append('\n');
+            }
+        }
+        List<Object[]> guards = new ArrayList<>();
+        guards.add(new Object[]{0, null});
+        if(dp != null && !dp.placements.isEmpty()){
+            int modules = 0;
+            for(Placement p : dp.placements) modules = Math.max(modules, p.module + 1);
+            for(int k : new int[]{1, 2, Integer.MAX_VALUE}){
+                if(k != Integer.MAX_VALUE && k >= modules && k > 1) continue;
+                Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
+                p.gate = true;
+                p.dry = true;
+                p.maxModules = k;
+                p.gateDepth = 2;
+                p.income = income;
+                Plan dry = null;
+                try{
+                    dry = p.defend(me, blocks, allowed, dp, defences.feedable());
+                }catch(Throwable t){
+                    log.append("  command: a defence of ").append(k).append(" could not be weighed: ").append(t).append('\n');
+                }
+                if(dry != null && dry.model != null) guards.add(new Object[]{k, dry});
+            }
+        }else if(dp != null) log.append("  command: the defence planner has nothing: ").append(String.join("; ", dp.notes)).append('\n');
+
+        List<Scenario> scenarios = new ArrayList<>();
+        for(float lag : lags) for(boolean m : new boolean[]{false, true}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s));
+        Force foeGuard = foeGuard();
+        //(the mirror, the defences and each stage's units under each lag: worked out once)
+        //(what our fastest stage adds over what our standing makers turn out anyway: what the other side could add, as fast;
+        //its own standing yards are in the forecast already)
+        Map<Float, Force[]> mirrors = new HashMap<>();
+        for(float lag : lags){
+            if(fastest == null){
+                mirrors.put(lag, null);
+                continue;
+            }
+            Force[] with = unitCurve(fastest, lag), without = unitCurve(fastest, lag, List.of());
+            Force[] added = new Force[with.length];
+            for(int i = 0; i < with.length; i++){
+                added[i] = minus(with[i], without[i]);
+                if(added[i].count < 0 || added[i].strength() < 0f) added[i] = new Force();
+            }
+            mirrors.put(lag, shifted(added, walkTime()));
         }
 
-        Force home = holdNow();
-        Force foeGuard = foeGuard();
-        for(Object[] c : curves){
-            Muster.Aim aim = (Muster.Aim)c[0];
-            Force[] curve = (Force[])c[1];
-            for(int d = 0; d <= 2; d++){
-                if(d > 0 && (dp[d] == null || dp[d].placements.isEmpty())) continue;
-                Candidate cand = new Candidate(aim, d);
-                Force turrets = new Force();
-                float ready = 0f;
-                if(d > 0){
-                    float[] cost = new float[1];
-                    turrets = turretsOf(dp[d], cost);
-                    cand.turrets = turrets.count;
-                    ready = defenceTime(dp[d], cost[0], d == 1, income);
-                    cand.defenceAt = ready;
+        for(Object[] g : guards){
+            int k = (Integer)g[0];
+            Plan guard = (Plan)g[1];
+            Map<Float, Object[]> schedules = new HashMap<>();
+            if(guard != null) for(float lag : lags) schedules.put(lag, schedule(guard, dp, lag));
+            for(Object[] c : stages){
+                Muster.Aim aim = (Muster.Aim)c[0];
+                Plan stage = (Plan)c[1];
+                Candidate cand = new Candidate(aim, k);
+                float[] scores = new float[scenarios.size()];
+                float worst = Float.POSITIVE_INFINITY;
+                Map<Float, Force[]> curves = new HashMap<>();
+                for(float lag : lags) curves.put(lag, unitCurve(stage, lag));
+                for(int i = 0; i < scenarios.size(); i++){
+                    Scenario sc = scenarios.get(i);
+                    Object[] sched = guard == null ? null : schedules.get(sc.lag);
+                    float done = sched == null ? 0f : (Float)sched[2];
+                    //(one core unit builds both: the stage after the defence is all up)
+                    Force[] units = shifted(curves.get(sc.lag), done);
+                    Outcome o = play(units, sched, sc.mirror ? mirrors.get(sc.lag) : null, foeGuard, sc.sendAt, aim.reaches);
+                    scores[i] = score(o);
+                    if(scores[i] < worst){
+                        worst = scores[i];
+                        cand.outcome = o;
+                    }
                 }
-                //(the stage after the defence starts when it is up, and has the stock less what it cost: taken as later by that)
-                int shift = Math.round(ready / step);
-                float worst = 0f;
-                for(int i = 0; i <= forecast.steps; i++){
-                    float t = i * step;
-                    Force ours = home.copy();
-                    Force units = i - shift >= 0 && i - shift < curve.length ? curve[i - shift] : i - shift >= curve.length ? curve[curve.length - 1] : new Force();
-                    ours.add(units);
-                    if(t >= ready) ours.add(turrets);
-                    Force threat = forecast.at[i].copy();
-                    if(mirrored != null && i < mirrored.length) threat.add(mirrored[i]);
-                    float ratio = threat.strength() / Math.max(1f, ours.strength());
-                    worst = Math.max(worst, ratio);
-                    if(Float.isInfinite(cand.firstUnit) && units.count > 0) cand.firstUnit = t;
-                    //a push can go once the army outweighs all the other side has, and what guards its base, by the edge
-                    Force mobile = mobileNow().add(units);
-                    Force theirs = forecast.all[i].copy().add(foeGuard);
-                    if(mirrored != null && i < mirrored.length) theirs.add(mirrored[i]);
-                    if(Float.isInfinite(cand.attackAt) && mobile.count > 0 && mobile.strength() >= Allot.edge * theirs.strength()) cand.attackAt = t;
-                    if(i == forecast.steps) cand.atHorizon = mobile;
+                cand.score = aggregate(scores);
+                if(sched(schedules) != null){
+                    Object[] s = sched(schedules);
+                    cand.turrets = ((Force)s[3]).count;
+                    cand.defenceDone = (Float)s[2];
                 }
-                cand.worst = worst;
-                cand.score = score(cand);
+                Force[] base = shifted(curves.get(lags[0]), cand.defenceDone);
+                for(int i = 0; i < base.length; i++) if(base[i].count > 0){ cand.firstUnit = i * step; break; }
                 weighed.add(cand);
             }
         }
         weighed.sort((a, b) -> Float.compare(b.score, a.score));
-        log.append(String.format("  command (%s, horizon %s): against %s at our core by the horizon; %s\n", posture, Plan.time(horizon), forecast.at[forecast.steps], forecast.notes));
-        for(Candidate c : weighed) log.append("    ").append(c).append('\n');
-        log.append(String.format("  command: weighed %d in %.1f s\n", weighed.size(), (System.nanoTime() - t0) / 1e9f));
+        log.append(String.format("  command (%s, horizon %s, %d scenarios): theirs at our core by the horizon at most %s; %s\n", posture, Plan.time(horizon), scenarios.size(), forecast.at[forecast.steps], forecast.notes));
+        for(int i = 0; i < Math.min(weighed.size(), 8); i++) log.append("    ").append(weighed.get(i)).append('\n');
+        if(weighed.size() > 8) log.append("    (").append(weighed.size() - 8).append(" more)\n");
+        log.append(String.format("  command: weighed %d ways in %d scenarios in %.1f s\n", weighed.size(), scenarios.size(), (System.nanoTime() - t0) / 1e9f));
         return weighed.isEmpty() ? null : weighed.get(0);
     }
 
-    /** Works out by the model alone what each aim's economy has out over time; those that can be had go in the list. */
-    void weigh(List<Muster.Aim> aims, List<Object[]> curves, List<String> blocks, Set<String> allowed, List<Design> library, Map<String, Float> income){
+    static Object[] sched(Map<Float, Object[]> schedules){
+        return schedules.isEmpty() ? null : schedules.get(lags[0]);
+    }
+
+    /** The scenarios' scores as one, by the posture's attitude to risk. */
+    float aggregate(float[] scores){
+        float[] s = scores.clone();
+        Arrays.sort(s);
+        return switch(posture.risk){
+            case worst -> s[0];
+            case worseHalf -> {
+                int n = Math.max(1, s.length / 2);
+                float sum = 0f;
+                for(int i = 0; i < n; i++) sum += s[i];
+                yield sum / n;
+            }
+            case mean -> {
+                float sum = 0f;
+                for(float v : s) sum += v;
+                yield sum / s.length;
+            }
+        };
+    }
+
+    /** Works out by the model alone each aim's stage; those that can be had go in the list, with their plans. */
+    void weigh(List<Muster.Aim> aims, List<Object[]> stages, List<String> blocks, Set<String> allowed, List<Design> library, Map<String, Float> income){
         for(Muster.Aim aim : aims){
             Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
             p.gate = true;
@@ -246,27 +319,23 @@ public final class Command{
                 log.append("    ").append(aim).append(": can't be had").append(p.lacking.isEmpty() ? "" : ", lacking " + p.lacking).append('\n');
                 continue;
             }
-            curves.add(new Object[]{aim, unitCurve(dry)});
+            stages.add(new Object[]{aim, dry});
         }
     }
 
-    /** The one objective (see the class). */
-    float score(Candidate c){
-        //(how many times over the margin the worst moment is, in doublings: a plan with nothing at home against a wave is
-        //worse than one a little short, and both worse than any that holds)
-        float excess = c.worst * posture.margin <= 1f ? 0f : 1f + (float)(Math.log(c.worst * posture.margin) / Math.log(2));
-        float push = Float.isInfinite(c.attackAt) ? horizon * 1.5f : c.attackAt;
-        float army = c.atHorizon.strength() <= 0f ? 0f : (float)Math.log10(c.atHorizon.strength());
-        return -100f * excess - posture.perMinute * push / 60f + posture.perTenfold * army;
+    /**
+     * What a plan's economy has out at each step from now (units as Lanchester force), played forward by its own model,
+     * a moment of the game read as an earlier one of the model by the lag.
+     */
+    Force[] unitCurve(Plan plan, float lag){
+        return unitCurve(plan, lag, plan.model.order);
     }
 
-    /** What of a kind a stage's economy has out at each step from now (Lanchester force), from its own model. */
-    Force[] unitCurve(Plan dry){
-        Timeline run = new Timeline(dry.cat, dry.field, dry.model.order);
+    /** The same with another order (an empty one: what stands alone turns out). */
+    Force[] unitCurve(Plan plan, float lag, List<Machine> order){
+        Timeline run = new Timeline(plan.cat, plan.field, order);
         int n = (int)Math.ceil(horizon / step) + 1;
         Force[] out = new Force[n];
-        //(what the game takes against what the model says: the economy bench has the game at 93-119% of the model's time
-        //to a unit, so a moment of the game is read as an earlier one of the model)
         int cap = mindustry.entities.Units.getCap(me);
         int have = 0;
         for(Unit u : me.data().units) if(!u.spawnedByCore && u.type.canAttack) have++;
@@ -274,40 +343,225 @@ public final class Command{
             run.runUntil(i * step / lag);
             Force f = new Force();
             int room = Math.max(0, cap - have);
-            for(int k = 0; k < dry.cat.size(); k++){
-                if(dry.cat.get(k).kind != Res.Kind.unit || run.made[k] <= 0f) continue;
-                UnitType type = Vars.content.unit(dry.cat.get(k).name);
+            for(int k = 0; k < plan.cat.size(); k++){
+                if(plan.cat.get(k).kind != Res.Kind.unit || run.made[k] <= 0f) continue;
+                UnitType type = Vars.content.unit(plan.cat.get(k).name);
                 if(type == null) continue;
-                float n2 = Math.min(run.made[k], room);
-                room -= (int)n2;
-                f.add(type, n2);
+                float m = Math.min(run.made[k], room);
+                room -= (int)m;
+                f.add(type, m);
             }
             out[i] = f;
         }
         return out;
     }
 
-    static float firstOf(Force[] curve){
-        for(int i = 0; i < curve.length; i++) if(curve[i].count > 0) return i;
-        return Float.POSITIVE_INFINITY;
+    /** A curve begun later by so many seconds (nothing before). */
+    Force[] shifted(Force[] curve, float seconds){
+        Force[] out = new Force[curve.length];
+        int s = Float.isInfinite(seconds) ? curve.length : Math.round(seconds / step);
+        for(int i = 0; i < curve.length; i++) out[i] = i - s >= 0 ? curve[i - s] : new Force();
+        return out;
     }
 
-    /** Seconds a tank takes from the other side's core to ours (for the mirror). */
+    /**
+     * When a defence's turrets stand, by its own model: {times of each module's turrets (seconds), their force, when all
+     * of it is up, the whole of its turrets}. A module's turrets are the defence planner's placements of that module.
+     */
+    Object[] schedule(Plan guard, expansion.defense.Planner.Plan dp, float lag){
+        Timeline run = new Timeline(guard.cat, guard.field, guard.model.order);
+        run.runUntil(horizon / lag);
+        List<Float> times = new ArrayList<>();
+        List<Force> forces = new ArrayList<>();
+        Force total = new Force();
+        float done = 0f;
+        for(int i = 0; i < guard.model.order.size(); i++){
+            float fin = run.finished[i];
+            float at = Float.isNaN(fin) ? Float.POSITIVE_INFINITY : fin * lag;
+            done = Math.max(done, at);
+            Machine m = guard.model.order.get(i);
+            if(!Defence.is(m)) continue;
+            String name = m.recipe.name;
+            int hash = name.lastIndexOf('#');
+            if(hash < 0 || name.startsWith("defence:fed-")) continue;
+            int module;
+            try{
+                module = Integer.parseInt(name.substring(hash + 1));
+            }catch(NumberFormatException e){
+                continue;
+            }
+            Force f = new Force();
+            for(Placement p : dp.placements){
+                if(p.module != module) continue;
+                Block b = Vars.content.block(p.block);
+                if(p.kind == Placement.Kind.turret && b instanceof Turret t) f.addTurret(t, 1f);
+                //(walls take hits in front of them)
+                else if(p.kind == Placement.Kind.wall && b != null) f.health += b.health;
+            }
+            times.add(at);
+            forces.add(f);
+            if(!Float.isInfinite(at)) total.add(f);
+        }
+        return new Object[]{times, forces, done, total};
+    }
+
+    /** How one way to go played out in one scenario. */
+    public static final class Outcome{
+        /** When our core fell, and when our push took the other side's cores; infinite for never. */
+        public float lost = Float.POSITIVE_INFINITY, won = Float.POSITIVE_INFINITY;
+        /** What we have in the field at the end. */
+        public Force army = new Force();
+        public int fights;
+
+        @Override
+        public String toString(){
+            return (Float.isInfinite(lost) ? "" : "core falls at " + Plan.time(lost) + ", ") + (Float.isInfinite(won) ? "" : "their cores fall at " + Plan.time(won) + ", ") + "army " + army.count + ", " + fights + " fights";
+        }
+    }
+
+    /**
+     * One game in the model, a step at a time. Ours: units come home as the curve has them, turrets stand from when the
+     * defence's model has them up. Theirs: its army grows at its base as the forecast has it (and as the mirror, in the
+     * scenarios that have it), scaled by the posture's fear; the map's waves come at their times. It sends its army once
+     * that outweighs what holds our home by sendAt; ours goes out once it outweighs their army and their base's turrets
+     * by the posture's edge, walks there, fights, and takes their cores down. A side beaten at home is besieged: the
+     * winner's damage a second takes the core down while what the loser turns out fights on.
+     */
+    Outcome play(Force[] curve, Object[] sched, Force[] mirrored, Force foeGuard, float sendAt, boolean reaches){
+        Outcome o = new Outcome();
+        Force units = mobileNow(), fixed = new Force();
+        Building home = me.core();
+        float coreHp = home == null ? 0f : home.health;
+        if(home != null) for(Building b : me.data().buildings) if(b instanceof Turret.TurretBuild t && t.hasAmmo() && b.within(home, 40f * Vars.tilesize)) fixed.addTurret((Turret)b.block, 1f);
+        @SuppressWarnings("unchecked")
+        List<Float> times = sched == null ? List.of() : (List<Float>)sched[0];
+        @SuppressWarnings("unchecked")
+        List<Force> forces = sched == null ? List.of() : (List<Force>)sched[1];
+        boolean[] up = new boolean[times.size()];
+        Force theirs = new Force(), siege = null, away = null, guard = foeGuard.copy();
+        float awayAt = 0f, walk = walkTime(), foeCoreHp = 0f;
+        boolean engaged = false;
+        for(CoreBlock.CoreBuild c : foe.cores()) foeCoreHp += c.health;
+        float scale = posture.foeScale;
+        Force lastCurve = new Force(), lastArmy = new Force(), lastWaves = new Force(), lastMirror = new Force();
+        for(int i = 0; i <= forecast.steps; i++){
+            float t = i * step;
+            Force now = curve[Math.min(i, curve.length - 1)];
+            units.add(minus(now, lastCurve));
+            lastCurve = now;
+            for(int j = 0; j < up.length; j++) if(!up[j] && t >= times.get(j)){
+                up[j] = true;
+                fixed.add(forces.get(j));
+            }
+            theirs.add(minus(forecast.army[i], lastArmy).scl(scale));
+            lastArmy = forecast.army[i];
+            if(mirrored != null && i < mirrored.length){
+                theirs.add(minus(mirrored[i], lastMirror).scl(scale));
+                lastMirror = mirrored[i];
+            }
+            //what comes to our home: a wave, and their army once it outweighs what holds our home by sendAt
+            Force coming = minus(forecast.waves[i], lastWaves).scl(scale);
+            lastWaves = forecast.waves[i];
+            if(theirs.count > 0 && theirs.strength() >= sendAt * units.copy().add(fixed).add(new Force(0f, coreHp, 0)).strength()){
+                coming.add(theirs);
+                theirs = new Force();
+            }
+            if(coming.count > 0){
+                if(siege != null) siege.add(coming);
+                else siege = fight(units, fixed, coreHp, coming, o);
+            }
+            if(siege != null){
+                if(units.count > 0 || fixed.count > 0) siege = fight(units, fixed, coreHp, siege, o);
+                if(siege != null){
+                    coreHp -= siege.dps * siegeEfficiency * step;
+                    if(coreHp <= 0f){
+                        o.lost = t;
+                        o.army = units;
+                        return o;
+                    }
+                }
+            }
+            //ours out, with nothing at our door
+            if(away == null && siege == null && reaches && units.count > 0 && units.strength() >= posture.pushEdge * Math.max(1f, theirs.copy().add(guard).strength())){
+                away = units;
+                units = new Force();
+                awayAt = t + walk;
+                engaged = false;
+            }
+            if(away != null && t >= awayAt){
+                Force against = engaged ? theirs : theirs.copy().add(guard);
+                if(against.count > 0 || !engaged){
+                    o.fights++;
+                    if(against.strength() >= away.strength()){
+                        theirs.scl(against.strength() <= 0f ? 1f : (float)Math.sqrt(1f - away.strength() / against.strength()));
+                        away = null;
+                    }else{
+                        away.scl((float)Math.sqrt(1f - against.strength() / Math.max(1f, away.strength())));
+                        theirs = new Force();
+                        if(!engaged) guard = new Force();
+                    }
+                    engaged = true;
+                }
+                if(away != null){
+                    foeCoreHp -= away.dps * siegeEfficiency * step;
+                    if(foeCoreHp <= 0f){
+                        o.won = t;
+                        //(and what the economy goes on turning out to the horizon: of two ways that win alike, the stronger after)
+                        o.army = away.add(units).add(minus(curve[curve.length - 1], now));
+                        return o;
+                    }
+                }
+            }
+        }
+        o.army = away == null ? units : away.copy().add(units);
+        return o;
+    }
+
+    /**
+     * A fight at our home between what holds it (units, turrets, and the core's own health, which takes hits and deals
+     * none) and an attacker: null if the attacker is beaten (what is left of ours kept), else what is left of it (ours gone).
+     */
+    static Force fight(Force units, Force fixed, float coreHp, Force attacker, Outcome o){
+        o.fights++;
+        Force ours = units.copy().add(fixed).add(new Force(0f, coreHp, 0));
+        float a = attacker.strength(), d = ours.strength();
+        if(a < d){
+            float keep = (float)Math.sqrt(1f - a / d);
+            units.scl(keep);
+            fixed.scl(keep);
+            return null;
+        }
+        Force left = attacker.copy().scl(d <= 0f ? 1f : (float)Math.sqrt(1f - d / a));
+        units.scl(0f);
+        fixed.scl(0f);
+        return left;
+    }
+
+    static Force minus(Force a, Force b){
+        return new Force(a.dps - b.dps, a.health - b.health, a.count - b.count);
+    }
+
+    /** The objective for one game, discounted in time: losing the core worst, sooner worse; their cores taken best, sooner better; else army strength. */
+    float score(Outcome o){
+        if(!Float.isInfinite(o.lost)) return -1000f * d(o.lost);
+        if(!Float.isInfinite(o.won)) return 300f * d(o.won) + posture.perTenfold * log(o.army);
+        return posture.perTenfold * log(o.army) * d(horizon);
+    }
+
+    static float d(float t){
+        return (float)Math.exp(-t / discount);
+    }
+
+    static float log(Force f){
+        return f.strength() <= 1f ? 0f : (float)Math.log10(f.strength());
+    }
+
+    /** Seconds a tank takes from the other side's core to ours. */
     float walkTime(){
         Building a = me.core(), b = foe.core();
         if(a == null || b == null) return 60f;
         float tps = mindustry.content.UnitTypes.stell.speed * 60f / Vars.tilesize;
         return a.dst(b) / Vars.tilesize * 1.35f / tps;
-    }
-
-    /** Our fighting units, and our loaded turrets within 40 tiles of the core. */
-    Force holdNow(){
-        Force f = mobileNow();
-        Building home = me.core();
-        if(home != null) for(Building b : me.data().buildings){
-            if(b instanceof Turret.TurretBuild t && t.hasAmmo() && b.within(home, 40f * Vars.tilesize)) f.addTurret((Turret)b.block, 1f);
-        }
-        return f;
     }
 
     Force mobileNow(){
@@ -326,38 +580,5 @@ public final class Command{
             if(near) f.addTurret((Turret)b.block, 1f);
         }
         return f;
-    }
-
-    /** The turrets of a defence plan, as force, and what the whole plan costs (summed over items). */
-    static Force turretsOf(expansion.defense.Planner.Plan plan, float[] cost){
-        Force f = new Force();
-        for(Placement p : plan.placements){
-            Block b = Vars.content.block(p.block);
-            if(b == null) continue;
-            for(ItemStack s : b.requirements) cost[0] += s.amount * Vars.state.rules.buildCostMultiplier;
-            if(p.kind == Placement.Kind.turret && b instanceof Turret t) f.addTurret(t, 1f);
-        }
-        return f;
-    }
-
-    /**
-     * When a defence is up, seconds from now: the core unit's building time for all its blocks, and, paid for by economy,
-     * no sooner than what it costs beyond the stock comes in at the income there is.
-     */
-    float defenceTime(expansion.defense.Planner.Plan plan, float cost, boolean fromStock, Map<String, Float> income){
-        float build = 0f;
-        float speed = Math.max(0.1f, (me.core() == null ? 1f : ((CoreBlock)me.core().block).unitType.buildSpeed) * Vars.state.rules.buildSpeed(me));
-        for(Placement p : plan.placements){
-            Block b = Vars.content.block(p.block);
-            if(b != null) build += b.buildTime / 60f / speed;
-        }
-        float wait = 0f;
-        if(!fromStock && me.core() != null){
-            float stock = 0f, in = 0f;
-            for(Item item : Vars.content.items()) stock += me.core().items.get(item);
-            if(income != null) for(float v : income.values()) in += v;
-            wait = cost > stock ? (cost - stock) / Math.max(0.5f, in) : 0f;
-        }
-        return Math.max(build, wait) + 15f;
     }
 }

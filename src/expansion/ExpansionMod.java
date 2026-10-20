@@ -113,6 +113,7 @@ public class ExpansionMod extends Mod{
             //a limit that can be taken off altogether
             case "cap" -> value == 0 ? Core.bundle.get("expansion.nolimit") : value + "";
             case "" -> value + "";
+            case "posture" -> Core.bundle.get("expansion.posture." + value);
             default -> Core.bundle.format("expansion." + num.unit, value);
         };
     }

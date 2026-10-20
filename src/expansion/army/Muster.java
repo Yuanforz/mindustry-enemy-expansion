@@ -82,6 +82,11 @@ public final class Muster{
      * from ours (all, if none does), by strength for a place under the cap.
      */
     public static List<Aim> aims(Team team, Team foe, Collection<String> blocks){
+        return aims(team, foe, blocks, false);
+    }
+
+    /** As above; every kind, whether it gets to the foe's cores or not, if asked (what cannot only holds home). */
+    public static List<Aim> aims(Team team, Team foe, Collection<String> blocks, boolean everyKind){
         Map<UnitType, Float> seconds = new LinkedHashMap<>();
         for(String name : blocks){
             Block b = Vars.content.block(name);
@@ -109,7 +114,7 @@ public final class Muster{
             out.add(new Aim(type, makers, strength, Reach.toFoe(type, team, foe), e.getValue(), room));
         }
         boolean any = out.stream().anyMatch(a -> a.reaches);
-        if(any) out.removeIf(a -> !a.reaches);
+        if(any && !everyKind) out.removeIf(a -> !a.reaches);
         out.sort((a, b) -> Float.compare(b.strength, a.strength));
         return out;
     }
