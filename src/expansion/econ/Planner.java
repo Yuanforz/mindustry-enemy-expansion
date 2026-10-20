@@ -613,7 +613,7 @@ public final class Planner{
     }
 
     /** Scores of whole orders worked out in this ordering, by the order (cleared as each ordering begins). */
-    final Map<List<Machine>, float[]> scored = new HashMap<>();
+    final Map<List<Machine>, float[]> scored = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** Items the order spends, all counted alike: of two orders as fast, the one that leaves more in the core is better. */
     static float spent(List<Machine> seq){
@@ -748,9 +748,13 @@ public final class Planner{
         Node n = start(plant, guide);
         while(!n.left.isEmpty()){
             Node best = null;
-            for(List<Machine> o : options(n, guide)){
-                Node c = apply(n, o, guide);
-                c.score = finish(c, unit, guide);
+            //(each option played through by itself, at once; the first best kept, as one at a time would)
+            Node from = n;
+            for(Node c : Par.map(options(n, guide), o -> {
+                Node c2 = apply(from, o, guide);
+                c2.score = finish(c2, unit, guide);
+                return c2;
+            })){
                 if(best == null || better(c.score, best.score)) best = c;
             }
             n = best;
@@ -764,18 +768,24 @@ public final class Planner{
         while(true){
             List<Node> next = new ArrayList<>();
             boolean grew = false;
+            List<Object[]> work = new ArrayList<>();
             for(Node n : beam){
                 if(n.left.isEmpty()){
-                    next.add(n);
+                    work.add(new Object[]{n, null});
                     continue;
                 }
                 grew = true;
-                for(List<Machine> o : options(n, guide)){
-                    Node c = apply(n, o, guide);
-                    c.score = finish(c, unit, guide);
-                    next.add(c);
-                }
+                for(List<Machine> o : options(n, guide)) work.add(new Object[]{n, o});
             }
+            //(every node's every option at once, in the order one at a time would have them)
+            next.addAll(Par.map(work, w -> {
+                Node n = (Node)w[0];
+                if(w[1] == null) return n;
+                @SuppressWarnings("unchecked")
+                Node c = apply(n, (List<Machine>)w[1], guide);
+                c.score = finish(c, unit, guide);
+                return c;
+            }));
             if(!grew) break;
             next.sort((a, b) -> compare(a.score, b.score));
             //two partial orders with the same machines begun in the same order are the same
@@ -813,15 +823,20 @@ public final class Planner{
                         break;
                     }
                 }
+                //(every place it could go, at once; the first that helps, as one at a time would)
+                List<List<Machine>> tries = new ArrayList<>();
                 for(int j = 0; j < seq.size(); j++){
                     if(j == i) continue;
                     List<Machine> moved = new ArrayList<>(seq);
                     Machine m = moved.remove(i);
                     moved.add(j, m);
-                    float[] s = score(moved, unit);
-                    if(better(s, best)){
-                        seq = moved;
-                        best = s;
+                    tries.add(moved);
+                }
+                List<float[]> scores = Par.map(tries, t -> score(t, unit));
+                for(int k = 0; k < tries.size(); k++){
+                    if(better(scores.get(k), best)){
+                        seq = tries.get(k);
+                        best = scores.get(k);
                         better = true;
                         break;
                     }

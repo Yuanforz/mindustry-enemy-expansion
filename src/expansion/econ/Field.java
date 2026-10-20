@@ -71,6 +71,20 @@ public final class Field{
     /** What the core holds at the start. */
     public float[] stock;
 
+    /** A copy to plan with, over a copy of its catalog: its own lists and arrays, the sites and machines in them shared. */
+    public Field copy(Catalog cat){
+        Field f = new Field(cat);
+        f.coreX = coreX;
+        f.coreY = coreY;
+        f.handDistance = handDistance.clone();
+        f.sites.addAll(sites);
+        f.candidates = candidates;
+        f.existing.addAll(existing);
+        f.revivable.addAll(revivable);
+        f.stock = stock.clone();
+        return f;
+    }
+
     public Field(Catalog cat){
         handDistance = new float[cat.size()];
         Arrays.fill(handDistance, Float.POSITIVE_INFINITY);

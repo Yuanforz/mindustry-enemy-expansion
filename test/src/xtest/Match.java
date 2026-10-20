@@ -642,7 +642,7 @@ public class Match{
                     int atHome = 0, out = 0, foesNear = 0;
                     for(Unit u : us.data().units) if(!u.spawnedByCore && u.type.canAttack){ if(u.within(core0, 15 * Vars.tilesize)) atHome++; else out++; }
                     for(Unit e : them.data().units) if(!e.spawnedByCore && e.type.canAttack && e.within(core0, 35 * Vars.tilesize)) foesNear++;
-                    System.out.println(String.format("    at home: %d of ours within 15 tiles of the core, %d out; %d of theirs within 35; %s", atHome, out, foesNear, army.hold.report()));
+                    System.out.println(String.format("    at home: %d of ours within 15 tiles of the core, %d out; %d of theirs within 35; %s", atHome, out, foesNear, army.flags.tactics ? army.tactics.report() : army.hold.report()));
                 }
             }
             if(f % (3600 * 3) == 0 && f > 0 && hand != null && Boolean.getBoolean("match.watch")) System.out.print(hand.watch.report(hand.works.cat));

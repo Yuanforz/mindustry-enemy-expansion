@@ -26,7 +26,7 @@ import mindustry.gen.*;
 public class Army{
     /** Which parts are on. */
     public static class Flags{
-        public boolean allot, harass, cut, bait, decoy, creep, micro, review, push, hold;
+        public boolean allot, harass, cut, bait, decoy, creep, micro, review, push, hold, tactics;
 
         /**
          * The parts on by default: those that, together, won more games against the squad AI alone in the duels
@@ -70,6 +70,7 @@ public class Army{
                     case "review" -> flags.review = on;
                     case "push" -> flags.push = on;
                     case "hold" -> flags.hold = on;
+                    case "tactics" -> flags.tactics = on;
                     case "none", "" -> {}
                     default -> Log.warn("[EnemyExpansion] army: no part called @", name);
                 }
@@ -79,7 +80,7 @@ public class Army{
 
         @Override
         public String toString(){
-            return (allot ? "allot " : "") + (harass ? "harass " : "") + (cut ? "cut " : "") + (bait ? "bait " : "") + (decoy ? "decoy " : "") + (creep ? "creep " : "") + (micro ? "micro " : "") + (review ? "review " : "") + (push ? "push " : "") + (hold ? "hold" : "");
+            return (allot ? "allot " : "") + (harass ? "harass " : "") + (cut ? "cut " : "") + (bait ? "bait " : "") + (decoy ? "decoy " : "") + (creep ? "creep " : "") + (micro ? "micro " : "") + (review ? "review " : "") + (push ? "push " : "") + (hold ? "hold " : "") + (tactics ? "tactics" : "");
         }
     }
 
@@ -125,6 +126,8 @@ public class Army{
     public final Creep creep;
     public final Push push;
     public final Hold hold;
+    /** The squads' scripts searched for (Portfolio Greedy Search): in the place of the allotment, the push and the hold. */
+    public final Tactics tactics;
     public final Review review = new Review();
     /** Ticks since it began. */
     public float clock;
@@ -143,6 +146,7 @@ public class Army{
         creep = new Creep(this);
         push = new Push(this);
         hold = new Hold(this);
+        tactics = new Tactics(this);
         //the one army of a team that hears what is lost
         live.removeAll(a -> a.team == team);
         live.add(this);
@@ -158,7 +162,14 @@ public class Army{
         if(frame % 30 == 1) threat.update();
         if(frame % 300 == 2 && flags.cut) threat.findCuts(ourDps());
         if(flags.micro) dodgers();
-        if(frame % 60 == 3){
+        if(flags.tactics){
+            //(the search leads them all: the squad AI's own squads are kept from going anywhere it did not send them)
+            if(frame % 120 == 3){
+                team.rules().rtsMinSquad = 1000;
+                tactics.update();
+            }
+            if(frame % 60 == 3 && (flags.harass || flags.cut)) ops.update();
+        }else if(frame % 60 == 3){
             if(flags.allot) allot.update();
             if(flags.harass || flags.cut) ops.update();
             if(flags.push) push.update(!flags.allot || allot.go);

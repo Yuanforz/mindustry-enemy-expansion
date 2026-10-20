@@ -139,9 +139,7 @@ public final class Plan{
         depthCache = null;
         if(gate && tries.length > 1){
             CoreBlock.CoreBuild core = me.core();
-            cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-            cat.logistics(allowed);
-            field = Sites.scan(cat, me, radius);
+            scan(blocks, allowed, me);
             depthCache = depths(blocks, me);
         }
         Set<String> lastKept = null;
@@ -384,6 +382,40 @@ public final class Plan{
         return !Float.isInfinite(model.first[unit]) && !Float.isNaN(model.first[unit]);
     }
 
+    /**
+     * The catalog and the places on the map for these blocks, as the game stands: read once a frame for each set of
+     * blocks and reach (many plans weighed at one moment ask the same), each plan given its own copy.
+     */
+    void scan(Collection<String> blocks, Set<String> allowed, Team me){
+        CoreBlock.CoreBuild core = me.core();
+        String key = me.id + "|" + radius + "|" + ((CoreBlock)core.block).name + "|" + Vars.state.rules.buildSpeed(me) + "|" + new TreeSet<>(blocks) + "|" + new TreeSet<>(allowed);
+        long now = (long)Vars.state.tick;
+        Object[] hit;
+        //(one reading at a time: the packing of drill fields draws on the game's one source of chance)
+        synchronized(scans){
+            if(scansAt != now || scansWorld != Vars.world.tiles){
+                scans.clear();
+                scansAt = now;
+                scansWorld = Vars.world.tiles;
+            }
+            hit = scans.get(key);
+            if(hit == null){
+                Catalog c = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+                c.logistics(allowed);
+                Field fl = Sites.scan(c, me, radius);
+                hit = new Object[]{c, fl};
+                scans.put(key, hit);
+            }
+        }
+        cat = ((Catalog)hit[0]).copy();
+        field = ((Field)hit[1]).copy(cat);
+    }
+
+    /** Readings of the game this frame (see scan). */
+    static final Map<String, Object[]> scans = new HashMap<>();
+    static long scansAt = -1;
+    static Object scansWorld;
+
     Set<String> read(Team me, List<String> blocks, Set<String> allowed){
         return read(me, blocks, allowed, Integer.MAX_VALUE);
     }
@@ -406,9 +438,7 @@ public final class Plan{
         CoreBlock.CoreBuild core = me.core();
         Map<String, Integer> depth = depthCache;
         if(depth == null){
-            cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-            cat.logistics(allowed);
-            field = Sites.scan(cat, me, radius);
+            scan(blocks, allowed, me);
             if(!gate) return allowed;
             unpaid.clear();
             depth = depths(blocks, me);
@@ -417,9 +447,7 @@ public final class Plan{
         for(String name : blocks) if(depth.getOrDefault(name, Integer.MAX_VALUE) <= maxDepth || (maxDepth == Integer.MAX_VALUE && depth.containsKey(name))) kept.add(name);
         if(kept.size() == blocks.size()){
             if(depthCache != null){
-                cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-                cat.logistics(allowed);
-                field = Sites.scan(cat, me, radius);
+                scan(blocks, allowed, me);
             }
             return allowed;
         }
@@ -428,9 +456,7 @@ public final class Plan{
         if(maxDepth == Integer.MAX_VALUE) out.println("  not yet (what they are built of is neither in the core nor dug here): " + String.join(" ", left));
         Set<String> fewer = new HashSet<>(allowed);
         fewer.removeAll(left);
-        cat = Recipes.read(kept, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-        cat.logistics(fewer);
-        field = Sites.scan(cat, me, radius);
+        scan(kept, fewer, me);
         return fewer;
     }
 

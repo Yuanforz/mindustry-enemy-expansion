@@ -35,6 +35,30 @@ public final class Catalog{
     /** How fast each kind of unit goes over the ground, tiles a second, by {@link Res#id} (0 for what is not a unit). */
     public final Map<Integer, Float> unitSpeed = new HashMap<>();
 
+    /**
+     * A copy to plan with: its own lists, maps and arrays (what planning adds to or changes), the things in them shared
+     * (a resource or a recipe is not changed once read). For many plans from one reading of the game.
+     */
+    public Catalog copy(){
+        Catalog c = new Catalog();
+        c.res.addAll(res);
+        c.byName.putAll(byName);
+        c.recipes.addAll(recipes);
+        c.coreCap = coreCap;
+        c.coreShare = coreShare == null ? null : coreShare.clone();
+        c.drain = drain == null ? null : drain.clone();
+        c.buildSpeed = buildSpeed;
+        c.mineRate = mineRate;
+        c.flySpeed = flySpeed;
+        c.carry = carry;
+        c.handOverRange = handOverRange;
+        c.mineRange = mineRange;
+        c.buildRange = buildRange;
+        c.buildRule = buildRule;
+        c.unitSpeed.putAll(unitSpeed);
+        return c;
+    }
+
     public Res add(String name, Res.Kind kind, boolean storable, boolean handMined){
         Res r = new Res(res.size(), name, kind, storable, handMined);
         res.add(r);

@@ -134,6 +134,7 @@ public final class Command{
     public final List<Candidate> weighed = new ArrayList<>();
     public Forecast forecast;
     public final StringBuilder log = new StringBuilder();
+    long dpAt;
 
     public Command(Team me, Team foe){
         this.me = me;
@@ -154,7 +155,9 @@ public final class Command{
         List<Muster.Aim> ones = new ArrayList<>();
         for(Muster.Aim aim : all) ones.add(aim.withMakers(1));
         List<Object[]> stages = new ArrayList<>();
+        long w0 = System.nanoTime();
         weigh(ones, stages, blocks, allowed, library, income);
+        long w1 = System.nanoTime();
         List<Muster.Aim> more = new ArrayList<>();
         for(Object[] c : stages){
             Muster.Aim one = (Muster.Aim)c[0];
@@ -163,6 +166,7 @@ public final class Command{
         more.sort((a, b) -> Float.compare(b.strength, a.strength));
         if(more.size() > kinds) more = more.subList(0, kinds);
         weigh(more, stages, blocks, allowed, library, income);
+        long w2 = System.nanoTime();
         if(stages.isEmpty()){
             log.append("  command: nothing can be had\n");
             return null;
@@ -180,10 +184,12 @@ public final class Command{
         }
 
         //defences of so many modules, each with the economy that pays for and feeds it, worked out by the model
+        long d0 = System.nanoTime();
         expansion.defense.Planner.Plan dp = null;
         if(defences != null){
             try{
                 dp = defences.plan();
+                dpAt = System.nanoTime();
             }catch(Throwable t){
                 log.append("  command: the defence planner failed: ").append(t).append('\n');
             }
@@ -211,6 +217,7 @@ public final class Command{
             }
         }else if(dp != null) log.append("  command: the defence planner has nothing: ").append(String.join("; ", dp.notes)).append('\n');
 
+        long d1 = System.nanoTime();
         List<Scenario> scenarios = new ArrayList<>();
         for(float lag : lags) for(boolean m : new boolean[]{false, true}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s));
         Force foeGuard = foeGuard();
@@ -269,11 +276,14 @@ public final class Command{
                 weighed.add(cand);
             }
         }
+        long p1 = System.nanoTime();
         weighed.sort((a, b) -> Float.compare(b.score, a.score));
+        log.append(String.format("  command: times: stages %.1f + %.1f s, defences %.1f s (planner %.1f s), playing %.1f s\n", (w1 - w0) / 1e9f, (w2 - w1) / 1e9f, (d1 - d0) / 1e9f, (dpAt - d0) / 1e9f, (p1 - d1) / 1e9f));
         log.append(String.format("  command (%s, horizon %s, %d scenarios): theirs at our core by the horizon at most %s; %s\n", posture, Plan.time(horizon), scenarios.size(), forecast.at[forecast.steps], forecast.notes));
         for(int i = 0; i < Math.min(weighed.size(), 8); i++) log.append("    ").append(weighed.get(i)).append('\n');
         if(weighed.size() > 8) log.append("    (").append(weighed.size() - 8).append(" more)\n");
         log.append(String.format("  command: weighed %d ways in %d scenarios in %.1f s\n", weighed.size(), scenarios.size(), (System.nanoTime() - t0) / 1e9f));
+        if(Boolean.getBoolean("ops.time")) log.append(Took.report());
         return weighed.isEmpty() ? null : weighed.get(0);
     }
 
@@ -301,25 +311,50 @@ public final class Command{
         };
     }
 
-    /** Works out by the model alone each aim's stage; those that can be had go in the list, with their plans. */
+    /** Threads the stages are weighed on at once (-Dops.threads; each plan is worked out by itself, over its own copy of the reading). */
+    public static int threads = Integer.getInteger("ops.threads", 8);
+    static java.util.concurrent.ExecutorService pool;
+
+    static synchronized java.util.concurrent.ExecutorService pool(){
+        if(pool == null) pool = java.util.concurrent.Executors.newFixedThreadPool(Math.max(1, threads), r -> {
+            Thread t = new Thread(r, "command-weigh");
+            t.setDaemon(true);
+            return t;
+        });
+        return pool;
+    }
+
+    /** Works out by the model alone each aim's stage, at once on the pool; those that can be had go in the list, with their plans. */
     void weigh(List<Muster.Aim> aims, List<Object[]> stages, List<String> blocks, Set<String> allowed, List<Design> library, Map<String, Float> income){
+        List<java.util.concurrent.Future<Object[]>> jobs = new ArrayList<>();
         for(Muster.Aim aim : aims){
-            Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
-            p.gate = true;
-            p.widen = true;
-            p.dry = true;
-            Plan dry;
+            jobs.add(pool().submit(() -> {
+                Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
+                p.gate = true;
+                p.widen = true;
+                p.dry = true;
+                Plan dry;
+                try{
+                    //(with what the core really gets: the model counts what the map's own machines take on the way, as the drain)
+                    dry = p.make(me, blocks, allowed, library, aim.type.name, aim.makers, income == null || income.isEmpty() ? null : income);
+                }catch(Throwable t){
+                    StringWriter w = new StringWriter();
+                    t.printStackTrace(new PrintWriter(w));
+                    return new Object[]{aim, null, ": " + w.toString().lines().limit(6).reduce("", (a, b) -> a + " | " + b.trim())};
+                }
+                if(dry == null || dry.model == null || Float.isInfinite(dry.model.first[dry.unit])) return new Object[]{aim, null, p.lacking.isEmpty() ? "" : ", lacking " + p.lacking};
+                return new Object[]{aim, dry, ""};
+            }));
+        }
+        for(var job : jobs){
+            Object[] r;
             try{
-                //(with what the core really gets: the model counts what the map's own machines take on the way, as the drain)
-                dry = p.make(me, blocks, allowed, library, aim.type.name, aim.makers, income == null || income.isEmpty() ? null : income);
-            }catch(Throwable t){
-                dry = null;
-            }
-            if(dry == null || dry.model == null || Float.isInfinite(dry.model.first[dry.unit])){
-                log.append("    ").append(aim).append(": can't be had").append(p.lacking.isEmpty() ? "" : ", lacking " + p.lacking).append('\n');
+                r = job.get();
+            }catch(Exception e){
                 continue;
             }
-            stages.add(new Object[]{aim, dry});
+            if(r[1] == null) log.append("    ").append(r[0]).append(": can't be had").append(r[2]).append('\n');
+            else stages.add(new Object[]{r[0], r[1]});
         }
     }
 

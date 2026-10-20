@@ -169,12 +169,13 @@ public final class Recipes{
             }
             if(!ok) continue;
             int[] cost = new int[n];
-            for(var e : m.cost) cost[cat.id(e.key)] += Math.round(e.value * Vars.state.rules.buildCostMultiplier);
+            //(an iterator of its own: the design is shared by plans weighed at once on several threads)
+            for(var e : new arc.struct.ObjectIntMap.Entries<>(m.cost)) cost[cat.id(e.key)] += Math.round(e.value * Vars.state.rules.buildCostMultiplier);
             //a design that makes units: the strongest it makes (the others are steps on the way), at the rate measured
             int unitOut = -1;
             float unitSeconds = 0f;
             mindustry.type.UnitType strongest = null;
-            for(var e : m.units){
+            for(var e : new arc.struct.ObjectFloatMap.Entries<>(m.units)){
                 mindustry.type.UnitType type = Vars.content.unit(e.key);
                 //a turret post (blueprints/posts): it "makes" a stand-in named after its turret while it is fed, so that a
                 //post built and fed is an aim like a unit

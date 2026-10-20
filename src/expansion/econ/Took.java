@@ -13,7 +13,7 @@ public final class Took{
         return threads.getCurrentThreadCpuTime();
     }
 
-    public static void end(String what, long started){
+    public static synchronized void end(String what, long started){
         long[] t = totals.computeIfAbsent(what, k -> new long[2]);
         t[0] += threads.getCurrentThreadCpuTime() - started;
         t[1]++;
@@ -23,12 +23,12 @@ public final class Took{
     public static final boolean on = Boolean.getBoolean("xp.time");
     static final Map<String, long[]> counts = new LinkedHashMap<>();
 
-    public static void count(String what, long n){
+    public static synchronized void count(String what, long n){
         counts.computeIfAbsent(what, k -> new long[1])[0] += n;
     }
 
     /** What was added up since the last report, and clears it. */
-    public static String report(){
+    public static synchronized String report(){
         StringBuilder out = new StringBuilder();
         for(var e : totals.entrySet()) out.append(String.format("    %-28s %8.1f s in %d\n", e.getKey(), e.getValue()[0] / 1e9, e.getValue()[1]));
         totals.clear();
