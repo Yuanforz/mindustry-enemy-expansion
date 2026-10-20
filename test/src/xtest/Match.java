@@ -319,7 +319,9 @@ public class Match{
             //(with the command layer: weighed again once the stage is behind its own model, the job it is on begun later than
             //the model has it by half again and a minute; a stage that goes as planned is let finish)
             boolean behind = command != null && stageModel != null && hand != null && f % 60 == 0 && behindModel(hand, stageModel, (f - stageFrom) / 60f);
-            boolean over = paused == null && hand != null && (hand.orderDone() || behind || command == null && f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
+            //(and, with it, a stage whose every job is begun or put off: what is put off, if it is still worth it, is planned again)
+            boolean settled = command != null && hand != null && hand.next >= hand.order.size() && hand.job == null;
+            boolean over = paused == null && hand != null && (hand.orderDone() || behind || settled || command == null && f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
             //what the map's tasks ask for, before the next of our own stages (in the campaign, once a stage of ours is up): a
             //stage the same task asked for is not asked again for four minutes
             expansion.econ.Asks.Ask task = null;
@@ -874,6 +876,8 @@ public class Match{
             System.out.println(String.format("  waves %d-%d come in the next %.0f minutes: largest of each %s", next[0], next[1], wavesHorizon / 60f, ask.units));
         }
         for(CoreBlock.CoreBuild c : foe.cores()){
+            //(a core beyond the map's open area sends nothing that can get here until the map opens: then it is planned for)
+            if(Vars.state.rules.limitMapArea && !Vars.world.isInMapArea(c.tileX(), c.tileY())) continue;
             expansion.defense.Planner.Source ground = new expansion.defense.Planner.Source(c.tileX(), c.tileY(), "Brain core " + c.tileX() + "," + c.tileY());
             for(var e : units.entrySet()){
                 ground.units.put(e.getKey(), e.getValue());

@@ -337,6 +337,23 @@ public final class Planner{
                     }
                 }
             }
+            if(bestLane < 0 && Boolean.getBoolean("def.debugsites")){
+                for(int l = 0; l < ground.size(); l++){
+                    if(covered[l]) continue;
+                    Lanes.Lane lane = ground.get(l);
+                    int inWindow = 0, room = 0;
+                    float minD = Float.MAX_VALUE, maxD = 0f;
+                    for(int i = 0; i < lane.tiles.length; i++){
+                        float d = lane.toTarget[i];
+                        minD = Math.min(minD, d);
+                        maxD = Math.max(maxD, d);
+                        if(d < near || d > far || lane.length() - d < 25f) continue;
+                        inWindow++;
+                        if(roomy(lane.tiles[i])) room++;
+                    }
+                    System.out.println(String.format("    def.debugsites: lane %d from %s: %d tiles, toTarget %.0f..%.0f, length %.0f, window %.0f..%.0f: %d in it, %d roomy", l, ask.sources.get(lane.source).label, lane.tiles.length, minD, maxD, lane.length(), near, far, inWindow, room));
+                }
+            }
             if(bestLane < 0){
                 //a way shorter than the nearest place allowed: hold it as far out as it goes
                 for(int l = 0; l < ground.size(); l++) if(!covered[l] && bestLane < 0) bestLane = l;

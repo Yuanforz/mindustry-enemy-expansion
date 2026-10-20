@@ -41,8 +41,10 @@ public class Scripts{
                     case "spawn" -> spot(out, args, 2, 3);
                     //spawnwave x y natural
                     case "spawnwave" -> spot(out, args, 1, 4);
-                    //explosion team x y radius ...
-                    case "explosion" -> spot(out, args, 2, 2 + (int)number(args, 4, 0));
+                    //explosion team x y radius ...: not a place taken, an event that may hurt what stands there (basin's
+                    //nuke is set off over the player's core: kept clear, the whole base round it could have no defence),
+                    //so it reserves nothing; it is a risk for whoever weighs what to build
+                    case "explosion" -> {}
                     //setblock layer block x y team rotation
                     case "setblock" -> spot(out, args, 3, 1);
                     default -> {}
