@@ -74,6 +74,10 @@ public final class Hand extends mindustry.entities.units.AIController{
      * later in the way, or a node lost) gets nodes that join it to the main grid again, put up like anything that went
      * missing. Seen so on basin: the furnace and a bore beside it on a grid of their own, and no silicon all game.
      */
+    static final boolean debugPower = Boolean.getBoolean("xp.debugpower");
+    /** Machines no way to power was found for (noted once). */
+    final arc.struct.IntSet unmendable = new arc.struct.IntSet();
+
     void mendPower(){
         if(now() < mendAt) return;
         mendAt = now() + 10f;
@@ -82,13 +86,21 @@ public final class Hand extends mindustry.entities.units.AIController{
             Part self = works.at.get(order.get(i));
             if(self == null) continue;
             Building b = Vars.world.build(self.x, self.y);
+            if(debugPower && b != null && b.power != null && b.block.consPower != null && b.power.graph.producers.isEmpty()) System.out.println("    mend? " + b.block.name + " at " + b.tileX() + "," + b.tileY() + " part " + self.block.name + " batteries " + b.power.graph.batteries.size + " cut off before " + cutOff.contains(b.pos()));
             if(b == null || b.block != self.block || b.power == null || b.block.consPower == null || !b.power.graph.producers.isEmpty()) continue;
-            if(b.power.graph.batteries.size > 0) continue;
+            //(a grid with power stored has power for now; one with a battery that nothing fills has none)
+            if(b.power.graph.getBatteryStored() > 0.01f) continue;
             int pos = b.pos();
             now.add(pos);
             if(!cutOff.contains(pos)) continue;
             Seq<Part> nodes = Wiring.mend(works.cat, unit.team, b);
-            if(nodes == null || nodes.isEmpty()) continue;
+            if(nodes == null || nodes.isEmpty()){
+                if(!unmendable.contains(pos)){
+                    unmendable.add(pos);
+                    trouble.add(String.format("%s at %d,%d has no power and no way of beam nodes to the grid was found%s", b.block.name, b.tileX(), b.tileY(), nodes == null ? "" : " (it counts as on it)"));
+                }
+                continue;
+            }
             for(Part p : nodes) if(!watch.repairs.contains(p, true)) watch.repairs.add(p);
             mended++;
             trouble.add(String.format("%s at %d,%d had no power: %d nodes to join it to the grid", b.block.name, b.tileX(), b.tileY(), nodes.size));

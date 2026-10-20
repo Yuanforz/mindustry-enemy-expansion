@@ -316,13 +316,23 @@ public class Match{
             //(a stage is not left for want of time while what makes its units is not up yet, unless three times over: on lake,
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
             //(a stage is over once its own order is up, whatever it is mending meanwhile: under raids that never ends)
-            boolean over = paused == null && hand != null && (hand.orderDone() || f - stageFrom > limitNow && (command != null || makerUp(hand) || f - stageFrom > limitNow * 3));
+            //(with the command layer: weighed again once the stage is behind its own model, the job it is on begun later than
+            //the model has it by half again and a minute; a stage that goes as planned is let finish)
+            boolean behind = command != null && stageModel != null && hand != null && f % 60 == 0 && behindModel(hand, stageModel, (f - stageFrom) / 60f);
+            boolean over = paused == null && hand != null && (hand.orderDone() || behind || command == null && f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
             //what the map's tasks ask for, before the next of our own stages (in the campaign, once a stage of ours is up): a
             //stage the same task asked for is not asked again for four minutes
             expansion.econ.Asks.Ask task = null;
+            //(with the command layer, what the tasks ask is weighed among its ways, not put first)
+            List<String> taskWays = new ArrayList<>();
             if((hand == null || over) && campaign && hand != null && us.core() != null && f % 60 == 0){
                 expansion.econ.Asks.Ask a = asks(hand, allowed, f);
-                if(a.stage != null && (a.by != lastTaskBy || f - lastTaskAt > 4 * 3600)) task = a;
+                if(command != null){
+                    if(a.stage != null){
+                        taskWays.add(a.stage);
+                        System.out.println("  " + Plan.time(f / 60f) + ": the map's tasks ask: " + a.stage + " (" + a.why.toString("; ") + ")");
+                    }
+                }else if(a.stage != null && (a.by != lastTaskBy || f - lastTaskAt > 4 * 3600)) task = a;
             }
             if((hand == null || over) && (again || task != null || command != null || stage + 1 < stages.length) && us.core() != null){
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
@@ -360,7 +370,7 @@ public class Match{
                         public Collection<String> feedable(){
                             return feedable;
                         }
-                    }, income(us, f));
+                    }, income(us, f), taskWays);
                     System.out.print(command.log);
                     if(best == null) ways = new String[0];
                     else if(best.modules > 0){
@@ -389,7 +399,7 @@ public class Match{
                 }
                 for(int pass = 0; pass < 2 && plan == null; pass++){
                 homeGuard = pass == 1;
-                if(homeGuard && ways[0].startsWith("defend")) break;
+                if(homeGuard && (ways.length == 0 || ways[0].startsWith("defend"))) break;
                 if(homeGuard) System.out.println("  stage " + (stage + 1) + ": nothing that can be made gets to the Brain's base; units to hold our own");
                 for(String way : ways){
                     st = way.split(":");
@@ -438,7 +448,7 @@ public class Match{
                 if(plan != null && plan.model != null) limitNow = Math.max(stageLimit, Math.min(plan.model.t, 3600f) * 2f * 60f);
                 //(the command layer weighs again once a stage falls behind its model by half again and a minute: what is
                 //found then, it plans from)
-                if(command != null && plan != null && plan.model != null) limitNow = Math.max(120f * 60f, (Math.min(plan.model.t, 3600f) * 1.5f + 60f) * 60f);
+                if(plan != null && plan.model != null) stageModel = plan.model;
                 if(plan != null && plan.model != null){
                     if(hand != null) before.add(hand);
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
@@ -938,6 +948,18 @@ public class Match{
         for(Building b : me.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t && t.hasAmmo() && b.within(home, 12 * Vars.tilesize)) return true;
         return false;
     }
+    /** The model of the stage under way, for telling whether the stage is behind it. */
+    static Timeline stageModel;
+
+    /** Whether a stage is behind its model: the job it is on (or saving up for) begun later than the model has it, by half again and a minute. */
+    static boolean behindModel(expansion.econ.Hand hand, Timeline model, float seconds){
+        int i = Math.min(hand.next, model.begun.length - 1);
+        if(i < 0 || hand.orderDone()) return false;
+        float planned = model.begun[i];
+        if(Float.isNaN(planned)) planned = model.t;
+        return seconds > planned * 1.5f + 60f;
+    }
+
     /** How many modules of the defence the command layer chose (Integer.MAX_VALUE: all). */
     static int defendModules = Integer.MAX_VALUE;
     static float pressureEdge = Float.parseFloat(System.getProperty("match.pressure", "1.5"));

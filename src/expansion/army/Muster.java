@@ -29,7 +29,7 @@ public final class Muster{
         public final float seconds;
         public final int room;
 
-        Aim(UnitType type, int makers, float strength, boolean reaches, float seconds, int room){
+        public Aim(UnitType type, int makers, float strength, boolean reaches, float seconds, int room){
             this.type = type;
             this.makers = makers;
             this.strength = strength;
@@ -50,12 +50,31 @@ public final class Muster{
 
         /** The same kind with another number of makers. */
         public Aim withMakers(int n){
-            return new Aim(type, n, strength, reaches, seconds, room);
+            return new Aim(type, n, strength, reaches, seconds, room).task(task);
+        }
+
+        /** For the command layer: whether this is what a map's task asks for; or an item to have (a task's), at a rate. */
+        public boolean task;
+        public mindustry.type.Item item;
+        public float rate;
+
+        public Aim task(boolean t){
+            task = t;
+            return this;
+        }
+
+        /** An item to have at a rate, as a map's task asks: made by the economy, no unit. */
+        public static Aim item(mindustry.type.Item item, float rate){
+            Aim a = new Aim(mindustry.content.UnitTypes.stell, 1, 0f, false, 1f, 0);
+            a.item = item;
+            a.rate = rate;
+            a.task = true;
+            return a;
         }
 
         @Override
         public String toString(){
-            return type.name + ":" + makers;
+            return item != null ? item.name + ":" + rate : type.name + ":" + makers;
         }
     }
 

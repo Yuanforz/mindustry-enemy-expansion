@@ -152,11 +152,23 @@ final class Wiring{
     static Seq<Part> mend(Catalog cat, mindustry.game.Team team, mindustry.gen.Building cut){
         Wiring w = new Wiring(new Grid(cat, team), new StringBuilder());
         if(w.tree.isEmpty()) return null;
-        return w.connect(new Part(cut.block, cut.tileX(), cut.tileY(), cut.rotation, null));
+        //(from the whole of the grid it stands on: a node of that grid beside it is where a beam to the tree can start,
+        //and it stands in the way of a new one from the machine itself)
+        Seq<Part> from = new Seq<>();
+        if(cut.power != null) for(mindustry.gen.Building b : cut.power.graph.all){
+            if(b == cut || b.tile != Vars.world.tile(b.tileX(), b.tileY())) continue;
+            from.add(new Part(b.block, b.tileX(), b.tileY(), b.rotation, null));
+        }
+        return w.connect(new Part(cut.block, cut.tileX(), cut.tileY(), cut.rotation, null), from);
     }
 
     /** Joins a machine to the tree with the fewest new nodes; the nodes, or null if there is no way. */
     Seq<Part> connect(Part p){
+        return connect(p, new Seq<>());
+    }
+
+    /** The same, starting from the machine or from any of what stands on one grid with it (its island). */
+    Seq<Part> connect(Part p, Seq<Part> island){
         int self = grid.pos(p.x, p.y);
         Seq<Part> out = new Seq<>();
         if(tree.isEmpty() || reached(p)){
@@ -167,8 +179,11 @@ final class Wiring{
         IntFloatMap dist = new IntFloatMap();
         IntIntMap parent = new IntIntMap();
         PriorityQueue<float[]> open = new PriorityQueue<>(Comparator.comparingDouble(a -> a[0]));
-        //a first node: in line with an edge of the machine, nothing powered between
-        for(int[] t : Grid.around(p)){
+        //a first node: in line with an edge of the machine (or of a member of its island), nothing powered between
+        Seq<Part> starts = new Seq<>();
+        starts.add(p);
+        starts.addAll(island);
+        for(Part start : starts) for(int[] t : Grid.around(start)){
             for(int j = 1; j <= range; j++){
                 int tx = t[0] + Geometry.d4x(t[2]) * (j - 1), ty = t[1] + Geometry.d4y(t[2]) * (j - 1);
                 if(!grid.in(tx, ty) || insulated(tx, ty) || powered(tx, ty) >= 0) break;

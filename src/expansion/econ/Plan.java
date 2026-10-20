@@ -669,6 +669,8 @@ public final class Plan{
             for(int c : m.cost) spent += c;
         }
         model = new Timeline(cat, field, order);
+        //(played through, so that when each job is to begin is known: what the stage is measured against)
+        model.runUntil(3600f);
         out.println(String.format("######## %sdefence: %d modules and wall lines, %d machines in all, %d items; laid out in %.1fs: %s", label, guard.size(), order.size(), spent, layoutNanos / 1e9, works.summary()));
         for(String p : works.problems) out.println("  checker: " + p);
         return this;

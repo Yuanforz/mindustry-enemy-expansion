@@ -229,6 +229,22 @@ public final class Watch{
             //take from it)
             Part self = layout.at.get(e.getKey());
             Building b = self == null ? null : Vars.world.build(self.x, self.y);
+            if(b != null && c != null && c.toString().trim().endsWith("no power")){
+                //what power it is on: how many on its grid, what makes power there, the nearest node of ours and whether it reaches
+                StringBuilder pw = new StringBuilder();
+                if(b.power != null){
+                    var g = b.power.graph;
+                    pw.append(String.format("grid of %d, %d producers, satisfaction %.2f", g.all.size, g.producers.size, g.getSatisfaction()));
+                }
+                Building node = null;
+                float best = Float.MAX_VALUE;
+                for(Building o : layout.team.data().buildings) if(o.block instanceof mindustry.world.blocks.power.BeamNode && o.dst(b) < best){
+                    best = o.dst(b);
+                    node = o;
+                }
+                if(node != null) pw.append(String.format("; nearest node at %d,%d, %.0f tiles, on a grid of %d", node.tileX(), node.tileY(), best / Vars.tilesize, node.power.graph.all.size));
+                out.append(String.format("        at %d,%d: %s\n", b.tileX(), b.tileY(), pw));
+            }
             if(b != null && c != null && (c.toString().trim().endsWith("starved") || c.toString().trim().endsWith("blocked"))){
                 StringBuilder by = new StringBuilder();
                 for(Building o : b.proximity) by.append(' ').append(o.block.name).append('@').append(o.tileX()).append(',').append(o.tileY()).append(o.block.rotate ? " r" + o.rotation : "");

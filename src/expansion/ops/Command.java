@@ -82,6 +82,8 @@ public final class Command{
         /** How many modules of the defence go first (0: none, Integer.MAX_VALUE: all it plans). */
         public final int modules;
         public float score, firstUnit = Float.POSITIVE_INFINITY, defenceDone;
+        /** Whether it does what the map's tasks ask. */
+        public boolean task;
         public int turrets;
         /** The scenario worst for it, as it played out. */
         public Outcome outcome;
@@ -92,13 +94,13 @@ public final class Command{
         }
 
         public String stage(){
-            return aim.type.name + ":" + aim.makers;
+            return aim.item != null ? aim.item.name + ":" + aim.rate : aim.type.name + ":" + aim.makers;
         }
 
         @Override
         public String toString(){
             String d = modules == 0 ? "" : String.format(" after a defence of %s (%d turrets, all up by %s)", modules == Integer.MAX_VALUE ? "all modules" : modules + " module(s)", turrets, Float.isInfinite(defenceDone) ? "never" : Plan.time(defenceDone));
-            return String.format("%s%s: score %.1f, first unit %s; at worst: %s", stage(), d, score, Float.isInfinite(firstUnit) ? "never" : Plan.time(firstUnit), outcome);
+            return String.format("%s%s%s: score %.1f, first unit %s; at worst: %s", stage(), d, task ? " (a task)" : "", score, Float.isInfinite(firstUnit) ? "never" : Plan.time(firstUnit), outcome);
         }
     }
 
@@ -123,12 +125,17 @@ public final class Command{
     /** How much slower the game is than the economy model, in the two economy scenarios (the bench has it at 0.93-1.19). */
     public static float[] lags = {1f, 1.3f};
     /**
-     * How much of a unit's estimated damage a second lands on a core under siege (measured: two or three stells, 72-108 a
-     * second by the game's estimate, took 2300 health off a core in two minutes, about 19 a second; -Dops.siege).
+     * How much of a unit's estimated damage a second lands on a core under siege with nothing of ours about it (measured on
+     * a generated map: four stells, 144 a second by the game's estimate, took 2100 health off a core in 27 s, 78 a second;
+     * with our units about it, a quarter; -Dops.siege).
      */
-    public static float siegeEfficiency = Float.parseFloat(System.getProperty("ops.siege", "0.25"));
+    public static float siegeEfficiency = Float.parseFloat(System.getProperty("ops.siege", "0.55"));
     /** When the other side sends its army: once it outweighs what holds our home by this much. */
     static final float[] sendAts = {0.5f, 1f, 2f};
+    /** What doing one of the map's tasks is worth, now (discounted like the rest by when it is done; -Dops.task). */
+    public static float taskWorth = Float.parseFloat(System.getProperty("ops.task", "150"));
+    /** How many makers a kind is weighed with, besides one. */
+    public static int[] makerCounts = {2, 3, 4, 6};
     /** How many kinds of unit get more makers weighed, at most. */
     public int kinds = Integer.getInteger("ops.kinds", 4);
     public final List<Candidate> weighed = new ArrayList<>();
@@ -143,6 +150,15 @@ public final class Command{
 
     /** The best way to go now, or null if nothing can be had. */
     public Candidate decide(List<String> blocks, Set<String> allowed, List<Design> library, Defences defences, Map<String, Float> income){
+        return decide(blocks, allowed, library, defences, income, List.of());
+    }
+
+    /**
+     * The same, with what the map's tasks ask for as ways of their own ("stell:1", "oxide:0.2", "defend"): each weighed
+     * like the rest, and worth besides what doing the task is worth (a map opens up as its tasks are done, and the enemy
+     * cores to be taken with it), the sooner the more.
+     */
+    public Candidate decide(List<String> blocks, Set<String> allowed, List<Design> library, Defences defences, Map<String, Float> income, List<String> tasks){
         long t0 = System.nanoTime();
         log.setLength(0);
         weighed.clear();
@@ -158,15 +174,31 @@ public final class Command{
         long w0 = System.nanoTime();
         weigh(ones, stages, blocks, allowed, library, income);
         long w1 = System.nanoTime();
+        //(how many makers: a choice point of its own, as many as the model finds the economy can feed, up to six)
         List<Muster.Aim> more = new ArrayList<>();
-        for(Object[] c : stages){
-            Muster.Aim one = (Muster.Aim)c[0];
-            for(Muster.Aim aim : all) if(aim.type == one.type && aim.makers > 1) more.add(aim);
+        List<Object[]> had = new ArrayList<>(stages);
+        had.sort((a, b) -> Float.compare(((Muster.Aim)b[0]).strength, ((Muster.Aim)a[0]).strength));
+        for(int i = 0; i < Math.min(kinds, had.size()); i++){
+            Muster.Aim one = (Muster.Aim)had.get(i)[0];
+            for(int n : makerCounts) more.add(one.withMakers(n));
         }
-        more.sort((a, b) -> Float.compare(b.strength, a.strength));
-        if(more.size() > kinds) more = more.subList(0, kinds);
         weigh(more, stages, blocks, allowed, library, income);
         long w2 = System.nanoTime();
+        //the tasks' stages: a unit or an item to have
+        boolean taskDefence = false;
+        List<Muster.Aim> taskAims = new ArrayList<>();
+        for(String t : tasks){
+            if(t.equals("defend")){
+                taskDefence = true;
+                continue;
+            }
+            String[] st = t.split(":");
+            UnitType ut = Vars.content.unit(st[0]);
+            Item it = Vars.content.item(st[0]);
+            if(ut != null) taskAims.add(new Muster.Aim(ut, Math.max(1, (int)Float.parseFloat(st[1])), ut.dpsEstimate * ut.health, Reach.toFoe(ut, me, foe), 1f, 1).task(true));
+            else if(it != null) taskAims.add(Muster.Aim.item(it, Float.parseFloat(st[1])));
+        }
+        if(!taskAims.isEmpty()) weigh(taskAims, stages, blocks, allowed, library, income);
         if(stages.isEmpty()){
             log.append("  command: nothing can be had\n");
             return null;
@@ -224,13 +256,15 @@ public final class Command{
         //(the mirror, the defences and each stage's units under each lag: worked out once)
         //(what our fastest stage adds over what our standing makers turn out anyway: what the other side could add, as fast;
         //its own standing yards are in the forecast already)
+        //(the other side as fast as the model allows, whatever our own economy's lag: how slow ours turns out says nothing
+        //of how fast theirs is)
         Map<Float, Force[]> mirrors = new HashMap<>();
         for(float lag : lags){
             if(fastest == null){
                 mirrors.put(lag, null);
                 continue;
             }
-            Force[] with = unitCurve(fastest, lag), without = unitCurve(fastest, lag, List.of());
+            Force[] with = unitCurve(fastest, 1f), without = unitCurve(fastest, 1f, List.of());
             Force[] added = new Force[with.length];
             for(int i = 0; i < with.length; i++){
                 added[i] = minus(with[i], without[i]);
@@ -266,6 +300,15 @@ public final class Command{
                     }
                 }
                 cand.score = aggregate(scores);
+                //(a way that does a task: worth what the task is, discounted by when it is done)
+                if(aim.task){
+                    float done = stage.model.first[stage.unit] * lags[0] + cand.defenceDone;
+                    cand.score += taskWorth * d(done);
+                    cand.task = true;
+                }else if(k > 0 && taskDefence){
+                    cand.score += taskWorth * d(cand.defenceDone);
+                    cand.task = true;
+                }
                 if(sched(schedules) != null){
                     Object[] s = sched(schedules);
                     cand.turrets = ((Force)s[3]).count;
@@ -336,7 +379,8 @@ public final class Command{
                 Plan dry;
                 try{
                     //(with what the core really gets: the model counts what the map's own machines take on the way, as the drain)
-                    dry = p.make(me, blocks, allowed, library, aim.type.name, aim.makers, income == null || income.isEmpty() ? null : income);
+                    dry = aim.item != null ? p.make(me, blocks, allowed, library, aim.item.name, aim.rate, income == null || income.isEmpty() ? null : income)
+                        : p.make(me, blocks, allowed, library, aim.type.name, aim.makers, income == null || income.isEmpty() ? null : income);
                 }catch(Throwable t){
                     StringWriter w = new StringWriter();
                     t.printStackTrace(new PrintWriter(w));
