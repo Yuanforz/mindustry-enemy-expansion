@@ -146,10 +146,11 @@ public class FighterAI extends AIController{
                 //(measured against one breach: six ships going straight across brought it to a quarter and lost three; going
                 //slantwise they brought it down and lost one)
                 step.scl(side).add(way.x * (outward * 0.6f + 0.5f * side), way.y * (outward * 0.6f + 0.5f * side)).nor().scl(unit.speed());
-                unit.movePref(step);
+                if(!sinks(unit.x + step.x / Math.max(step.len(), 0.001f) * tilesize * 2f, unit.y + step.y / Math.max(step.len(), 0.001f) * tilesize * 2f)) unit.movePref(step);
             }else{
                 way.trns(sector, range * 0.85f).add(aim.getX(), aim.getY());
-                moveTo(way, tilesize * 1.5f);
+                if(sinks(way.x, way.y)) travel(aim.getX(), aim.getY(), range * 0.85f);
+                else moveTo(way, tilesize * 1.5f);
             }
         }else if(spot != null){
             //to that stretch, not to the nearest side of it: coming up on the near side, it came within reach of the others; and
@@ -200,9 +201,24 @@ public class FighterAI extends AIController{
             //base for a quarter of an hour
             pathfind(mindustry.ai.Pathfinder.fieldCore);
         }else{
+            //straight on, but never into deep water: there what walks or rolls sinks, and no way there was worked out yet only
+            //because the game's path-finding had not got to it. (on the fifth sector a group of tanks drove straight into the lake
+            //between it and the core beyond, and drowned to the last)
+            float ahead = Math.min(unit.dst(x, y), tilesize * 2.5f);
+            if(System.getProperty("xp.wade") == null && sinks(unit.x + (x - unit.x) / Math.max(unit.dst(x, y), 0.001f) * ahead, unit.y + (y - unit.y) / Math.max(unit.dst(x, y), 0.001f) * ahead)){
+                how = "waits for a way";
+                return;
+            }
             how = "straight";
             moveTo(way, within);
         }
+    }
+
+    /** Whether a unit of its kind would sink or stick at a place: deep water or solid ground, for what walks or rolls. */
+    private boolean sinks(float x, float y){
+        if(unit.type.flying || unit.type.hovering || unit.type.naval || System.getProperty("xp.wade") != null) return false;
+        mindustry.world.Tile tile = mindustry.Vars.world.tileWorld(x, y);
+        return tile == null || tile.floor().isDeep() || (tile.solid() && tile.build == null);
     }
 
     @Override

@@ -334,7 +334,10 @@ public class Blueprint{
 
         for(int copy = 0; copy < out.copies; copy++){
             for(Part part : parts){
-                int rotation = mirrored && part.block.rotate ? Mathf.mod(-part.rotation, 4) : part.rotation;
+                //mirrored, a block that gives off from its sides is turned half round as well, or what it gave off towards its
+                //neighbour goes the other way: an electrolyzer whose hydrogen faced the refabricator faced away from it, and every
+                //mirrored works stood with its electrolyzer full and still
+                int rotation = mirrored && part.block.rotate ? Mathf.mod((sideOutputs(part.block) ? 2 : 0) - part.rotation, 4) : part.rotation;
                 Tmp.p1.set(place(part.block, part.x + stepX * copy, part.y + stepY * copy, turns, mirrored));
                 Part placed = new Part(part.block, x + Tmp.p1.x, y + Tmp.p1.y, part.block.rotate ? Mathf.mod(rotation + turns, 4) : 0, part.config);
                 placed.optional = part.optional;
@@ -360,6 +363,15 @@ public class Blueprint{
      * middle of the main block, the same way the game turns schematics, so that blocks of even size
      * end up on the right tiles.
      */
+    /** Whether a block gives off what it makes from its sides (left and right of where it faces) rather than all round. */
+    static boolean sideOutputs(Block block){
+        if(System.getProperty("xp.oldmirror") != null) return false;
+        if(block instanceof mindustry.world.blocks.production.GenericCrafter crafter && crafter.liquidOutputDirections != null){
+            for(int dir : crafter.liquidOutputDirections) if(dir == 1 || dir == 3) return true;
+        }
+        return false;
+    }
+
     private arc.math.geom.Point2 place(@Nullable Block block, int x, int y, int turns, boolean mirrored){
         float pivot = main().offset, offset = block == null ? 0f : block.offset;
         float px = x * tilesize + offset - pivot, py = y * tilesize + offset - pivot;

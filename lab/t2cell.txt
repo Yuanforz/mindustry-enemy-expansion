@@ -1,0 +1,67 @@
+# A tier-2 works with no pipes: water into an electrolyzer by touch, its hydrogen into the refabricator by touch.
+# Sandbox sources stand in for the water, the power and the items; the question is only whether the touching blocks feed each other.
+[t2cell]
+tank-fabricator -3 0 0 stell
+tank-refabricator 0 0 0
+electrolyzer 0 3 0
+liquid-source -2 3 0 water
+power-source 2 3
+power-source -1 -2
+power-source -4 -2
+item-source -5 0 0 beryllium
+item-source -3 -2 0 silicon
+item-source 0 -2 0 silicon
+item-source 1 -2 0 tungsten
+
+# The same against a turbine: its by-product water (about 5 a second on a full vent) runs the electrolyzer at half pace, which
+# is the 3 hydrogen a second one refabricator takes. A liquid source at 5 a second stands in for the turbine.
+[t2turbine]
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+tank-fabricator 0 -3 0 stell
+liquid-source 1 0 0 water
+power-source 5 0
+power-source 4 -5
+power-source -2 -2
+item-source -2 -3 0 beryllium
+item-source 0 -5 0 silicon
+item-source 2 -5 0 silicon
+item-source 3 -5 0 tungsten
+
+# The box-fed works: each machine takes what an unloader set to nothing pulls out of the box behind it.
+# Item sources fill the boxes as the core's unit would by carrying them; a liquid source stands in for the turbine's water.
+[t2box]
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+tank-fabricator 0 -3 0 stell
+liquid-source 1 0 0 water
+power-source 5 0
+power-source 2 -5
+power-source -2 -2
+duct-unloader 0 -5 1
+reinforced-container -1 -7
+item-source -2 -7 0 silicon
+item-source -2 -6 0 beryllium
+duct-unloader 3 -5 1
+reinforced-container 3 -7
+item-source 5 -7 0 silicon
+item-source 5 -6 0 tungsten
+
+# The free-standing box works: a liquid source keeps its water box filled, as carrying it to a turbine would.
+[t2free]
+tank-fabricator 0 -3 0 stell
+reinforced-liquid-container 0 0
+liquid-source -1 1 0 water
+electrolyzer 3 0 0
+tank-refabricator 3 -3 0
+power-source 5 0
+power-source 2 -5
+power-source -2 -2
+duct-unloader 0 -5 1
+reinforced-container -1 -7
+item-source -2 -7 0 silicon
+item-source -2 -6 0 beryllium
+duct-unloader 3 -5 1
+reinforced-container 3 -7
+item-source 5 -7 0 silicon
+item-source 5 -6 0 tungsten
