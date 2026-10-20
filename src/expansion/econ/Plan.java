@@ -51,6 +51,8 @@ public final class Plan{
     public int gateDepth = Integer.MAX_VALUE;
     /** How many of the defence planner's modules a defence takes (the first ones); all, unless it is wanted at once. */
     public int maxModules = Integer.MAX_VALUE;
+    /** A defence paid for out of what the core holds: nothing more built to pay for it (one wanted at once, under pressure). */
+    public boolean payFromStock;
     /** Put before the plan's heading line (a map's name, say). */
     public String label = "";
     /** How far from the core places are looked for, in tiles; with {@link #widen}, further out when the aim can't be had this near. */
@@ -598,7 +600,7 @@ public final class Plan{
         //two and a half minutes): makers of that sending to the core, built first. (The opening economy is the least that
         //makes its units, and its factories eat what comes; on aegis the breaches waited six minutes on beryllium while the
         //core never held more than a hundred.)
-        payItself(plant, me.core());
+        if(!payFromStock) payItself(plant, me.core());
         plant = planner.balanceRest(plant);
         if(!planner.notes.toString().isEmpty()) out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
         long l0 = System.nanoTime();

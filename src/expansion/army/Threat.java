@@ -88,7 +88,7 @@ public class Threat{
         }
     }
 
-    static Gun gun(TurretBuild t, Turret type){
+    public static Gun gun(TurretBuild t, Turret type){
         Gun gun = new Gun();
         gun.build = t;
         gun.x = t.x;

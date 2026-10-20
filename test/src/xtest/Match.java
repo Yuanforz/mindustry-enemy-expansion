@@ -42,7 +42,7 @@ public class Match{
     static int blocksLostUs, blocksLostThem;
     static final ObjectFloatMap<String> hurt = new ObjectFloatMap<>();
     static final ObjectIntMap<String> died = new ObjectIntMap<>();
-    static final ObjectFloatMap<String> blockHurt = new ObjectFloatMap<>();
+    static final ObjectFloatMap<String> blockHurt = new ObjectFloatMap<>(), coreHurt = new ObjectFloatMap<>();
     /** Where raiders take what we built (-Dmatch.guard=false: no turret put down for it). */
     static expansion.econ.Raids raids;
     static int guards, feeds;
@@ -205,6 +205,11 @@ public class Match{
             Object owner = e.source.owner;
             String who = owner instanceof Building b ? b.block.name : owner instanceof Unit u ? "unit " + u.type.name : String.valueOf(owner);
             blockHurt.put(who, blockHurt.get(who, 0f) + e.source.damage);
+            //(what hits the core, and from how far: for the minute's report)
+            if(e.build instanceof CoreBlock.CoreBuild) coreHitRecent += e.source.damage;
+            if(e.build instanceof CoreBlock.CoreBuild && owner instanceof Posc at){
+                coreHurt.put(who + " from " + (int)(e.build.dst(at.getX(), at.getY()) / Vars.tilesize / 5 * 5) + " tiles", coreHurt.get(who + " from " + (int)(e.build.dst(at.getX(), at.getY()) / Vars.tilesize / 5 * 5) + " tiles", 0f) + e.source.damage);
+            }
         });
         //who hurts our units: by the block or unit that fired, damage summed
         Events.on(UnitDamageEvent.class, e -> {
@@ -371,6 +376,7 @@ public class Match{
                     p.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
                     try{
                         if(st[0].equals("defend")){
+                            lastDefenceAt = f;
                             expansion.defense.Planner.Plan dp = defence(us, them, sector, f / 60f, p.label);
                             //(it pays for itself out of what the core holds and brings in; built of what is near at hand; the one
                             //put first for a threat from the start is its first module only)
@@ -425,6 +431,10 @@ public class Match{
                 hand = paused;
                 paused = null;
                 if(builder != null && !builder.dead()) builder.controller(hand);
+            }
+            if(f % 3600 == 0){
+                coreHitLastMinute = coreHitRecent;
+                coreHitRecent = 0f;
             }
             //a place being raided that nothing of ours that can hit the raiders reaches: a turret for it (or, where one of ours
             //stands dry in reach, ammunition led to it)
@@ -549,6 +559,12 @@ public class Match{
                 if(!tb.hasAmmo()) drySeconds++;
             }
             if(f % 3600 == 0 && f > 0) System.out.println(report(f / 60f, hand, stage));
+            if(f % 3600 == 0 && f > 0 && coreHurt.size > 0){
+                StringBuilder ch = new StringBuilder("    our core hit by:");
+                for(var e : coreHurt) ch.append(' ').append(e.key).append(' ').append((int)e.value).append(';');
+                System.out.println(ch);
+                coreHurt.clear();
+            }
             if(f % 3600 == 0 && f > 0 && army != null){
                 int commanded = 0, fighters = 0;
                 for(Unit u : us.data().units){
@@ -558,6 +574,14 @@ public class Match{
                 }
                 System.out.println(String.format("    army: go %b (strength %.2f of theirs), cap %d, %d fighting units, %d with orders; %s%s", army.allot.go, army.allot.lastRatio, Units.getCap(us), fighters, commanded,
                     army.push.report(), army.push.target == null ? "" : " (now " + army.push.target.block.name + " at " + army.push.target.tileX() + "," + army.push.target.tileY() + ")"));
+                //where ours stand against home, and the other side's that are near it
+                if(us.core() != null){
+                    var core0 = us.core();
+                    int atHome = 0, out = 0, foesNear = 0;
+                    for(Unit u : us.data().units) if(!u.spawnedByCore && u.type.canAttack){ if(u.within(core0, 15 * Vars.tilesize)) atHome++; else out++; }
+                    for(Unit e : them.data().units) if(!e.spawnedByCore && e.type.canAttack && e.within(core0, 35 * Vars.tilesize)) foesNear++;
+                    System.out.println(String.format("    at home: %d of ours within 15 tiles of the core, %d out; %d of theirs within 35; %s", atHome, out, foesNear, army.hold.report()));
+                }
             }
             if(f % (3600 * 3) == 0 && f > 0 && hand != null && Boolean.getBoolean("match.watch")) System.out.print(hand.watch.report(hand.works.cat));
             if(f % 3600 == 0 && us.core() != null) for(Item item : Vars.content.items()) lastMinute.put(item.name, us.core().items.get(item));
@@ -824,12 +848,57 @@ public class Match{
         for(Item item : Vars.content.items()){
             int have = core.items.get(item);
             int income = Math.max(0, have - lastMinute.get(item.name, have));
-            int budget = Math.max(floor.getOrDefault(item.name, 0), have + Math.round(income * budgetMinutes));
+            //(a defence wanted at once: what the core holds now, and nothing more)
+            int budget = stockOnly ? have : Math.max(floor.getOrDefault(item.name, 0), have + Math.round(income * budgetMinutes));
             if(budget > 0) ask.budget.put(item.name, budget);
         }
         ask.modules = expansion.defense.Battery.parse(new Fi("blueprints/defense/modules.txt").readString());
         ask.capacity = expansion.defense.Capacity.parse(new Fi("blueprints/defense/capacity.txt").readString());
         return ask;
+    }
+
+    /** When a defence was last put first for pressure; how much stronger the other side must be for it (-Dmatch.pressure). */
+    static int lastDefenceAt = -100000;
+    /** What our cores lost to hits, over the minute now and the last whole one. */
+    static float coreHitRecent, coreHitLastMinute;
+
+    /** Whether one of our loaded turrets stands within 12 tiles of our core. */
+    static boolean guardedCore(Team me){
+        var home = me.core();
+        if(home == null) return false;
+        for(Building b : me.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t && t.hasAmmo() && b.within(home, 12 * Vars.tilesize)) return true;
+        return false;
+    }
+    /** Whether the defence being planned is to be paid for out of what the core holds now, with nothing built to pay for it. */
+    static boolean stockOnly;
+    static float pressureEdge = Float.parseFloat(System.getProperty("match.pressure", "1.5"));
+
+    /**
+     * The other side's fighting units in Lanchester strength (damage a second times health, all of them together), ours
+     * at home (our fighting units, and our loaded turrets within 40 tiles of our core), and how many of theirs.
+     */
+    static float[] pressure(Team me, Team foe){
+        float tDps = 0f, tHp = 0f, n = 0;
+        for(Unit u : foe.data().units){
+            if(u.spawnedByCore || !u.type.canAttack || u.dead()) continue;
+            tDps += u.type.dpsEstimate;
+            tHp += u.health;
+            n++;
+        }
+        float oDps = 0f, oHp = 0f;
+        for(Unit u : me.data().units){
+            if(u.spawnedByCore || !u.type.canAttack || u.dead()) continue;
+            oDps += u.type.dpsEstimate;
+            oHp += u.health;
+        }
+        CoreBlock.CoreBuild home = me.core();
+        if(home != null) for(Building b : me.data().buildings){
+            if(!(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t) || !t.hasAmmo() || b.dst(home) > 40 * Vars.tilesize) continue;
+            var g = expansion.army.Threat.gun(t, (mindustry.world.blocks.defense.turrets.Turret)b.block);
+            oDps += g.dps;
+            oHp += g.health;
+        }
+        return new float[]{tDps * tHp, oDps * oHp, n};
     }
 
     /** The task that last asked for a stage, and when. */
