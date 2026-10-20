@@ -41,6 +41,12 @@ final class Router{
     final int[] use;
     float pres = 0.6f;
     public int iterations = 14, budget = 250000;
+    /**
+     * Whether the rounds after the first lay the nets fought over at once (-Dxp.parallelroute=true). Off: on the second
+     * stage of aegis it took 29.6 s where one at a time took 7.4 s, for nets laid against the costs as the round began do
+     * not see each other and the negotiation takes many more rounds to settle.
+     */
+    public static boolean parallel = Boolean.getBoolean("xp.parallelroute");
     final StringBuilder log;
 
     enum Kind{bus, direct, tap}
@@ -90,6 +96,32 @@ final class Router{
     final Map<Machine, Part> at;
     final int[] coreTiles;
 
+    /**
+     * A worker for routing nets at once with others: what all of them read shared (the grid, the costs of each tile as
+     * this round of the negotiation has them, the machines and their ports), what a search writes its own.
+     */
+    private Router(Router b){
+        grid = b.grid;
+        cat = b.cat;
+        duct = b.duct;
+        bridge = b.bridge;
+        dock = b.dock;
+        conduit = b.conduit;
+        pipeBridge = b.pipeBridge;
+        hist = b.hist;
+        use = b.use;
+        pres = b.pres;
+        iterations = b.iterations;
+        budget = b.budget;
+        log = new StringBuilder();
+        at = b.at;
+        coreTiles = b.coreTiles;
+        tapped.addAll(b.tapped);
+        order = b.order;
+        ports.putAll(b.ports);
+        lanes.putAll(b.lanes);
+    }
+
     Router(Grid grid, Catalog cat, Map<Machine, Part> at, Set<String> allowed, StringBuilder log){
         this.grid = grid;
         this.cat = cat;
@@ -133,9 +165,41 @@ final class Router{
         for(Net n : nets) if(n.kind == Kind.tap) tapped.add(n.res);
         boolean clean = false;
         int rounds = 0, fewestContested = Integer.MAX_VALUE, stale = 0;
+        //(after the first round, the nets fought over are laid again at once, each by a worker of its own against the
+        //costs as the round began, as a parallel negotiated-congestion router does; the first round lays them in turn)
+        ThreadLocal<Router> workers = ThreadLocal.withInitial(() -> new Router(this));
+        List<Router> made = java.util.Collections.synchronizedList(new ArrayList<>());
         for(int it = 0; it < iterations && !clean; it++){
             rounds++;
-            for(Net n : nets){
+            if(it > 0 && parallel){
+                List<Net> again = new ArrayList<>();
+                for(Net n : nets){
+                    if(n.ok && !contested(n)) continue;
+                    if(!n.ok && lostAfter > 0 && n.lostRounds >= lostAfter) continue;
+                    again.add(n);
+                }
+                List<String> before = new ArrayList<>();
+                for(Net n : again){
+                    before.add(n.ok ? null : String.join("; ", n.why));
+                    rip(n);
+                }
+                float presNow = pres;
+                Par.map(again, n -> {
+                    Router w = workers.get();
+                    if(w.log.length() == 0 && !made.contains(w)) made.add(w);
+                    w.pres = presNow;
+                    w.route(n);
+                    return n;
+                });
+                for(int i = 0; i < again.size(); i++){
+                    Net n = again.get(i);
+                    claim(n);
+                    String whyBefore = before.get(i);
+                    if(n.ok) n.lostRounds = 0;
+                    else if(whyBefore != null && whyBefore.equals(String.join("; ", n.why))) n.lostRounds++;
+                    else n.lostRounds = 1;
+                }
+            }else for(Net n : nets){
                 //after the first round only the nets that share a tile with another are ripped up
                 if(it > 0 && n.ok && !contested(n)) continue;
                 //one not laid the same way round after round is not laid again in this negotiation: as the others move,
@@ -168,6 +232,7 @@ final class Router{
                 stale = 0;
             }else if(patience > 0 && ++stale >= patience) break;
         }
+        for(Router w : made) log.append(w.log);
         if(Boolean.getBoolean("xp.contested") && !clean){
             StringBuilder b = new StringBuilder("router: still contested:");
             for(int p = 0; p < use.length; p++){
@@ -527,7 +592,7 @@ final class Router{
         Part cp = at.get(c);
         if(cp == null || dock == null) return;
         List<Start> starts = new ArrayList<>();
-        for(var e : grid.running){
+        for(var e : new arc.struct.IntIntMap.Entries(grid.running)){
             if(e.value != n.res) continue;
             int t = e.key, tx = t % grid.w, ty = t / grid.w;
             Block b = grid.block(tx, ty);

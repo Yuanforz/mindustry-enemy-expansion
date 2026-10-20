@@ -227,17 +227,25 @@ public final class Grid{
     void eachAt(Block b, arc.func.Intc cons){
         arc.struct.IntSet p = plannedAt.get(b);
         if(p != null){
-            var it = p.iterator();
+            //(an iterator of its own: routers at work at once read it together)
+            var it = new arc.struct.IntSet.IntSetIterator(p);
             while(it.hasNext) cons.get(it.next());
         }
-        if(standingAt == null){
-            standingAt = new java.util.HashMap<>();
-            for(Building build : team.data().buildings){
-                if(build.block.size != 1 || !in(build.tileX(), build.tileY())) continue;
-                standingAt.computeIfAbsent(build.block, k -> new arc.struct.IntSeq()).add(pos(build.tileX(), build.tileY()));
+        java.util.Map<Block, arc.struct.IntSeq> standing = standingAt;
+        if(standing == null){
+            synchronized(this){
+                if(standingAt == null){
+                    java.util.Map<Block, arc.struct.IntSeq> made = new java.util.HashMap<>();
+                    for(Building build : team.data().buildings){
+                        if(build.block.size != 1 || !in(build.tileX(), build.tileY())) continue;
+                        made.computeIfAbsent(build.block, k -> new arc.struct.IntSeq()).add(pos(build.tileX(), build.tileY()));
+                    }
+                    standingAt = made;
+                }
+                standing = standingAt;
             }
         }
-        arc.struct.IntSeq s = standingAt.get(b);
+        arc.struct.IntSeq s = standing.get(b);
         if(s != null) for(int i = 0; i < s.size; i++) cons.get(s.get(i));
     }
 
@@ -354,7 +362,7 @@ public final class Grid{
             if(item == null) return false;
             //a factory takes what any of its plans needs
             if(b instanceof mindustry.world.blocks.units.UnitFactory uf){
-                for(var plan : uf.plans) for(ItemStack s : plan.requirements) if(s.item == item) return true;
+                for(int i = 0; i < uf.plans.size; i++) for(ItemStack s : uf.plans.get(i).requirements) if(s.item == item) return true;
                 return false;
             }
             return b.consumesItem(item);
