@@ -53,6 +53,25 @@ public final class Plan{
     public int maxModules = Integer.MAX_VALUE;
     /** Put before the plan's heading line (a map's name, say). */
     public String label = "";
+    /** How far from the core places are looked for, in tiles; with {@link #widen}, further out when the aim can't be had this near. */
+    public static final int baseRadius = Integer.getInteger("xp.radius", 110);
+    public int radius = baseRadius;
+    public boolean widen;
+    /** Only the model: the plan's order and times, nothing laid out (for weighing aims against each other); a rough order. */
+    public boolean dry;
+    /**
+     * What the aim could not get here, by item name: materials of the blocks that would make it that can't be paid for
+     * (none of it in the core and nothing here makes it: mostly an ore under the other side's turrets), and what the
+     * planner found no way to make enough of. What the army may go and open up.
+     */
+    public final Set<String> lacking = new TreeSet<>();
+    /** Of the blocks that can't be paid for, what each lacks. */
+    final Map<String, Set<String>> unpaid = new HashMap<>();
+
+    static int maxRadius(){
+        //(twice as far at most: further out the places to weigh grow past what the planner can go through in a few seconds)
+        return Math.max(baseRadius, Math.min(baseRadius * 2, Math.max(Vars.world.width(), Vars.world.height()) / 2));
+    }
 
     public Plan(PrintStream out){
         this.out = out;
@@ -107,8 +126,13 @@ public final class Plan{
         //with the gate on, planned with the tech that is near at hand, a little further, and all of it, and laid out as the
         //one that gets there first (with all of Erekir's tech, two stell fabricators were planned behind large bores that
         //cost oxide, and so an electrolyzer and an oxidation chamber: the first stell at 5:09 where 3:52 would do)
-        int[] tries = gate ? new int[]{2, 3, Integer.MAX_VALUE} : new int[]{Integer.MAX_VALUE};
+        //(a dry weighing takes all that can be paid for: one model, not three)
+        int[] tries = gate && !dry ? new int[]{2, 3, Integer.MAX_VALUE} : new int[]{Integer.MAX_VALUE};
         Object[] best = null;
+        lacking.clear();
+        //(widened, with widen on, while the aim can't be had this near: the places looked for reach out from the core only so
+        //far, and the tungsten of a map can lie just beyond)
+        for(int pass = 0; ; pass++){
         for(int d : tries){
             if(!model(me, blocks, allowed, library, unitName, machines, income, d)) continue;
             //(one that gets the whole plan up before one that never does, however soon its first unit; then the earliest first
@@ -119,6 +143,11 @@ public final class Plan{
                 best = new Object[]{cat, field, planner, model, allowedNow, first, t, d, wanted};
             }
         }
+        if(best != null || !widen || pass >= 2 || radius >= maxRadius()) break;
+        radius = Math.min(maxRadius(), (int)(radius * 1.5f));
+        out.println("  places looked for out to " + radius + " tiles");
+        }
+        radius = baseRadius;
         if(best == null) return null;
         cat = (Catalog)best[0];
         field = (Field)best[1];
@@ -128,6 +157,8 @@ public final class Plan{
         wanted = (Float)best[8];
         unit = cat.id(unitName);
         long t0;
+        //(only the model asked for: what it says, without laying anything out)
+        if(dry) return this;
         if(tries.length > 1) out.println("  taken: the plan with materials " + ((Integer)best[7] == Integer.MAX_VALUE ? "as far away as need be" : "at most " + best[7] + " steps of making away"));
         //laid out on the map; what it all really costs goes back to the planner, which may then order it otherwise
         long l0 = System.nanoTime();
@@ -293,13 +324,22 @@ public final class Plan{
         }
         check("after the scan");
         planner = new Planner(cat, field);
+        planner.rough = dry;
         t0 = Took.start();
         Recipes.modules(cat, library, allowedNow);
         Took.end("plan: modules", t0);
         check("after the modules");
         Recipe making = null;
-        unit = cat.id(unitName);
-        if(unit < 0) return false;
+        unit = cat.byName.containsKey(unitName) ? cat.id(unitName) : -1;
+        if(unit < 0 || !makerIn(unit)){
+            //what the blocks that would make it lack
+            for(Block b : Vars.content.blocks()){
+                boolean makes = b instanceof mindustry.world.blocks.units.UnitFactory f && f.plans.contains(p -> p.unit.name.equals(unitName))
+                    || b instanceof mindustry.world.blocks.units.Reconstructor rc && rc.upgrades.contains(u -> u[1].name.equals(unitName));
+                if(makes && unpaid.containsKey(b.name)) lacking.addAll(unpaid.get(b.name));
+            }
+            return false;
+        }
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
         wanted = making != null ? machines / making.unitSeconds : machines;
         t0 = Took.start();
@@ -312,6 +352,8 @@ public final class Plan{
             out.println("  places: " + kinds + " (of " + field.candidates + " looked at)");
         }
         if(!planner.notes.toString().isEmpty()) out.print("  planner: " + planner.notes.toString().trim().replace("\n", "\n  planner: ") + "\n");
+        java.util.regex.Matcher shortOf = java.util.regex.Pattern.compile("no way to make enough ([a-z-]+)").matcher(planner.notes);
+        while(shortOf.find()) if(Vars.content.item(shortOf.group(1)) != null) lacking.add(shortOf.group(1));
         t0 = Took.start();
         model = planner.order(plant, unit);
         Took.end("plan: order", t0);
@@ -326,6 +368,12 @@ public final class Plan{
         return read(me, blocks, allowed, Integer.MAX_VALUE);
     }
 
+    /** Whether the catalog has something that makes this (a unit's factory, an item's crafter or drill). */
+    boolean makerIn(int res){
+        for(Recipe r : cat.recipes) if(r.makes(res)) return true;
+        return false;
+    }
+
     /**
      * The catalog and the places on the map, for these blocks; with {@link #gate} on, only those that can be paid for now,
      * and of those only the ones whose materials are at most this many steps of making away (see {@link #depths}). What
@@ -335,8 +383,9 @@ public final class Plan{
         CoreBlock.CoreBuild core = me.core();
         cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
         cat.logistics(allowed);
-        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        field = Sites.scan(cat, me, radius);
         if(!gate) return allowed;
+        unpaid.clear();
         Map<String, Integer> depth = depths(blocks, me);
         List<String> kept = new ArrayList<>();
         for(String name : blocks) if(depth.getOrDefault(name, Integer.MAX_VALUE) <= maxDepth || (maxDepth == Integer.MAX_VALUE && depth.containsKey(name))) kept.add(name);
@@ -348,7 +397,7 @@ public final class Plan{
         fewer.removeAll(left);
         cat = Recipes.read(kept, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
         cat.logistics(fewer);
-        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        field = Sites.scan(cat, me, radius);
         return fewer;
     }
 
@@ -408,6 +457,10 @@ public final class Plan{
             }
             int d = blockDepth(b, core, depth);
             if(d != Integer.MAX_VALUE) out.put(name, d);
+            else for(mindustry.type.ItemStack stack : b.requirements){
+                int k = cat.id(stack.item.name);
+                if(core.items.get(stack.item) < stack.amount && (k < 0 || depth[k] == Integer.MAX_VALUE)) unpaid.computeIfAbsent(name, x -> new TreeSet<>()).add(stack.item.name);
+            }
         }
         return out;
     }

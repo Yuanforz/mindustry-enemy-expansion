@@ -26,7 +26,7 @@ import mindustry.gen.*;
 public class Army{
     /** Which parts are on. */
     public static class Flags{
-        public boolean allot, harass, cut, bait, decoy, creep, micro, review, push;
+        public boolean allot, harass, cut, bait, decoy, creep, micro, review, push, hold;
 
         /**
          * The parts on by default: those that, together, won more games against the squad AI alone in the duels
@@ -54,11 +54,11 @@ public class Army{
                 String name = on ? part : part.substring(1);
                 switch(name){
                     case "all" -> {
-                        flags.allot = flags.harass = flags.cut = flags.bait = flags.decoy = flags.creep = flags.micro = flags.review = flags.push = on;
+                        flags.allot = flags.harass = flags.cut = flags.bait = flags.decoy = flags.creep = flags.micro = flags.review = flags.push = flags.hold = on;
                     }
                     case "defaults" -> {
                         Flags d = defaults();
-                        flags.allot |= d.allot; flags.harass |= d.harass; flags.cut |= d.cut; flags.bait |= d.bait; flags.decoy |= d.decoy; flags.creep |= d.creep; flags.micro |= d.micro; flags.review |= d.review; flags.push |= d.push;
+                        flags.allot |= d.allot; flags.harass |= d.harass; flags.cut |= d.cut; flags.bait |= d.bait; flags.decoy |= d.decoy; flags.creep |= d.creep; flags.micro |= d.micro; flags.review |= d.review; flags.push |= d.push; flags.hold |= d.hold;
                     }
                     case "allot" -> flags.allot = on;
                     case "harass" -> flags.harass = on;
@@ -69,6 +69,7 @@ public class Army{
                     case "micro" -> flags.micro = on;
                     case "review" -> flags.review = on;
                     case "push" -> flags.push = on;
+                    case "hold" -> flags.hold = on;
                     case "none", "" -> {}
                     default -> Log.warn("[EnemyExpansion] army: no part called @", name);
                 }
@@ -78,7 +79,7 @@ public class Army{
 
         @Override
         public String toString(){
-            return (allot ? "allot " : "") + (harass ? "harass " : "") + (cut ? "cut " : "") + (bait ? "bait " : "") + (decoy ? "decoy " : "") + (creep ? "creep " : "") + (micro ? "micro " : "") + (review ? "review " : "") + (push ? "push" : "");
+            return (allot ? "allot " : "") + (harass ? "harass " : "") + (cut ? "cut " : "") + (bait ? "bait " : "") + (decoy ? "decoy " : "") + (creep ? "creep " : "") + (micro ? "micro " : "") + (review ? "review " : "") + (push ? "push " : "") + (hold ? "hold" : "");
         }
     }
 
@@ -123,6 +124,7 @@ public class Army{
     public final Bait bait;
     public final Creep creep;
     public final Push push;
+    public final Hold hold;
     public final Review review = new Review();
     /** Ticks since it began. */
     public float clock;
@@ -140,6 +142,7 @@ public class Army{
         bait = new Bait(this);
         creep = new Creep(this);
         push = new Push(this);
+        hold = new Hold(this);
         //the one army of a team that hears what is lost
         live.removeAll(a -> a.team == team);
         live.add(this);
@@ -159,6 +162,7 @@ public class Army{
             if(flags.allot) allot.update();
             if(flags.harass || flags.cut) ops.update();
             if(flags.push) push.update(!flags.allot || allot.go);
+            if(flags.hold) hold.update(flags.push ? push : null);
         }
         if(flags.creep && frame % 60 == 5) creep.update();
         if(flags.bait || flags.decoy || flags.creep){

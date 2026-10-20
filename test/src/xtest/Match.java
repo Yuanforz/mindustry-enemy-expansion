@@ -139,7 +139,7 @@ public class Match{
         mindustry.ai.RtsAI squads = new mindustry.ai.RtsAI(us.data());
         //and our army layer over it (-Dmatch.us=rts for the squad AI alone, or army:parts); the Brain is played as the main
         //line has it, without the layer (-Dmatch.brainarmy=true to give it the layer too)
-        String ours = System.getProperty("match.us", "army:defaults,push");
+        String ours = System.getProperty("match.us", "army:defaults,push,hold");
         expansion.army.Army army = ours.startsWith("army") ? new expansion.army.Army(us, expansion.army.Army.Flags.parse(ours)) : null;
         if(!Boolean.getBoolean("match.brainarmy")) System.setProperty("xp.noarmy", "true");
         System.out.println("  our units: " + (army == null ? "the squad AI alone" : "the squad AI with the army layer: " + army.flags.toString().trim()));
@@ -201,6 +201,8 @@ public class Match{
         Set<String> allowed = new HashSet<>(blocks);
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/modules"));
         String[] stages = System.getProperty("match.stages", "stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
+        //chosen from the game as it goes (expansion.army.Muster): what to make, and how many makers, each stage
+        if(Boolean.getBoolean("match.auto")) stages = "auto,defend,auto,defend,auto,auto,auto,auto,auto,auto".split(",");
         //the other side has yards from the start (a base that came with the map) whose units can get to us: a defence first,
         //before the economy, as a player sets the first breaches down before the first fabricator (-Dmatch.early=false: not)
         String early = earlyThreat(us, them);
@@ -252,7 +254,7 @@ public class Match{
                 //no kind of this stage that can be made gets to the Brain's base: then the first that can be made, to hold our own
                 //(on intersect every stage was passed over, nothing was built, and the Brain's few units took the core)
                 boolean homeGuard = false;
-                String[] ways = stages[stage].split("\\|");
+                String[] ways = stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
                 for(int pass = 0; pass < 2 && plan == null; pass++){
                 homeGuard = pass == 1;
                 if(homeGuard && stages[stage].startsWith("defend")) break;
@@ -267,6 +269,7 @@ public class Match{
                     }
                     Plan p = new Plan(System.out);
                     p.gate = !Boolean.getBoolean("match.allblocks");
+                    p.widen = !"false".equals(System.getProperty("match.widen"));
                     //raided lately: what may stand anywhere goes where our turrets reach
                     //(or able to be: the other side has yards that make units)
                     if((raids.raided() || makesUnits(them)) && !"false".equals(System.getProperty("match.cover"))) p.cover = raids.cover();
@@ -298,6 +301,14 @@ public class Match{
                 if(plan != null && plan.model != null){
                     if(hand != null) before.add(hand);
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
+                    if(Boolean.getBoolean("match.order")){
+                        StringBuilder ob = new StringBuilder("  the order:");
+                        for(Machine m : plan.model.order) ob.append(" ").append(m.recipe.name);
+                        System.out.println(ob);
+                        StringBuilder eb = new StringBuilder("  counted on, standing:");
+                        for(Machine m : plan.field.existing) eb.append(" ").append(m.recipe.name);
+                        System.out.println(eb);
+                    }
                     //its own jobs before putting back what raiders broke, every stage (a stage put off till every raid's damage
                     //is mended never gets its factory up: lake, raided from the second minute on, made no unit in twenty)
                     hand.urgent = true;
@@ -688,6 +699,60 @@ public class Match{
             if(have > before) out.put(item.name, (have - before) / 60f);
         }
         return out;
+    }
+
+    /**
+     * The ways for an "auto" stage, best first: the kinds Muster puts forward, each weighed by the model alone (nothing laid
+     * out): the one with the most strength out by the horizon (Muster.horizon), its first unit counted in; the rest after it, as the
+     * ways to fall back on. What the stronger ones lacked is what the army goes to open up.
+     */
+    static String[] autoWays(int f, int stage, List<String> blocks, Set<String> allowed, List<Design> library, expansion.army.Army army){
+        List<expansion.army.Muster.Aim> aims = expansion.army.Muster.aims(us, them, blocks);
+        System.out.println("  stage " + (stage + 1) + ": kinds to weigh " + aims);
+        String chosen = null;
+        float bestValue = 0f;
+        Set<String> lacking = new TreeSet<>();
+        //each weighed by what it has out by the horizon: an early kind that is weak, a strong one that comes late, alike
+        float strongestHad = 0f;
+        for(int i = 0; i < aims.size(); i++){
+            var aim = aims.get(i);
+            //(weaker than one already found that has something out: not worth weighing)
+            if(chosen != null && aim.by(expansion.army.Muster.horizon, 0f) <= bestValue) continue;
+            Plan p = new Plan(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
+            p.gate = true;
+            p.widen = true;
+            p.dry = true;
+            Plan dry = null;
+            try{
+                dry = p.make(us, blocks, allowed, library, aim.type.name, aim.makers, null);
+            }catch(Throwable t){
+                dry = null;
+            }
+            float first = dry == null ? Float.POSITIVE_INFINITY : dry.model.first[dry.unit];
+            float value = Float.isInfinite(first) ? 0f : aim.by(expansion.army.Muster.horizon, first);
+            System.out.println(String.format("    %s: %s", aim, Float.isInfinite(first) ? "can't be had" + (p.lacking.isEmpty() ? "" : ", lacking " + p.lacking) : String.format("first at %s, worth %.3g by %s", Plan.time(first), value, Plan.time(expansion.army.Muster.horizon))));
+            if(Float.isInfinite(first)){
+                //(the step up that lacks least is the one to open up for, if stronger than what can be had)
+                if(aim.strength > strongestHad && !p.lacking.isEmpty() && (lacking.isEmpty() || p.lacking.size() < lacking.size())){
+                    lacking.clear();
+                    lacking.addAll(p.lacking);
+                }
+                continue;
+            }
+            strongestHad = Math.max(strongestHad, aim.strength);
+            if(value > bestValue){
+                bestValue = value;
+                chosen = aim.toString();
+            }
+        }
+        if(army != null){
+            army.push.want.clear();
+            for(String name : lacking) if(Vars.content.item(name) != null) army.push.want.add(Vars.content.item(name));
+        }
+        List<String> out = new ArrayList<>();
+        if(chosen != null) out.add(chosen);
+        for(var aim : aims) if(!aim.toString().equals(chosen)) out.add(aim.toString());
+        return out.toArray(new String[0]);
     }
 
     /** Whether what makes the stage's units is up (true for a stage that makes none). */

@@ -494,6 +494,12 @@ public final class Planner{
         List<Machine> best = rollout(plant, unit, null);
         float[] bestScore = score(best, unit);
         stages.put("rollout", bestScore);
+        //(a rough answer asked for: the first rollout, as when weighing aims against each other)
+        if(rough){
+            Timeline line = new Timeline(cat, field, best);
+            line.runToGoal(unit, limit);
+            return line;
+        }
         for(int pass = 0; pass < 6; pass++){
             List<Machine> next = rollout(plant, unit, best);
             float[] s = score(next, unit);
@@ -544,6 +550,8 @@ public final class Planner{
         return p.powerMet >= 0.999f && p.unitRate(t.built, unit) >= wantRate * 0.98f;
     }
 
+    /** Whether the first rollout is enough: no beam, no moves (for an estimate, not a plan to build). */
+    public boolean rough;
     /** How wide the beam search is; 1 or less leaves it out. */
     public int beamWidth = 16;
     /** The score after each stage of {@link #order}, for telling how much each adds. */
