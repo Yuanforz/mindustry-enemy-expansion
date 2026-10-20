@@ -39,6 +39,7 @@ public final class Hand extends mindustry.entities.units.AIController{
         this.works = works;
         this.order = order;
         watch = new Watch(works, order);
+        watch.notBuilt = i -> skipped.contains(i) || i == retrying;
         begun = new float[order.size()];
         finished = new float[order.size()];
         partsOf = new int[order.size()];

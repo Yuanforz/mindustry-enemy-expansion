@@ -87,12 +87,20 @@ public final class Watch{
         return near[0];
     }
 
+    /**
+     * Steps of the order not looked at though they come before {@code done}: put off and not built yet, or being built
+     * again (set by the hand). Else a step put off for want of silicon counted as built and lost, and the hand waited to
+     * "put it back", for the same silicon, for the rest of the game.
+     */
+    public java.util.function.IntPredicate notBuilt = i -> false;
+
     /** Looks at the jobs done so far (the first {@code done} of the order). */
     public void update(int done){
         float now = (float)(Vars.state.tick / 60.0);
         if(now < at) return;
         at = now + every;
         for(int i = 0; i < Math.min(done, order.size()); i++){
+            if(notBuilt.test(i)) continue;
             Machine m = order.get(i);
             for(Part p : layout.job(m)){
                 if(taken.contains(p)) continue;
