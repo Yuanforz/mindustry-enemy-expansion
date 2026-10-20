@@ -157,6 +157,8 @@ public final class Hand extends mindustry.entities.units.AIController{
             }
         }
         if(job == null && next < order.size()){
+            //a step put off before, that can be paid for now, goes first
+            if(retryPutOff()) return;
             Machine m = order.get(next);
             //its place not yet seen: a unit goes to have a look (the core unit sees nothing), and meanwhile it digs
             Part where = works.at.get(m);
@@ -191,6 +193,22 @@ public final class Hand extends mindustry.entities.units.AIController{
                 for(int c : need) costOf[next] += c;
                 unit.mineTile = null;
             }else{
+                //nothing coming in for it: put off, and the next step begun (an item none of our machines makes yet and the
+                //core unit can't dig: on caldera a ship fabricator ordered before the first furnace waited for silicon 200 of
+                //250 for eight minutes, while 3800 of everything else piled up and no turret went down)
+                int shortNow = shortfall(need);
+                if(saveSince[0] != next || shortNow < saveSince[2]){
+                    saveSince[0] = next;
+                    saveSince[1] = now();
+                    saveSince[2] = shortNow;
+                }else if(putOff && now() - saveSince[1] > stallTime && next + 1 < order.size()){
+                    skipped.add(next);
+                    trouble.add(String.format("#%d %s put off: %s, none of it come in for %.0f s", next + 1, m.recipe.name, shortOf(need), stallTime));
+                    pending = null;
+                    saveSince[0] = -1f;
+                    next++;
+                    return;
+                }
                 doing = String.format("saving up for #%d %s: %s", next + 1, m.recipe.name, shortOf(need));
                 dig(need);
                 return;
@@ -313,6 +331,10 @@ public final class Hand extends mindustry.entities.units.AIController{
     /** How long a job may get no further before it is put off, in seconds. */
     public static float stallTime = Float.parseFloat(System.getProperty("xp.stall", "60"));
     final float[] fogSince = {-1f, 0f};
+    /** The step being saved up for, since when, and the least the core has been short of it by since then. */
+    final float[] saveSince = {-1f, 0f, 0f};
+    /** Whether a step nothing comes in for is put off for the next (-Dxp.putoff=false: waited for however long). */
+    public static boolean putOff = !"false".equals(System.getProperty("xp.putoff"));
 
     /** Parts put off because their ground has not been seen and there was no unit to send. */
     public final Seq<Part> deferred = new Seq<>();
@@ -557,6 +579,39 @@ public final class Hand extends mindustry.entities.units.AIController{
             if(have < need[k]) b.append(works.cat.get(k).name).append(' ').append(have).append('/').append(need[k]).append(' ');
         }
         return b.length() == 0 ? "paid for" : b.toString().trim();
+    }
+
+    /** How much of a cost the core is short of, every item together. */
+    int shortfall(int[] need){
+        var core = unit.team.core();
+        if(core == null) return Integer.MAX_VALUE;
+        int sum = 0;
+        for(int k = 0; k < need.length; k++){
+            if(need[k] > 0) sum += Math.max(0, need[k] - core.items.get(Vars.content.item(works.cat.get(k).name)));
+        }
+        return sum;
+    }
+
+    /** Begins the first step put off before whose ground is seen and that can be paid for now; whether it did. */
+    boolean retryPutOff(){
+        for(int i = 0; i < skipped.size; i++){
+            int idx = skipped.get(i);
+            Machine m = order.get(idx);
+            if(!affordable(m.cost)) continue;
+            Part where = works.at.get(m);
+            if(where != null && unseen(where) != null) continue;
+            Seq<Part> parts = works.job(m);
+            if(!affordable(cost(parts))) continue;
+            skipped.removeIndex(i);
+            begun[idx] = now();
+            partsOf[idx] = parts.size;
+            retrying = idx;
+            job = parts;
+            machine = m;
+            unit.mineTile = null;
+            return true;
+        }
+        return false;
     }
 
     int[] cost(Seq<Part> parts){
