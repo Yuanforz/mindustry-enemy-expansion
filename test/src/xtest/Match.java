@@ -334,7 +334,11 @@ public class Match{
                     }
                 }else if(a.stage != null && (a.by != lastTaskBy || f - lastTaskAt > 4 * 3600)) task = a;
             }
-            if((hand == null || over) && (again || task != null || command != null || stage + 1 < stages.length) && us.core() != null){
+            //(the command layer weighs again no sooner than a minute after the last time, as a receding horizon re-plans at
+            //its own pace: a stage with nothing left to build is over at once, and onset was weighed four thousand times)
+            boolean commandWaits = command != null && f - lastDecisionAt < 60 * 60;
+            if((hand == null || over) && !commandWaits && (again || task != null || command != null || stage + 1 < stages.length) && us.core() != null){
+                if(command != null) lastDecisionAt = f;
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 if(task != null){
                     lastTaskBy = task.by;
@@ -948,6 +952,8 @@ public class Match{
         for(Building b : me.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t && t.hasAmmo() && b.within(home, 12 * Vars.tilesize)) return true;
         return false;
     }
+    /** When the command layer last weighed. */
+    static int lastDecisionAt = -100000;
     /** The model of the stage under way, for telling whether the stage is behind it. */
     static Timeline stageModel;
 

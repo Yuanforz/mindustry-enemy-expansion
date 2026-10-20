@@ -82,7 +82,14 @@ public class EconRun{
 
         //the sector as the campaign lands on it
         Vars.logic.reset();
-        SaveIO.load(new Fi(args[1]));
+        //(gen:seed: a map of the game's generator, as Match makes it, with one core a side; the other side's core and all it has taken off)
+        if(args[1].startsWith("gen:")){
+            if(Wild.make(Integer.parseInt(args[1].substring(4)), "plain") == null){
+                System.out.println("BENCH " + args[1] + " | failed: no map");
+                System.exit(0);
+            }
+            Vars.state.rules.defaultTeam.rules().blockHealthMultiplier = 1f;
+        }else SaveIO.load(new Fi(args[1]));
         Rules rules = Vars.state.rules;
         Planets.erekir.applyRules(rules, false);
         Team me = rules.defaultTeam, enemy = rules.waveTeam;
@@ -135,7 +142,7 @@ public class EconRun{
         //the plan
         String libraryDirs = System.getProperty("xp.modules", "blueprints/own,blueprints/modules");
         Plan plan = new Plan(System.out);
-        plan.label = new Fi(args[1]).nameWithoutExtension() + ": ";
+        plan.label = (args[1].startsWith("gen:") ? args[1] : new Fi(args[1]).nameWithoutExtension()) + ": ";
         plan.make(me, blocks, allowed, Plan.library(libraryDirs), unitName, machines, income);
         Catalog cat = plan.cat;
         Field field = plan.field;
@@ -149,7 +156,7 @@ public class EconRun{
         Intent intent = works.intent();
         Intent.current = intent;
         hand.intent = intent;
-        String mapName = new Fi(args[1]).nameWithoutExtension();
+        String mapName = args[1].startsWith("gen:") ? args[1].replace(':', '-') : new Fi(args[1]).nameWithoutExtension();
         IntentImage.write(intent, me, field.coreX, field.coreY, new java.io.File("build/intent/" + mapName + "-plan.png"));
         //a close-up asked for: -Dxp.look=x,y
         String look = System.getProperty("xp.look");

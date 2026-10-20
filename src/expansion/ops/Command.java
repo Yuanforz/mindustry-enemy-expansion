@@ -142,6 +142,9 @@ public final class Command{
     public Forecast forecast;
     public final StringBuilder log = new StringBuilder();
     long dpAt;
+    /** When the other side was first weighed against, and how many buildings it had then. */
+    float foeFirstSeen = -1f;
+    int foeFirstCount;
 
     public Command(Team me, Team foe){
         this.me = me;
@@ -250,8 +253,19 @@ public final class Command{
         }else if(dp != null) log.append("  command: the defence planner has nothing: ").append(String.join("; ", dp.notes)).append('\n');
 
         long d1 = System.nanoTime();
+        //whether the other side builds, from what is seen of it: its buildings counted at each weighing; one whose count has
+        //grown builds (the mirror scenarios stay), one seen for a minute or more that has not does not (the game's own
+        //enemy on a sector plays the base it was given); before there is anything to go by, both
+        float seen = (float)(Vars.state.tick / 60.0);
+        int count = foe.data().buildings.size;
+        if(foeFirstSeen < 0f){
+            foeFirstSeen = seen;
+            foeFirstCount = count;
+        }
+        boolean builds = count > foeFirstCount + 3 || seen - foeFirstSeen < 60f;
         List<Scenario> scenarios = new ArrayList<>();
-        for(float lag : lags) for(boolean m : new boolean[]{false, true}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s));
+        for(float lag : lags) for(boolean m : builds ? new boolean[]{false, true} : new boolean[]{false}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s));
+        if(!builds) log.append("  command: the other side has not built since it was first seen: no mirror\n");
         Force foeGuard = foeGuard();
         //(the mirror, the defences and each stage's units under each lag: worked out once)
         //(what our fastest stage adds over what our standing makers turn out anyway: what the other side could add, as fast;
@@ -490,6 +504,8 @@ public final class Command{
         public float lost = Float.POSITIVE_INFINITY, won = Float.POSITIVE_INFINITY;
         /** What we have in the field at the end. */
         public Force army = new Force();
+        /** Whether what was taken was all the other side's cores (else those our units could get to). */
+        public boolean whole = true;
         public int fights;
 
         @Override
@@ -520,7 +536,16 @@ public final class Command{
         Force theirs = new Force(), siege = null, away = null, guard = foeGuard.copy();
         float awayAt = 0f, walk = walkTime(), foeCoreHp = 0f;
         boolean engaged = false;
-        for(CoreBlock.CoreBuild c : foe.cores()) foeCoreHp += c.health;
+        //(only the cores our units can get to: on a sector whose map opens as its tasks are done, those beyond the edge are
+        //not taken, and taking the rest is a part won, not the whole)
+        int cores = 0, reachable = 0;
+        for(CoreBlock.CoreBuild c : foe.cores()){
+            cores++;
+            if(!Vars.world.isInMapArea(c.tileX(), c.tileY())) continue;
+            reachable++;
+            foeCoreHp += c.health;
+        }
+        boolean whole = reachable == cores;
         float scale = posture.foeScale;
         Force lastCurve = new Force(), lastArmy = new Force(), lastWaves = new Force(), lastMirror = new Force();
         for(int i = 0; i <= forecast.steps; i++){
@@ -583,8 +608,9 @@ public final class Command{
                 }
                 if(away != null){
                     foeCoreHp -= away.dps * siegeEfficiency * step;
-                    if(foeCoreHp <= 0f){
+                    if(foeCoreHp <= 0f && reachable > 0){
                         o.won = t;
+                        o.whole = whole;
                         //(and what the economy goes on turning out to the horizon: of two ways that win alike, the stronger after)
                         o.army = away.add(units).add(minus(curve[curve.length - 1], now));
                         return o;
@@ -623,7 +649,7 @@ public final class Command{
     /** The objective for one game, discounted in time: losing the core worst, sooner worse; their cores taken best, sooner better; else army strength. */
     float score(Outcome o){
         if(!Float.isInfinite(o.lost)) return -1000f * d(o.lost);
-        if(!Float.isInfinite(o.won)) return 300f * d(o.won) + posture.perTenfold * log(o.army);
+        if(!Float.isInfinite(o.won)) return (o.whole ? 300f : 100f) * d(o.won) + posture.perTenfold * log(o.army);
         return posture.perTenfold * log(o.army) * d(horizon);
     }
 
