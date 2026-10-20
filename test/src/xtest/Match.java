@@ -243,7 +243,7 @@ public class Match{
         //the other side has yards from the start (a base that came with the map) whose units can get to us: a defence first,
         //before the economy, as a player sets the first breaches down before the first fabricator (-Dmatch.early=false: not)
         String early = earlyThreat(us, them);
-        if(early != null && System.getProperty("match.early", "true").equals("true") && !stages[0].startsWith("defend")){
+        if(early != null && stages.length > 0 && System.getProperty("match.early", "true").equals("true") && !stages[0].startsWith("defend")){
             String[] more = new String[stages.length + 1];
             more[0] = "defend";
             System.arraycopy(stages, 0, more, 1, stages.length);
