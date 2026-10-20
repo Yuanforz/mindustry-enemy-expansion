@@ -368,8 +368,13 @@ public class Match{
                 else if(command != null){
                     int fNow = f;
                     expansion.ops.Command.Candidate best = command.decide(blocks, allowed, library, new expansion.ops.Command.Defences(){
-                        public expansion.defense.Planner.Plan plan(){
-                            return defence(us, them, sector, fNow / 60f, "weighing a defence: ");
+                        public expansion.defense.Planner.Plan plan(int modules){
+                            fixedModules = modules;
+                            try{
+                                return defence(us, them, sector, fNow / 60f, "weighing a defence of " + modules + ": ");
+                            }finally{
+                                fixedModules = 0;
+                            }
                         }
 
                         public Collection<String> feedable(){
@@ -424,9 +429,14 @@ public class Match{
                     try{
                         if(st[0].equals("defend")){
                             lastDefenceAt = f;
-                            expansion.defense.Planner.Plan dp = defence(us, them, sector, f / 60f, p.label);
                             //(as many modules as the command layer weighed)
-                            if(command != null) p.maxModules = defendModules;
+                            if(command != null) fixedModules = defendModules;
+                            expansion.defense.Planner.Plan dp;
+                            try{
+                                dp = defence(us, them, sector, f / 60f, p.label);
+                            }finally{
+                                fixedModules = 0;
+                            }
                             //(it pays for itself out of what the core holds and brings in; built of what is near at hand; the one
                             //put first for a threat from the start is its first module only)
                             p.income = income(us, f);
@@ -936,6 +946,7 @@ public class Match{
             int budget = Math.max(floor.getOrDefault(item.name, 0), have + Math.round(income * budgetMinutes));
             if(budget > 0) ask.budget.put(item.name, budget);
         }
+        ask.fixedModules = fixedModules;
         ask.modules = expansion.defense.Battery.parse(new Fi("blueprints/defense/modules.txt").readString());
         ask.capacity = expansion.defense.Capacity.parse(new Fi("blueprints/defense/capacity.txt").readString());
         return ask;
@@ -967,6 +978,8 @@ public class Match{
         return seconds > planned * 1.5f + 60f;
     }
 
+    /** So many modules at each place for the defence planned now (0: as many as hold what comes). */
+    static int fixedModules;
     /** How many modules of the defence the command layer chose (Integer.MAX_VALUE: all). */
     static int defendModules = Integer.MAX_VALUE;
     static float pressureEdge = Float.parseFloat(System.getProperty("match.pressure", "1.5"));

@@ -70,8 +70,8 @@ public final class Command{
 
     /** The defence planner, as the game stands now, and what our turrets can be fed with. */
     public interface Defences{
-        /** The defence planner's plan for now (its own sizing against what is coming), or null. */
-        expansion.defense.Planner.Plan plan();
+        /** The defence planner's plan for now, of so many modules at each place it defends (the kind strongest for its cost), or null. */
+        expansion.defense.Planner.Plan plan(int modules);
 
         Collection<String> feedable();
     }
@@ -99,7 +99,7 @@ public final class Command{
 
         @Override
         public String toString(){
-            String d = modules == 0 ? "" : String.format(" after a defence of %s (%d turrets, all up by %s)", modules == Integer.MAX_VALUE ? "all modules" : modules + " module(s)", turrets, Float.isInfinite(defenceDone) ? "never" : Plan.time(defenceDone));
+            String d = modules == 0 ? "" : String.format(" after a defence of %d module(s) a place (%d turrets, all up by %s)", modules, turrets, Float.isInfinite(defenceDone) ? "never" : Plan.time(defenceDone));
             return String.format("%s%s%s: score %.1f, first unit %s; at worst: %s", stage(), d, task ? " (a task)" : "", score, Float.isInfinite(firstUnit) ? "never" : Plan.time(firstUnit), outcome);
         }
     }
@@ -134,6 +134,8 @@ public final class Command{
     static final float[] sendAts = {0.5f, 1f, 2f};
     /** What doing one of the map's tasks is worth, now (discounted like the rest by when it is done; -Dops.task). */
     public static float taskWorth = Float.parseFloat(System.getProperty("ops.task", "150"));
+    /** How many modules at each defended place a defence is weighed with. */
+    public static int[] defenceCounts = {1, 2, 4};
     /** How many makers a kind is weighed with, besides one. */
     public static int[] makerCounts = {2, 3, 4, 6};
     /** How many kinds of unit get more makers weighed, at most. */
@@ -218,41 +220,39 @@ public final class Command{
             }
         }
 
-        //defences of so many modules, each with the economy that pays for and feeds it, worked out by the model
         long d0 = System.nanoTime();
-        expansion.defense.Planner.Plan dp = null;
-        if(defences != null){
+        //defences of so many modules (a choice point: one, two, four), each with the economy that pays for and feeds it,
+        //worked out by the model with what comes in over time
+        List<Object[]> guards = new ArrayList<>();
+        guards.add(new Object[]{0, null, null});
+        if(defences != null) for(int k : defenceCounts){
+            expansion.defense.Planner.Plan dp;
             try{
-                dp = defences.plan();
-                dpAt = System.nanoTime();
+                dp = defences.plan(k);
             }catch(Throwable t){
                 log.append("  command: the defence planner failed: ").append(t).append('\n');
+                continue;
             }
+            if(dp == null || dp.placements.isEmpty()){
+                if(dp != null && k == defenceCounts[0]) log.append("  command: the defence planner has nothing: ").append(String.join("; ", dp.notes)).append('\n');
+                continue;
+            }
+            Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
+            p.gate = true;
+            p.dry = true;
+            p.gateDepth = 2;
+            p.income = income;
+            Plan dry = null;
+            try{
+                dry = p.defend(me, blocks, allowed, dp, defences.feedable());
+            }catch(Throwable t){
+                log.append("  command: a defence of ").append(k).append(" could not be weighed: ").append(t).append('\n');
+            }
+            if(dry != null && dry.model != null) guards.add(new Object[]{k, dry, dp});
         }
-        List<Object[]> guards = new ArrayList<>();
-        guards.add(new Object[]{0, null});
-        if(dp != null && !dp.placements.isEmpty()){
-            int modules = 0;
-            for(Placement p : dp.placements) modules = Math.max(modules, p.module + 1);
-            for(int k : new int[]{1, 2, Integer.MAX_VALUE}){
-                if(k != Integer.MAX_VALUE && k >= modules && k > 1) continue;
-                Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
-                p.gate = true;
-                p.dry = true;
-                p.maxModules = k;
-                p.gateDepth = 2;
-                p.income = income;
-                Plan dry = null;
-                try{
-                    dry = p.defend(me, blocks, allowed, dp, defences.feedable());
-                }catch(Throwable t){
-                    log.append("  command: a defence of ").append(k).append(" could not be weighed: ").append(t).append('\n');
-                }
-                if(dry != null && dry.model != null) guards.add(new Object[]{k, dry});
-            }
-        }else if(dp != null) log.append("  command: the defence planner has nothing: ").append(String.join("; ", dp.notes)).append('\n');
-
         long d1 = System.nanoTime();
+        dpAt = d1;
+
         //whether the other side builds, from what is seen of it: its buildings counted at each weighing; one whose count has
         //grown builds (the mirror scenarios stay), one seen for a minute or more that has not does not (the game's own
         //enemy on a sector plays the base it was given); before there is anything to go by, both
@@ -290,6 +290,7 @@ public final class Command{
         for(Object[] g : guards){
             int k = (Integer)g[0];
             Plan guard = (Plan)g[1];
+            expansion.defense.Planner.Plan dp = (expansion.defense.Planner.Plan)g[2];
             Map<Float, Object[]> schedules = new HashMap<>();
             if(guard != null) for(float lag : lags) schedules.put(lag, schedule(guard, dp, lag));
             for(Object[] c : stages){
@@ -335,7 +336,7 @@ public final class Command{
         }
         long p1 = System.nanoTime();
         weighed.sort((a, b) -> Float.compare(b.score, a.score));
-        log.append(String.format("  command: times: stages %.1f + %.1f s, defences %.1f s (planner %.1f s), playing %.1f s\n", (w1 - w0) / 1e9f, (w2 - w1) / 1e9f, (d1 - d0) / 1e9f, (dpAt - d0) / 1e9f, (p1 - d1) / 1e9f));
+        log.append(String.format("  command: times: stages %.1f + %.1f s, defences %.1f s, playing %.1f s\n", (w1 - w0) / 1e9f, (w2 - w1) / 1e9f, (d1 - d0) / 1e9f, (p1 - d1) / 1e9f));
         log.append(String.format("  command (%s, horizon %s, %d scenarios): theirs at our core by the horizon at most %s; %s\n", posture, Plan.time(horizon), scenarios.size(), forecast.at[forecast.steps], forecast.notes));
         for(int i = 0; i < Math.min(weighed.size(), 8); i++) log.append("    ").append(weighed.get(i)).append('\n');
         if(weighed.size() > 8) log.append("    (").append(weighed.size() - 8).append(" more)\n");

@@ -58,6 +58,8 @@ public final class Planner{
         public final Set<String> supply = new HashSet<>();
         /** What may be spent, by item; empty for no limit. */
         public final Map<String, Integer> budget = new TreeMap<>();
+        /** So many modules at each place, of the kind strongest for its cost, instead of as many as hold what comes (0: that). */
+        public int fixedModules;
         /** What each block costs, by item. */
         public Map<String, Map<String, Integer>> costs = new HashMap<>();
         public List<Battery> modules = new ArrayList<>();
@@ -562,6 +564,47 @@ public final class Planner{
      * Gives every unit to the module that holds it at the least cost, then folds a module's units into the others (or
      * gives them all to one module that holds the lot) while that is cheaper. Units nothing can hold are noted.
      */
+    /**
+     * So many modules (ask.fixedModules), of the one kind that is strongest for its cost against these units: what suits
+     * them (anti-air for flyers), with the most Lanchester strength (its turrets' damage a second times their health) for
+     * the square of its cost (so many of them are so many squared as strong, so this is the same for any count). Whether
+     * they hold the units is not asked: that is for whoever chose the count, by playing the fight forward.
+     */
+    List<Choice> chooseFixed(Map<String, Integer> units){
+        Choice best = null;
+        float bestValue = 0f;
+        for(Choice o : options()){
+            boolean fits = false;
+            for(String u : units.keySet()) if(suits(o, u)) fits = true;
+            Gun gun = o.module.gun();
+            if(!fits || gun == null) continue;
+            mindustry.world.Block b = mindustry.Vars.content.block(gun.name);
+            //(its damage a second with the best of its ammunition: the gun's own is that of what it fires, kept by ammunition)
+            float gunDps = gun.dps;
+            for(Gun.Ammo a : gun.ammo) gunDps = Math.max(gunDps, a.dps);
+            float hp = (b == null ? 0f : b.health) * o.module.guns(), dps = gunDps * o.module.guns();
+            float value = dps * hp / Math.max(1f, o.cost * o.cost);
+            if(value > bestValue){
+                bestValue = value;
+                best = o;
+            }
+        }
+        if(best == null){
+            StringBuilder why = new StringBuilder();
+            for(Choice o : options()){
+                Gun gun = o.module.gun();
+                why.append(o.module.name).append(gun == null ? " (no gun)" : "").append(' ');
+                for(String u : units.keySet()) if(suits(o, u)) why.append("suits ").append(u).append(' ');
+                why.append("; ");
+            }
+            plan.notes.add("nothing we can build suits " + units + " [options: " + why + "]");
+            return new ArrayList<>();
+        }
+        best.count = ask.fixedModules;
+        best.units.putAll(units);
+        return new ArrayList<>(List.of(best));
+    }
+
     /** Whether the place being chosen for is anti-air by the core. */
     boolean sizingAir;
 
@@ -581,6 +624,7 @@ public final class Planner{
     }
 
     List<Choice> choose(Map<String, Integer> units, boolean closed){
+        if(ask.fixedModules > 0) return chooseFixed(units);
         List<Choice> options = options();
         Map<String, Choice> owner = new TreeMap<>();
         for(var e : units.entrySet()){
