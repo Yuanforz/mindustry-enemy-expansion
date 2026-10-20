@@ -562,6 +562,54 @@ public final class Plan{
         return planner.machine(bestRecipe, best);
     }
 
+    /**
+     * The next aim on the way to a goal (a unit, a turret's post, an item), climbing the tech a step at a time the way a
+     * player does: of what the goal's maker is built of and takes, the item nothing of ours makes yet and the core does not
+     * hold enough of, the nearest to be had (the cheapest a second, by what the map and the catalog allow), as an aim of
+     * its own ("thorium:0.3"); the goal itself once there is none. Liquids are left to the goal's own plan (they are led,
+     * not stored). Null if the goal can't be made with what can be paid for here.
+     */
+    public String next(Team me, List<String> blocks, Set<String> allowed, List<Design> library, String goal){
+        Set<String> now = read(me, blocks, allowed, Integer.MAX_VALUE);
+        Recipes.modules(cat, library, now);
+        Res g = cat.byName.get(goal);
+        if(g == null) return null;
+        Chains chains = new Chains(cat, field);
+        //the goal's cheapest maker
+        Recipe maker = null;
+        float best = Float.POSITIVE_INFINITY;
+        for(Recipe r : cat.recipes){
+            if(r.unitOut != g.id && (r.unitOut >= 0 || r.out[g.id] <= 0f)) continue;
+            float c = r.totalCost();
+            for(int k = 0; k < cat.size(); k++) if(r.in[k] > 0f) c += r.in[k] * chains.cost[k];
+            if(c < best){
+                best = c;
+                maker = r;
+            }
+        }
+        if(maker == null) return null;
+        CoreBlock.CoreBuild core = me.core();
+        String next = null;
+        float nextCost = Float.POSITIVE_INFINITY;
+        for(int k = 0; k < cat.size(); k++){
+            Res r = cat.get(k);
+            if(r.kind != Res.Kind.item || k == g.id) continue;
+            boolean wanted = maker.cost[k] > 0 || maker.in[k] > 0f;
+            if(!wanted) continue;
+            boolean flowing = false;
+            for(Machine m : field.existing) if(m.out(k) > 1e-4f) flowing = true;
+            Item item = Vars.content.item(r.name);
+            boolean held = item != null && core.items.get(item) >= Math.max(maker.cost[k], 1) && maker.in[k] <= 0f;
+            if(flowing || held || field.handRate(cat, k) > 0f) continue;
+            if(Float.isInfinite(chains.cost[k])) continue;
+            if(chains.cost[k] < nextCost){
+                nextCost = chains.cost[k];
+                next = r.name;
+            }
+        }
+        return next == null ? goal : next + ":0.3";
+    }
+
     /** (debug, -Dxp.order) the model's order: each machine, when begun and done, what it costs, and what the core held at the end. */
     void dumpOrder(){
         for(int i = 0; i < model.order.size(); i++){

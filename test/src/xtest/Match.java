@@ -204,7 +204,7 @@ public class Match{
         float stageLimit = Float.parseFloat(System.getProperty("match.stagemin", "6")) * 3600f;
         String sector = expansion.defense.Tech.known(map.nameWithoutExtension()) ? map.nameWithoutExtension() : "atlas";
         expansion.defense.GameData.shapes();
-        int stage = -1;
+        int stage = -1, climbSteps = 0;
         float stageFrom = 0f;
         expansion.econ.Hand hand = null;
         //a guard put down where raiders take what we built: the stage's hand waits meanwhile
@@ -241,6 +241,25 @@ public class Match{
                 //(on intersect every stage was passed over, nothing was built, and the Brain's few units took the core)
                 boolean homeGuard = false;
                 String[] ways = stages[stage].split("\\|");
+                //"climb:conquer": a step at a time towards the goal, each step the nearest of what its maker needs that nothing
+                //of ours makes yet (Plan.next), the goal itself last; the stage is taken again till then (at most 10 steps)
+                boolean climbing = false;
+                if(stages[stage].startsWith("climb:")){
+                    String goal = stages[stage].substring(6);
+                    Plan probe = new Plan(System.out);
+                    probe.gate = !Boolean.getBoolean("match.allblocks");
+                    String aim = null;
+                    try{
+                        aim = probe.next(us, blocks, allowed, library, goal);
+                    }catch(Throwable t){
+                        System.out.println("  stage " + (stage + 1) + ": no way up to " + goal + ": " + t);
+                    }
+                    climbing = aim != null && !aim.equals(goal) && climbSteps < 10;
+                    if(climbing) climbSteps++;
+                    else climbSteps = 0;
+                    System.out.println("  stage " + (stage + 1) + ": climbing to " + goal + ", " + (aim == null ? "no way there here" : climbing ? "next " + aim : "now the goal"));
+                    ways = aim == null ? new String[0] : new String[]{climbing ? aim : goal + ":1"};
+                }
                 for(int pass = 0; pass < 2 && plan == null; pass++){
                 homeGuard = pass == 1;
                 if(homeGuard && stages[stage].startsWith("defend")) break;
@@ -276,6 +295,8 @@ public class Match{
                 }
                 }
                 planSeconds += (System.nanoTime() - p0) / 1e9f;
+                //(a step of a climb: the same stage again once this is up)
+                if(climbing && plan != null) stage--;
                 System.out.println(String.format("  stage %d planned in %.1f s (wall)", stage + 1, (System.nanoTime() - p0) / 1e9f));
                 if(Boolean.getBoolean("xp.time")) System.out.print(expansion.econ.Took.report());
                 if(plan != null && plan.model != null){
@@ -437,6 +458,24 @@ public class Match{
             StringBuilder held = new StringBuilder("  the core holds:");
             if(us.core() != null) for(Item item : Vars.content.items()) if(us.core().items.get(item) > 0) held.append(' ').append(item.name).append('=').append(us.core().items.get(item));
             System.out.println(held);
+            //what each unit maker and each turret that can't fire is short of
+            for(Building b : us.data().buildings){
+                boolean maker = b.block instanceof mindustry.world.blocks.units.UnitFactory || b.block instanceof mindustry.world.blocks.units.Reconstructor
+                    || b.block instanceof mindustry.world.blocks.units.UnitAssembler;
+                boolean dry = b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild tb2 && !(tb2.hasAmmo() && tb2.efficiency > 0f);
+                if(!maker && !dry) continue;
+                StringBuilder s = new StringBuilder(String.format("  %s at %d,%d: working %.2f, power %.2f;", b.block.name, b.tileX(), b.tileY(), b.efficiency, b.power == null ? 1f : b.power.status));
+                if(b.items != null) b.items.each((item, n) -> s.append(' ').append(item.name).append('=').append(n));
+                if(b.liquids != null) b.liquids.each((liquid, n) -> s.append(' ').append(liquid.name).append('=').append(String.format("%.1f", n)));
+                if(b instanceof mindustry.world.blocks.payloads.PayloadBlock.PayloadBlockBuild<?> pb){
+                    s.append(" payload ").append(pb.payload == null ? "none" : pb.payload.content().name);
+                    Tile ahead = b.tile.nearby(arc.math.geom.Geometry.d4x(b.rotation) * (b.block.size / 2 + 1), arc.math.geom.Geometry.d4y(b.rotation) * (b.block.size / 2 + 1));
+                    s.append(" facing ").append(b.rotation).append(" onto ").append(ahead == null ? "the edge" : ahead.block().name + (ahead.solid() ? " (solid)" : ""));
+                }
+                if(b instanceof mindustry.world.blocks.units.UnitAssembler.UnitAssemblerBuild ab) s.append(" parts ").append(ab.blocks);
+                if(b instanceof mindustry.world.blocks.heat.HeatConsumer hc) s.append(String.format(" heat %.0f", hc.heatRequirement()));
+                System.out.println(s);
+            }
         }
         if(hand != null) for(String tr : hand.trouble) System.out.println("  could not put down: " + tr);
         if(hand != null && hand.job != null) for(var p : hand.job){
