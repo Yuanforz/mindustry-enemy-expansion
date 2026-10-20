@@ -88,6 +88,37 @@ in beryllium -2 -2 1
 ?beryllium-wall-large 1 6
 ?beryllium-wall-large -1 6
 
+# 三炮一组，铍弹，一条导管经分流器依次喂三座，中间加水，外侧铍墙（炮塔防守打法用）。
+# Three breaches in a row, fed with beryllium by one duct through a router by each, water between them, walls outside.
+[breach-trio]
+breach 0 0 0
+breach 0 4 0
+breach 0 8 0
+boost water 0 2
+boost water 0 6
+duct -2 -1 1
+duct-router -2 0 1
+duct -2 1 1
+duct -2 2 1
+duct -2 3 1
+duct-router -2 4 1
+duct -2 5 1
+duct -2 6 1
+duct -2 7 1
+duct -2 8 0
+in beryllium -2 -2 1
+?beryllium-wall-large 3 -3
+?beryllium-wall-large 3 -1
+?beryllium-wall-large 3 1
+?beryllium-wall-large 3 3
+?beryllium-wall-large 3 5
+?beryllium-wall-large 3 7
+?beryllium-wall-large 3 9
+?beryllium-wall-large 1 -3
+?beryllium-wall-large -1 -3
+?beryllium-wall-large 1 10
+?beryllium-wall-large -1 10
+
 # 单炮，围在一圈 U 形的单格墙里，留一格间隙（Onset 的摆法）。场地窄的时候用。
 [breach-pen]
 breach 0 0 0

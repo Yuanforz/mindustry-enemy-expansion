@@ -77,6 +77,19 @@ public class Plumbing{
     public static Seq<Tap> gives(Seq<Part> parts){
         Seq<Tap> out = new Seq<>();
         for(Part part : parts){
+            //one that goes on while any of what it gives off has room, with some of it taken by touch, slows to what is taken: what
+            //else it gives off needs carrying away no more than what it is taken at. (an electrolyzer against a refabricator makes
+            //what the refabricator takes, its ozone standing; laid with a conduit for the rest as well, the works found no room)
+            if(part.block instanceof mindustry.world.blocks.production.GenericCrafter crafter && crafter.dumpExtraLiquid && System.getProperty("xp.pipeall") == null){
+                boolean taken = false;
+                for(Flow gives : Rates.liquidGives(part.block)){
+                    for(Part other : parts){
+                        if(other == part || !hands(part, gives, other)) continue;
+                        for(Flow need : Rates.liquidNeeds(other.block)) if(need.liquid == gives.liquid) taken = true;
+                    }
+                }
+                if(taken) continue;
+            }
             for(Flow gives : Rates.liquidGives(part.block)){
                 float left = gives.rate;
                 for(Part other : parts){

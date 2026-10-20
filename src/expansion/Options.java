@@ -70,7 +70,12 @@ public class Options{
      * Whether it adds sources by the recipes of what it has: what its yards, factories and turrets take a second
      * against what its sources bring in, instead of by how full its cores are.
      */
-    ratios = flag("economy", "ratios", true).strong(true);
+    ratios = flag("economy", "ratios", true).strong(true),
+    /**
+     * Whether it opens the way the economy planner works it out: from a bare core, the fastest order to a first unit, laid out
+     * as a whole and built by its core's unit; then the base is its own to grow as usual.
+     */
+    plannedOpening = flag("economy", "planned-opening", true).strong(true);
     public static final Num
     minesPerCore = num("economy", "mines-per-core", 0, 0, 8, 1, "cap").strong(0),
     rowLength = num("economy", "row-length", 6, 1, 6, 1, "").strong(6),

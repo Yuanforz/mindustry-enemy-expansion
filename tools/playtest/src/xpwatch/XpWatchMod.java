@@ -30,7 +30,12 @@ public class XpWatchMod extends Mod{
             return;
         }
         if(play){
-            //the player's own settings are left as they are
+            //the player's own settings are left as they are, but for the enemy at its strongest when asked for (XP_STRONGEST=1):
+            //no minutes of grace, and everything that makes it stronger within the rules that keep it fair
+            if(System.getProperty("xp.strongest") != null){
+                Core.settings.put("expansion-strongest", true);
+                Core.settings.put("expansion-grace", 0);
+            }
             Events.on(ClientLoadEvent.class, e -> Core.app.post(() -> { stage = 0; frames = 0; }));
             Events.run(Trigger.update, this::step);
             return;
