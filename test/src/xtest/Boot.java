@@ -82,7 +82,10 @@ public class Boot{
         Vars.netServer = new NetServer();
         Vars.content.init();
         //the game starts its path-finding thread on every map; where that is to be done a step a frame, it is stopped again
-        arc.Events.on(mindustry.game.EventType.WorldLoadEvent.class, e -> holdPathThread());
+        arc.Events.on(mindustry.game.EventType.WorldLoadEvent.class, e -> {
+            holdPathThread();
+            holdFogThreads();
+        });
         expansion.Clock.virtual = Boolean.getBoolean("xp.virtual");
     }
 
@@ -136,6 +139,51 @@ public class Boot{
         }
     }
 
+    /**
+     * Whether what each side has seen under the fog is worked out on the main thread, every frame, instead of on two threads
+     * of the game's own. On those, how far it has got when the mod asks what it has seen depends on how busy the machine is,
+     * as path-finding did: the same build lost five of sixteen openings of the third sector in a suite run alongside other
+     * runs, and none of twenty-four by itself.
+     */
+    public static boolean syncFog = Boolean.getBoolean("xp.syncfog");
+    private static java.lang.reflect.Method fogStatic, fogDynamic;
+    private static java.lang.reflect.Field fogStaticThread, fogDynamicThread;
+    private static final arc.struct.Bits fogCleared = new arc.struct.Bits(256);
+
+    /** Puts idle threads where the game keeps its fog threads, so that it never starts its own. */
+    static void holdFogThreads(){
+        if(!syncFog) return;
+        try{
+            if(fogStatic == null){
+                Class<?> type = mindustry.game.FogControl.class;
+                fogStatic = type.getDeclaredMethod("updateStatic");
+                fogDynamic = type.getDeclaredMethod("updateDynamic", arc.struct.Bits.class);
+                fogStaticThread = type.getDeclaredField("staticFogThread");
+                fogDynamicThread = type.getDeclaredField("dynamicFogThread");
+                for(java.lang.reflect.AccessibleObject member : new java.lang.reflect.AccessibleObject[]{fogStatic, fogDynamic, fogStaticThread, fogDynamicThread}) member.setAccessible(true);
+            }
+            Object fog = Vars.fogControl;
+            if(fog == null) return;
+            Thread running = (Thread)fogStaticThread.get(fog);
+            if(running != null && running.isAlive()) throw new IllegalStateException("the game's fog thread is running already");
+            if(fogStaticThread.get(fog) == null) fogStaticThread.set(fog, new Thread("held static fog"));
+            if(fogDynamicThread.get(fog) == null) fogDynamicThread.set(fog, new Thread("held dynamic fog"));
+        }catch(Exception e){
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** What the fog threads would have done, done here, after the frame. */
+    static void stepFog(){
+        if(!syncFog || Vars.fogControl == null || !Vars.state.isPlaying() || !Vars.state.rules.fog) return;
+        try{
+            if(Vars.state.rules.staticFog) fogStatic.invoke(Vars.fogControl);
+            fogDynamic.invoke(Vars.fogControl, fogCleared);
+        }catch(Exception e){
+            throw new RuntimeException(e);
+        }
+    }
+
     public static void frames(int count){
         for(int i = 0; i < count; i++){
             graphics.frame++;
@@ -154,6 +202,7 @@ public class Boot{
                 Vars.logic.update();
                 Vars.asyncCore.end();
             }
+            stepFog();
             long took = System.nanoTime() - start - checking, mod = (long)(modTime.get() * 1e6f);
             if(took > slowest){
                 slowest = took;

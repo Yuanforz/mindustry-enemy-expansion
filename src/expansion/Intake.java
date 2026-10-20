@@ -17,6 +17,9 @@ public class Intake{
         void taken(Team team, Item item, int amount);
     }
 
+    /** Others told of the same, besides the listener the cores were made with: a test that has a second mod's brain play the other side. */
+    public static final arc.struct.Seq<Listener> also = new arc.struct.Seq<>();
+
     /** Has to run before any world is loaded: cores that already exist keep the building they were made with. */
     public static void install(Listener listener){
         for(Block block : content.blocks()){
@@ -45,19 +48,26 @@ public class Intake{
         @Override
         public void handleItem(Building source, Item item){
             super.handleItem(source, item);
-            if(kept(item)) listener.arrived(team, item, 1, true);
+            if(kept(item)){
+                listener.arrived(team, item, 1, true);
+                for(Listener other : also) other.arrived(team, item, 1, true);
+            }
         }
 
         @Override
         public void handleStack(Item item, int amount, Teamc source){
             super.handleStack(item, amount, source);
-            if(amount > 0 && kept(item)) listener.arrived(team, item, amount, false);
+            if(amount > 0 && kept(item)){
+                listener.arrived(team, item, amount, false);
+                for(Listener other : also) other.arrived(team, item, amount, false);
+            }
         }
 
         @Override
         public void itemTaken(Item item){
             super.itemTaken(item);
             listener.taken(team, item, 1);
+            for(Listener other : also) other.taken(team, item, 1);
         }
     }
 }

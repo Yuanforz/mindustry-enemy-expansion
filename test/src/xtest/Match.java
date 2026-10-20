@@ -747,9 +747,9 @@ public class Match{
         }
         int ox = ours.tileX(), oy = ours.tileY(), tx = theirs.tileX(), ty = theirs.tileY();
         Block coreBlock = ours.block;
-        Seq<Building> all = new Seq<>();
-        for(Building b : Groups.build) if(b.team == us || b.team == them) all.add(b);
-        for(Building b : all) if(b.tile != null && b.tile.build == b) b.tile.remove();
+        //(every tile with a building of either side's cleared: taken off one by one, some stood, and the Brain, which opens as
+        //planned only from a bare core, did not)
+        for(Tile tile : Vars.world.tiles) if(tile.build != null && (tile.team() == us || tile.team() == them)) tile.setBlock(Blocks.air);
         Vars.world.tile(ox, oy).setNet(coreBlock, us, 0);
         Vars.world.tile(tx, ty).setNet(coreBlock, them, 0);
         for(Unit u : Groups.unit.copy(new Seq<>())) if(u.team == us || u.team == them) u.remove();

@@ -104,8 +104,11 @@ public final class Plan{
         Object[] best = null;
         for(int d : tries){
             if(!model(me, blocks, allowed, library, unitName, machines, income, d)) continue;
+            //(one that gets the whole plan up before one that never does, however soon its first unit; then the earliest first
+            //unit, then the earliest end)
             float first = model.first[unit], t = model.t;
-            if(best == null || first < (Float)best[5] - 0.5f || Math.abs(first - (Float)best[5]) <= 0.5f && t < (Float)best[6] - 0.5f){
+            boolean ends = t < planner.limit - 1f, bestEnds = best != null && (Float)best[6] < planner.limit - 1f;
+            if(best == null || ends && !bestEnds || ends == bestEnds && (first < (Float)best[5] - 0.5f || Math.abs(first - (Float)best[5]) <= 0.5f && t < (Float)best[6] - 0.5f)){
                 best = new Object[]{cat, field, planner, model, allowedNow, first, t, d, wanted};
             }
         }
