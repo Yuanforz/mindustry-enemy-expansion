@@ -154,6 +154,8 @@ public class Match{
         Set<String> allowed = new HashSet<>(blocks);
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/modules"));
         String[] stages = System.getProperty("match.stages", "stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
+        //chosen from the game as it goes (expansion.army.Muster): what to make, and how many makers, each stage
+        if(Boolean.getBoolean("match.auto")) stages = "auto,defend,auto,defend,auto,auto,auto,auto,auto,auto".split(",");
         //a stage not all up after this long is left as it is, and the next begun
         float stageLimit = Float.parseFloat(System.getProperty("match.stagemin", "6")) * 3600f;
         String sector = expansion.defense.Tech.known(map.nameWithoutExtension()) ? map.nameWithoutExtension() : "atlas";
@@ -189,7 +191,7 @@ public class Match{
                 //no kind of this stage that can be made gets to the Brain's base: then the first that can be made, to hold our own
                 //(on intersect every stage was passed over, nothing was built, and the Brain's few units took the core)
                 boolean homeGuard = false;
-                String[] ways = stages[stage].split("\\|");
+                String[] ways = stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
                 for(int pass = 0; pass < 2 && plan == null; pass++){
                 homeGuard = pass == 1;
                 if(homeGuard && stages[stage].startsWith("defend")) break;
@@ -204,6 +206,7 @@ public class Match{
                     }
                     Plan p = new Plan(System.out);
                     p.gate = !Boolean.getBoolean("match.allblocks");
+                    p.widen = true;
                     p.label = "stage " + (stage + 1) + " at " + Plan.time(f / 60f) + ": ";
                     try{
                         if(st[0].equals("defend")){
@@ -227,6 +230,14 @@ public class Match{
                 if(plan != null && plan.model != null){
                     if(hand != null) before.add(hand);
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
+                    if(Boolean.getBoolean("match.order")){
+                        StringBuilder ob = new StringBuilder("  the order:");
+                        for(Machine m : plan.model.order) ob.append(" ").append(m.recipe.name);
+                        System.out.println(ob);
+                        StringBuilder eb = new StringBuilder("  counted on, standing:");
+                        for(Machine m : plan.field.existing) eb.append(" ").append(m.recipe.name);
+                        System.out.println(eb);
+                    }
                     //its own jobs before putting back what raiders broke, every stage (a stage put off till every raid's damage
                     //is mended never gets its factory up: lake, raided from the second minute on, made no unit in twenty)
                     hand.urgent = true;
@@ -408,6 +419,57 @@ public class Match{
         System.out.println(String.format("######## %sthe defence planner (tech of %s, fed with %s, budget %s) against %s: %d placements in %.0f ms", label, sector, ask.supply, ask.budget, units, plan.placements.size(), (System.nanoTime() - t0) / 1e6));
         System.out.print(plan.describe());
         return plan;
+    }
+
+    /**
+     * The ways for an "auto" stage, best first: the kinds Muster puts forward, each weighed by the model alone (nothing laid
+     * out): the strongest whose first unit the model has inside six minutes, else the soonest; the rest after it, as the
+     * ways to fall back on. What the stronger ones lacked is what the army goes to open up.
+     */
+    static String[] autoWays(int f, int stage, List<String> blocks, Set<String> allowed, List<Design> library, expansion.army.Army army){
+        List<expansion.army.Muster.Aim> aims = expansion.army.Muster.aims(us, them, blocks);
+        System.out.println("  stage " + (stage + 1) + ": kinds to weigh " + aims);
+        String chosen = null;
+        float soonest = Float.MAX_VALUE;
+        String soonestWay = null;
+        Set<String> lacking = new TreeSet<>();
+        for(int i = 0; i < aims.size() && chosen == null; i++){
+            var aim = aims.get(i);
+            Plan p = new Plan(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
+            p.gate = true;
+            p.widen = true;
+            p.dry = true;
+            Plan dry = null;
+            try{
+                dry = p.make(us, blocks, allowed, library, aim.type.name, aim.makers, null);
+            }catch(Throwable t){
+                dry = null;
+            }
+            float first = dry == null ? Float.POSITIVE_INFINITY : dry.model.first[dry.unit];
+            System.out.println(String.format("    %s: %s", aim, Float.isInfinite(first) ? "can't be had" + (p.lacking.isEmpty() ? "" : ", lacking " + p.lacking) : "first at " + Plan.time(first)));
+            if(Float.isInfinite(first)){
+                //(the step up that lacks least is the one to open up for)
+                if(chosen == null && !p.lacking.isEmpty() && (lacking.isEmpty() || p.lacking.size() < lacking.size())){
+                    lacking.clear();
+                    lacking.addAll(p.lacking);
+                }
+                continue;
+            }
+            if(chosen == null && first <= 6f * 60f) chosen = aim.toString();
+            if(first < soonest){
+                soonest = first;
+                soonestWay = aim.toString();
+            }
+        }
+        if(chosen == null) chosen = soonestWay;
+        if(army != null){
+            army.push.want.clear();
+            for(String name : lacking) if(Vars.content.item(name) != null) army.push.want.add(Vars.content.item(name));
+        }
+        List<String> out = new ArrayList<>();
+        if(chosen != null) out.add(chosen);
+        for(var aim : aims) if(!aim.toString().equals(chosen)) out.add(aim.toString());
+        return out.toArray(new String[0]);
     }
 
     /** Whether what makes the stage's units is up (true for a stage that makes none). */

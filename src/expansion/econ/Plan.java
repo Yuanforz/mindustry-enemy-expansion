@@ -38,6 +38,30 @@ public final class Plan{
      * with each sector's tech.)
      */
     public boolean gate;
+    /** How far from the core places are looked for, in tiles; with {@link #widen}, further out (up to the map's size) when the aim is short of something. */
+    public static final int baseRadius = Integer.getInteger("xp.radius", 110);
+    public int radius = baseRadius;
+    public boolean widen;
+    /**
+     * What the aim could not get here, by item name: materials of blocks it could not pay for (none of it in the core, and
+     * nothing here that makes it, mostly an ore under the other side's turrets), and what the planner found no way to make
+     * enough of. What the army may go and open up.
+     */
+    public final Set<String> lacking = new TreeSet<>();
+    /** Of the blocks the gate left out, what each lacked. */
+    final Map<String, Set<String>> unpaid = new HashMap<>();
+    /** Only the model: the plan's order and times, nothing laid out (for weighing aims against each other). */
+    public boolean dry;
+
+    /** Whether the catalog has something that makes this (a unit's factory, an item's crafter or drill). */
+    boolean makerIn(int res){
+        for(Recipe r : cat.recipes) if(r.makes(res)) return true;
+        return false;
+    }
+
+    static int maxRadius(){
+        return Math.max(baseRadius, Math.max(Vars.world.width(), Vars.world.height()) / 2);
+    }
     /** Put before the plan's heading line (a map's name, say). */
     public String label = "";
 
@@ -92,8 +116,14 @@ public final class Plan{
      */
     public Plan make(Team me, List<String> blocks, Set<String> allowed, List<Design> library, String unitName, float machines, Map<String, Float> income){
         CoreBlock.CoreBuild core = me.core();
-        long t0 = Took.start();
-        allowed = read(me, blocks, allowed);
+        Set<String> allowedIn = allowed;
+        lacking.clear();
+        long t0;
+        //(widened, with widen on, while what it is short of may lie further out: the places looked for reach out from the core
+        //only so far, and the tungsten of a map can lie just beyond)
+        for(int pass = 0; ; pass++){
+        t0 = Took.start();
+        allowed = read(me, blocks, allowedIn);
         Took.end("plan: recipes and sites", t0);
         if(income != null){
             String pruned = Sites.prune(cat, field, income, me);
@@ -106,8 +136,23 @@ public final class Plan{
         Took.end("plan: modules", t0);
         check("after the modules");
         Recipe making = null;
-        unit = cat.id(unitName);
-        if(unit < 0) return null;
+        unit = cat.byName.containsKey(unitName) ? cat.id(unitName) : -1;
+        //(not to be had at all here: what it is made with, or what makes it, can't be paid for from what lies this near)
+        if(unit < 0 || !makerIn(unit)){
+            //what the blocks that would make it lacked
+            for(Block b : Vars.content.blocks()){
+                boolean makes = b instanceof mindustry.world.blocks.units.UnitFactory f && f.plans.contains(p -> p.unit.name.equals(unitName))
+                    || b instanceof mindustry.world.blocks.units.Reconstructor rc && rc.upgrades.contains(u -> u[1].name.equals(unitName));
+                if(makes && unpaid.containsKey(b.name)) lacking.addAll(unpaid.get(b.name));
+            }
+            out.println("  " + unitName + (unit < 0 ? " is not in the catalog" : " has no maker in the catalog") + " with places out to " + radius + " tiles");
+            if(widen && pass < 2 && radius < maxRadius()){
+                radius = Math.min(maxRadius(), (int)(radius * 1.5f));
+                continue;
+            }
+            radius = baseRadius;
+            return null;
+        }
         for(Recipe r : cat.recipes) if(r.unitOut == unit) making = r;
         wanted = making != null ? machines / making.unitSeconds : machines;
         t0 = Took.start();
@@ -124,9 +169,19 @@ public final class Plan{
         model = planner.order(plant, unit);
         Took.end("plan: order", t0);
         out.println("######## " + label + unitName + " from " + machines + "; the model has it done by " + time(model.t)
-            + ", first " + unitName + " at " + time(model.first[unit]) + "; " + model.order.size() + " machines");
+            + ", first " + unitName + " at " + time(model.first[unit]) + "; " + model.order.size() + " machines" + (radius != baseRadius ? " (places looked for out to " + radius + " tiles)" : ""));
+        boolean never = Float.isInfinite(model.first[unit]) || Float.isNaN(model.first[unit]);
+        boolean short_ = planner.notes.indexOf("no way to make enough") >= 0;
+        java.util.regex.Matcher shortOf = java.util.regex.Pattern.compile("no way to make enough ([a-z-]+)").matcher(planner.notes);
+        while(shortOf.find()) if(Vars.content.item(shortOf.group(1)) != null) lacking.add(shortOf.group(1));
+        if(!(never && short_ && widen && pass < 2 && radius < maxRadius())) break;
+        radius = Math.min(maxRadius(), (int)(radius * 1.5f));
+        }
+        radius = baseRadius;
         //never got to: nothing laid out (a later stage may ask for something the map has no way to make)
         if(Float.isInfinite(model.first[unit]) || Float.isNaN(model.first[unit])) return null;
+        //(only the model asked for: what it says, without laying anything out)
+        if(dry) return this;
 
         //laid out on the map; what it all really costs goes back to the planner, which may then order it otherwise
         long l0 = System.nanoTime();
@@ -277,8 +332,9 @@ public final class Plan{
         CoreBlock.CoreBuild core = me.core();
         cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
         cat.logistics(allowed);
-        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        field = Sites.scan(cat, me, radius);
         if(!gate) return allowed;
+        unpaid.clear();
         List<String> kept = gated(blocks, me);
         if(kept.size() == blocks.size()) return allowed;
         Set<String> left = new TreeSet<>(blocks);
@@ -288,7 +344,7 @@ public final class Plan{
         fewer.removeAll(left);
         cat = Recipes.read(kept, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
         cat.logistics(fewer);
-        field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
+        field = Sites.scan(cat, me, radius);
         return fewer;
     }
 
@@ -338,6 +394,10 @@ public final class Plan{
         for(String name : blocks){
             Block b = Vars.content.block(name);
             if(b == null || b instanceof CoreBlock || payable(b, core, had)) kept.add(name);
+            else for(mindustry.type.ItemStack stack : b.requirements){
+                int k = cat.id(stack.item.name);
+                if((k < 0 || !had[k]) && core.items.get(stack.item) < stack.amount) unpaid.computeIfAbsent(name, x -> new TreeSet<>()).add(stack.item.name);
+            }
         }
         return kept;
     }

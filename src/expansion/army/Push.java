@@ -76,7 +76,11 @@ public class Push{
             if(!target.isValid() || target.dead()) destroyed++;
             target = null;
         }
-        if(!go || fighters.size < 4){
+        //held back by the allotment (the other side over all is the stronger), it may still go to open up an ore it wants:
+        //that is a fight with the few turrets over it, which the local guard weighs, not one with the whole base
+        boolean opening = !go && !want.isEmpty();
+        if(!go && opening && target != null && !openingTarget) target = null;
+        if((!go && !opening) || fighters.size < 4){
             release(fighters);
             return;
         }
@@ -92,7 +96,11 @@ public class Push{
             }
         }
         if(target == null){
-            target = pick(fighters);
+            if(opening){
+                reachable = region(fighters);
+                target = opener(strength(fighters) / Allot.edge, fighters.allMatch(Unit::isFlying));
+            }else target = pick(fighters);
+            openingTarget = opening;
             if(target == null){
                 release(fighters);
                 return;
@@ -273,8 +281,55 @@ public class Push{
         //that it can take; else nothing (the squad AI keeps them, to defend)
         float all = strength(fighters) / Allot.edge;
         boolean air = fighters.allMatch(Unit::isFlying);
+        //first what keeps the economy from what it lacks: the turrets over an ore it wants (the tungsten of a map is often
+        //all under the other side's guns, and with it every unit of the second tier)
+        Building opener = opener(all, air);
+        if(opener != null) return opener;
         Building best = nearest(first, x, y, all, air);
         return best != null ? best : nearest(then, x, y, all, air);
+    }
+
+    /** Items the economy lacks, whose ore under the other side's turrets is worth opening up. */
+    public final ObjectSet<Item> want = new ObjectSet<>();
+    /** Whether the target now was taken to open up an ore (and may be gone for while the allotment holds the rest back). */
+    boolean openingTarget;
+    public int opened;
+
+    /**
+     * Of the other side's turrets that reach a tile of an ore it wants, the nearest home that it is strong enough to take
+     * and can walk to; null if none.
+     */
+    @Nullable Building opener(float can, boolean air){
+        if(want.isEmpty()) return null;
+        Building home = army.team.core();
+        if(home == null) return null;
+        IntSeq ore = new IntSeq();
+        for(var t : Vars.world.tiles){
+            Item drop = t.block() == mindustry.content.Blocks.air ? t.drop() : t.solid() ? t.wallDrop() : null;
+            if(drop != null && want.contains(drop)) ore.add(t.pos());
+        }
+        if(ore.isEmpty()) return null;
+        Building best = null;
+        float bestDst = Float.MAX_VALUE;
+        for(Building b : Vars.indexer.getEnemy(army.team, BlockFlag.turret)){
+            if(!(b instanceof mindustry.world.blocks.defense.turrets.BaseTurret.BaseTurretBuild t) || given.get(b.pos(), -1f) > army.clock) continue;
+            float r2 = (t.range() + 2f * Vars.tilesize) * (t.range() + 2f * Vars.tilesize);
+            boolean covers = false;
+            for(int i = 0; i < ore.size && !covers; i++){
+                int pos = ore.get(i);
+                float ox = Point2.x(pos) * Vars.tilesize, oy = Point2.y(pos) * Vars.tilesize;
+                if(Mathf.dst2(ox, oy, b.x, b.y) <= r2) covers = true;
+            }
+            if(!covers || guard(b, air) > can) continue;
+            if(reachable != null && !Reach.near(reachable, b.tileX(), b.tileY(), b.block.size / 2 + 2)) continue;
+            float d = b.dst2(home);
+            if(d < bestDst){
+                bestDst = d;
+                best = b;
+            }
+        }
+        if(best != null) opened++;
+        return best;
     }
 
     @Nullable Building nearest(BlockFlag[] flags, float x, float y, float can, boolean air){
@@ -319,6 +374,6 @@ public class Push{
     }
 
     public String report(){
-        return "push targets " + targets + " destroyed " + destroyed + " given up " + given.size + " waves " + waves + (gathering ? " (gathering)" : " (wave of " + waveSize + " in)") + String.format(" [at the staging point %.3g against the guard %.3g; %d guns known, %d loaded]", lastNear, lastGuard, army.threat.guns.size, army.threat.guns.count(g -> g.loaded));
+        return (want.isEmpty() ? "" : "wants " + want.toSeq().toString(",", i -> i.name) + " (opening " + opened + "); ") + "push targets " + targets + " destroyed " + destroyed + " given up " + given.size + " waves " + waves + (gathering ? " (gathering)" : " (wave of " + waveSize + " in)") + String.format(" [at the staging point %.3g against the guard %.3g; %d guns known, %d loaded]", lastNear, lastGuard, army.threat.guns.size, army.threat.guns.count(g -> g.loaded));
     }
 }
