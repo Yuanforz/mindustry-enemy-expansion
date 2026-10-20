@@ -134,7 +134,24 @@ public final class Plan{
         //(widened, with widen on, while the aim can't be had this near: the places looked for reach out from the core only so
         //far, and the tungsten of a map can lie just beyond)
         for(int pass = 0; ; pass++){
+        //(how far each block's materials are, worked out once for this pass's tries; a try that leaves out no more than the
+        //one before it would plan the same, and is not made)
+        depthCache = null;
+        if(gate && tries.length > 1){
+            CoreBlock.CoreBuild core = me.core();
+            cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+            cat.logistics(allowed);
+            field = Sites.scan(cat, me, radius);
+            depthCache = depths(blocks, me);
+        }
+        Set<String> lastKept = null;
         for(int d : tries){
+            if(depthCache != null){
+                Set<String> kept = new HashSet<>();
+                for(String name : blocks) if(depthCache.getOrDefault(name, Integer.MAX_VALUE) <= d || (d == Integer.MAX_VALUE && depthCache.containsKey(name))) kept.add(name);
+                if(kept.equals(lastKept)) continue;
+                lastKept = kept;
+            }
             if(!model(me, blocks, allowed, library, unitName, machines, income, d)) continue;
             //(one that gets the whole plan up before one that never does, however soon its first unit; then the earliest first
             //unit, then the earliest end)
@@ -149,6 +166,7 @@ public final class Plan{
         out.println("  places looked for out to " + radius + " tiles");
         }
         radius = baseRadius;
+        depthCache = null;
         if(best == null) return null;
         cat = (Catalog)best[0];
         field = (Field)best[1];
@@ -381,17 +399,30 @@ public final class Plan{
      * and of those only the ones whose materials are at most this many steps of making away (see {@link #depths}). What
      * may be built, as it then is.
      */
+    /** How far each block's materials are, worked out once for the tries of one pass of {@link #make}; null outside one. */
+    Map<String, Integer> depthCache;
+
     Set<String> read(Team me, List<String> blocks, Set<String> allowed, int maxDepth){
         CoreBlock.CoreBuild core = me.core();
-        cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-        cat.logistics(allowed);
-        field = Sites.scan(cat, me, radius);
-        if(!gate) return allowed;
-        unpaid.clear();
-        Map<String, Integer> depth = depths(blocks, me);
+        Map<String, Integer> depth = depthCache;
+        if(depth == null){
+            cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+            cat.logistics(allowed);
+            field = Sites.scan(cat, me, radius);
+            if(!gate) return allowed;
+            unpaid.clear();
+            depth = depths(blocks, me);
+        }
         List<String> kept = new ArrayList<>();
         for(String name : blocks) if(depth.getOrDefault(name, Integer.MAX_VALUE) <= maxDepth || (maxDepth == Integer.MAX_VALUE && depth.containsKey(name))) kept.add(name);
-        if(kept.size() == blocks.size()) return allowed;
+        if(kept.size() == blocks.size()){
+            if(depthCache != null){
+                cat = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+                cat.logistics(allowed);
+                field = Sites.scan(cat, me, radius);
+            }
+            return allowed;
+        }
         Set<String> left = new TreeSet<>(blocks);
         left.removeAll(kept);
         if(maxDepth == Integer.MAX_VALUE) out.println("  not yet (what they are built of is neither in the core nor dug here): " + String.join(" ", left));

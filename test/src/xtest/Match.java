@@ -14,6 +14,7 @@ import mindustry.gen.*;
 import mindustry.entities.*;
 import mindustry.io.*;
 import mindustry.type.*;
+import mindustry.ctype.*;
 import mindustry.world.*;
 import mindustry.world.blocks.storage.*;
 
@@ -65,6 +66,9 @@ public class Match{
         //the mod's grace at the start of a map as a player has it (2 minutes by default; -Dmatch.grace=n)
         if(System.getProperty("match.grace") != null) Core.settings.put("expansion-grace", Integer.getInteger("match.grace"));
         if(!Boolean.getBoolean("match.plain")) Core.settings.put("expansion-strongest", true);
+        //the Brain as the rule-made baseline: without the opening planned by our planner, unless asked for it
+        //(-Dmatch.brainopening=true: the Brain that opens with Operations' plan, the stronger opponent)
+        if(System.getProperty("xp.pin.planned-opening") == null) System.setProperty("xp.pin.planned-opening", String.valueOf(Boolean.getBoolean("match.brainopening")));
         Core.settings.put("expansion-time-limit", Integer.getInteger("xp.timelimit", 100));
         Boot.modTime = () -> brain.lastThink;
         //nothing is researched in a fresh data dir: the Brain may build all it knows, as in the other tests
@@ -77,6 +81,15 @@ public class Match{
         String mode = args.length > 3 ? args[3] : generated ? "gen" : "sector";
         //sandbox: no other side at all; our stages climb the tech from the landing stock, and what got made is told at the end
         boolean sandbox = mode.equals("sandbox");
+        //campaign: the sector as the campaign plays it against the game's own enemy (its waves and its base as the map has
+        //them, on hard unless asked otherwise), won as the campaign counts it; -Dmatch.us=brain has the Brain play our side
+        //there, as the baseline (xtest.Campaign's way: Brain.side)
+        boolean campaign = mode.equals("campaign");
+        boolean brainSide = campaign && System.getProperty("match.us", "").equals("brain");
+        if(campaign){
+            Core.settings.put("expansion-strongest", false);
+            if(!brainSide) Core.settings.put("expansion-enabled", false);
+        }
 
         Vars.logic.reset();
         if(generated){
@@ -91,15 +104,21 @@ public class Match{
         }
         Rules rules = Vars.state.rules;
         //the campaign's difficulty (-Dmatch.difficulty=eradication: the enemy's units and buildings hardier, as a player may set it)
-        Planets.erekir.campaignRules.difficulty = Difficulty.valueOf(System.getProperty("match.difficulty", "normal"));
+        Planets.erekir.campaignRules.difficulty = Difficulty.valueOf(System.getProperty("match.difficulty", campaign ? "hard" : "normal"));
         Planets.erekir.applyRules(rules, false);
         us = rules.defaultTeam;
         them = rules.waveTeam;
         rules.fog = false;
-        rules.waves = false;
         rules.coreIncinerates = true;
         rules.infiniteResources = false;
-        rules.attackMode = true;
+        SectorPreset preset = Vars.content.getByName(ContentType.sector, map.nameWithoutExtension());
+        if(campaign){
+            //(as xtest.Campaign lands on a sector: its waves, its win wave, the time between waves for the difficulty)
+            if(preset != null && preset.captureWave > 0) rules.winWave = preset.captureWave;
+        }else{
+            rules.waves = false;
+            rules.attackMode = true;
+        }
         //a sector of waves has no base of the Brain's to play against
         //every kind of ground in reach of our core (-Dmatch.allground=true): what the map lacks is put down near the core, a
         //patch of each (a fixture for climbing the whole tech; no generated map of 200 has them all)
@@ -110,7 +129,7 @@ public class Match{
             rules.attackMode = false;
             rules.winWave = 0;
         }
-        if(!sandbox && (them.cores().isEmpty() || us.cores().isEmpty())){
+        if(!sandbox && !campaign && (them.cores().isEmpty() || us.cores().isEmpty())){
             System.out.println("RESULT " + map.nameWithoutExtension() + " " + mode + " winner=none: " + (them.cores().isEmpty() ? "the Brain has no core on this map (a sector of waves)" : "we have no core"));
             System.exit(0);
         }
@@ -124,13 +143,13 @@ public class Match{
             }
             them.rules().buildSpeedMultiplier *= planet.enemyBuildSpeedMultiplier;
             them.rules().unitFactoryActivationDelay = Math.max(them.rules().unitFactoryActivationDelay, planet.enemyFactoryActivationDelay);
-            if(!them.cores().isEmpty()){
+            if(!them.cores().isEmpty() && !campaign){
                 var c = them.cores().first();
                 for(Item item : Vars.content.items()) c.items.set(item, c.getMaximumAccepted(item));
             }
         }
         CoreBlock.CoreBuild core = us.core();
-        if(rules.loadout != null && rules.loadout.size > 0 && mode.equals("sector")){
+        if(rules.loadout != null && rules.loadout.size > 0 && (mode.equals("sector") || campaign)){
             core.items.clear();
             for(ItemStack stack : rules.loadout) core.items.set(stack.item, stack.amount);
         }
@@ -138,7 +157,8 @@ public class Match{
         //gen) ours gets none either. In a sector it keeps the cap a player has there.
         if((mode.equals("even") || generated) && !sandbox && !Boolean.getBoolean("match.cap")) us.ignoreUnitCap = true;
         //the squad AI, which the game runs for its AI sides only: run here for ours by hand
-        us.rules().rtsAi = true;
+        us.rules().rtsAi = !brainSide;
+        if(brainSide) Brain.side = us;
         mindustry.ai.RtsAI squads = new mindustry.ai.RtsAI(us.data());
         //and our army layer over it (-Dmatch.us=rts for the squad AI alone, or army:parts); the Brain is played as the main
         //line has it, without the layer (-Dmatch.brainarmy=true to give it the layer too)
@@ -202,8 +222,22 @@ public class Match{
         List<String> blocks = new ArrayList<>(Plan.erekir());
         Collections.sort(blocks);
         Set<String> allowed = new HashSet<>(blocks);
+        //in the campaign, both our side and the Brain in its place have what a player has researched by this sector (the
+        //economy bench's list of it); every Erekir block besides that is held back
+        if(campaign && isTechSector(map.nameWithoutExtension())){
+            Set<String> known = new HashSet<>(EconRun.logisticsOf(map.nameWithoutExtension()));
+            for(String[] row : EconLab.tech){
+                for(int i = 1; i < row.length; i++) known.add(row[i]);
+                if(row[0].equals(map.nameWithoutExtension())) break;
+            }
+            blocks.retainAll(known);
+            allowed = new HashSet<>(blocks);
+            Set<String> may = new HashSet<>(known);
+            brain.unlocked = content -> !(content instanceof Block) || may.contains(content.name) || !((Block)content).isOnPlanet(Planets.erekir) || content instanceof CoreBlock;
+            System.out.println("  researched for " + map.nameWithoutExtension() + ": " + blocks);
+        }
         List<Design> library = Plan.library(System.getProperty("xp.modules", "blueprints/own,blueprints/posts,blueprints/plants,blueprints/modules"));
-        String[] stages = System.getProperty("match.stages", "stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
+        String[] stages = brainSide ? new String[0] : System.getProperty("match.stages", "stell:2|merui:2|elude:2|avert:1,defend,locus:1|stell:4|merui:4|elude:4|avert:2,defend,locus:2|stell:6|merui:6|elude:6|avert:3").split(",");
         //chosen from the game as it goes (expansion.army.Muster): what to make, and how many makers, each stage
         if(Boolean.getBoolean("match.auto")) stages = "auto,defend,auto,defend,auto,auto,auto,auto,auto,auto".split(",");
         //the other side has yards from the start (a base that came with the map) whose units can get to us: a defence first,
@@ -447,10 +481,16 @@ public class Match{
                 }
                 old.watch.repairs.clear();
             }
+            long q0 = System.nanoTime();
             Boot.frames(1);
+            long q1 = System.nanoTime();
             ControlSync.step();
-            squads.update();
+            long q2 = System.nanoTime();
+            if(!brainSide) squads.update();
+            long q3 = System.nanoTime();
             if(army != null) army.update();
+            long q4 = System.nanoTime();
+            prof[0] += q1 - q0; prof[1] += q2 - q1; prof[2] += q3 - q2; prof[3] += q4 - q3;
             if(f % 60 == 0) for(Building b : us.data().buildings) if(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild tb){
                 turretSeconds++;
                 if(!tb.hasAmmo()) drySeconds++;
@@ -470,15 +510,31 @@ public class Match{
             if(f % 3600 == 0 && us.core() != null) for(Item item : Vars.content.items()) lastMinute.put(item.name, us.core().items.get(item));
             if(f == 600 || (f % 3600 == 0 && Boolean.getBoolean("match.brainlog"))) System.out.println("  the Brain: active " + brain.active() + "; " + brain.status().replace("\n", "; "));
             if(us.cores().isEmpty()){
-                winner = "Brain";
+                winner = campaign ? "enemy" : "Brain";
                 break;
             }
-            if(!sandbox && them.cores().isEmpty()){
+            if(!sandbox && !campaign && them.cores().isEmpty()){
                 winner = "us";
                 break;
             }
+            //the sector taken as the campaign counts it: its cores destroyed where it is to be attacked, its waves held to the
+            //win wave and the last of them beaten elsewhere (and then attacked, where the sector says so)
+            if(campaign){
+                if(rules.attackMode && them.cores().isEmpty()){
+                    winner = "us";
+                    break;
+                }
+                if(!rules.attackMode && rules.winWave > 0 && Vars.state.wave >= rules.winWave && Vars.state.enemies == 0){
+                    if(preset != null && preset.attackAfterWaves && !them.cores().isEmpty()) rules.attackMode = true;
+                    else{
+                        winner = "us";
+                        break;
+                    }
+                }
+            }
         }
         float t = (float)(Vars.state.tick / 60.0);
+        System.out.println(String.format("  wall time: game frames %.1fs (the mod's own %.1fs), unit paths %.1fs, squad AI %.1fs, army layer %.1fs; planning %.1fs", prof[0] / 1e9, Boot.nanosMod / 1e9, prof[1] / 1e9, prof[2] / 1e9, prof[3] / 1e9, planSeconds));
         System.out.println(report(t, hand, stage));
         if(sandbox){
             StringBuilder made = new StringBuilder("  made, by kind:");
@@ -820,6 +876,14 @@ public class Match{
         if(chosen != null) out.add(chosen);
         for(var aim : aims) if(!aim.toString().equals(chosen)) out.add(aim.toString());
         return out.toArray(new String[0]);
+    }
+
+    /** Wall time spent each frame (-Dmatch.prof): the game's frame (with the units' controllers), the units' path finder, the squad AI, the army layer. */
+    static final long[] prof = new long[4];
+
+    static boolean isTechSector(String name){
+        for(String[] row : EconLab.tech) if(row[0].equals(name)) return true;
+        return false;
     }
 
     /** Whether what makes the stage's units is up (true for a stage that makes none). */

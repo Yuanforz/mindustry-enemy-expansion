@@ -154,6 +154,9 @@ public class Options{
 
         /** What goes: the strongest it can be while that is asked for, and otherwise what the player set. */
         public boolean on(){
+            //(a test may pin a setting whatever the strongest mode says: -Dxp.pin.<name>=true|false)
+            String pinned = System.getProperty("xp.pin." + name);
+            if(pinned != null) return Boolean.parseBoolean(pinned);
             if(strong != null && strongest.set()) return strong;
             return set();
         }
