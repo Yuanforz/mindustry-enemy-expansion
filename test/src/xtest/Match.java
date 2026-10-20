@@ -62,7 +62,8 @@ public class Match{
         mod[0].init();
         Brain brain = ExpansionMod.brain;
         for(Fi file : new Fi("blueprints").list()) if(file.extEquals("txt")) brain.blueprints.addAll(Blueprint.parse(file.readString()));
-        Core.settings.put("expansion-grace", 0);
+        //the mod's grace at the start of a map as a player has it (2 minutes by default; -Dmatch.grace=n)
+        if(System.getProperty("match.grace") != null) Core.settings.put("expansion-grace", Integer.getInteger("match.grace"));
         if(!Boolean.getBoolean("match.plain")) Core.settings.put("expansion-strongest", true);
         Core.settings.put("expansion-time-limit", Integer.getInteger("xp.timelimit", 100));
         Boot.modTime = () -> brain.lastThink;
