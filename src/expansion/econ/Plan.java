@@ -44,6 +44,8 @@ public final class Plan{
      * economy that has time may go further.
      */
     public int gateDepth = Integer.MAX_VALUE;
+    /** How many of the defence planner's modules a defence takes (the first ones); all, unless it is wanted at once. */
+    public int maxModules = Integer.MAX_VALUE;
     /** Put before the plan's heading line (a map's name, say). */
     public String label = "";
 
@@ -399,7 +401,27 @@ public final class Plan{
         StringBuilder notes = new StringBuilder();
         //our turrets standing dry first (only a line to build), then what the defence planner laid
         List<Machine> guard = new ArrayList<>(Defence.existing(cat, me, feedable, notes));
-        if(defence != null) guard.addAll(Defence.machines(cat, defence, notes));
+        if(defence != null){
+            List<Machine> planned = Defence.machines(cat, defence, notes);
+            //a defence wanted at once is its first module only, then its walls: up in a minute or two, and the economy after it;
+            //the next defence stage adds the rest (all of it at once was three modules and twenty-three jobs on aegis, and
+            //not one turret had fired by the sixth minute)
+            if(maxModules < Integer.MAX_VALUE){
+                //(its walls after it: a breach pair holds two stells in the open and eight behind the wall line)
+                int kept = 0;
+                List<Machine> walls = new ArrayList<>();
+                for(Machine m : planned){
+                    if(m.recipe.name.startsWith("defence:walls")){
+                        walls.add(m);
+                        continue;
+                    }
+                    if(kept++ >= maxModules) break;
+                    guard.add(m);
+                }
+                guard.addAll(walls);
+                notes.append(String.format("at once: %d of the plan's modules, and the walls\n", Math.min(kept, maxModules)));
+            }else guard.addAll(planned);
+        }
         if(notes.length() > 0) out.print("  defence: " + notes.toString().trim().replace("\n", "\n  defence: ") + "\n");
         if(guard.isEmpty()) return null;
         planner = new Planner(cat, field);
@@ -489,6 +511,20 @@ public final class Plan{
         boolean paying = false;
         for(Machine m : payers) if(rest.contains(m)) paying = true;
         if(paying) order.addAll(planner.plainOrder(rest));
+        //the first module before the wall lines when the defence is one that pays for itself (wanted now: the walls only hold
+        //the other side where turrets fire, and with nothing firing they are one more thing to wait for; on marsh both
+        //modules came last, after the makers and the walls, and nothing fired by the fifth minute)
+        if(paying){
+            List<Machine> first = new ArrayList<>(), walls = new ArrayList<>(), others = new ArrayList<>();
+            for(Machine g : guard){
+                if(g.recipe.name.startsWith("defence:walls")) walls.add(g);
+                else if(first.isEmpty()) first.add(g);
+                else others.add(g);
+            }
+            guard = new ArrayList<>(first);
+            guard.addAll(walls);
+            guard.addAll(others);
+        }
         for(Machine g : guard){
             for(Machine m : feeders.getOrDefault(g, List.of())) if(plant.contains(m)) order.add(m);
             order.add(g);

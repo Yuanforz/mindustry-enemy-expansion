@@ -195,9 +195,9 @@ public class Match{
             //the next stage, planned from what stands, once the last is all up (or has had its time)
             //(a stage is not left for want of time while what makes its units is not up yet, unless three times over: on lake,
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
-            boolean over = hand != null && (hand.done() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
+            boolean over = hand != null && (hand.orderDone() || f - stageFrom > stageLimit && (makerUp(hand) || f - stageFrom > stageLimit * 3));
             if((hand == null || over) && stage + 1 < stages.length && us.core() != null){
-                if(hand != null && !hand.done()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
+                if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 stage++;
                 //(the world as it stands when a stage is planned, kept for planning it again by itself: -Dmatch.save=dir, xtest.PlanAt)
                 if(System.getProperty("match.save") != null){
@@ -234,6 +234,8 @@ public class Match{
                             expansion.defense.Planner.Plan dp = defence(us, them, sector, f / 60f, p.label);
                             p.income = income(us, f);
                             p.gateDepth = 2;
+                            //(the defence put first for a threat from the start: its first module only, then the economy)
+                            if(stage == 0 && early != null) p.maxModules = 1;
                             plan = p.defend(us, blocks, allowed, dp, feedable);
                         }else{
                             plan = p.make(us, blocks, allowed, library, st[0], Float.parseFloat(st[1]), null);

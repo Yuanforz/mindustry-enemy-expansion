@@ -50,6 +50,14 @@ public final class Hand extends mindustry.entities.units.AIController{
     /** Whether its own jobs come before putting back what went missing (a defence's). */
     public boolean urgent;
 
+    /**
+     * Whether everything of the order has been begun and finished, whatever it is putting back meanwhile (a stage is over when
+     * its own order is up: under raids the mending never ends, and the next stage waited on it to its time).
+     */
+    public boolean orderDone(){
+        return next >= order.size() && skipped.isEmpty() && pending == null && (job == null || repairing);
+    }
+
     /** Whether everything of the order is up (nothing begun and nothing put off is left). */
     public boolean done(){
         return next >= order.size() && job == null && skipped.isEmpty() && pending == null;
