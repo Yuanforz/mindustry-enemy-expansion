@@ -325,7 +325,8 @@ public class Match{
             expansion.econ.Asks.Ask task = null;
             //(with the command layer, what the tasks ask is weighed among its ways, not put first)
             List<String> taskWays = new ArrayList<>();
-            if((hand == null || over) && campaign && hand != null && us.core() != null && f % 60 == 0){
+            boolean weighs = command != null && (hand == null || over) && f - lastDecisionAt >= 60 * 60;
+            if((hand == null || over) && campaign && hand != null && us.core() != null && (weighs || command == null && f % 60 == 0)){
                 expansion.econ.Asks.Ask a = asks(hand, allowed, f);
                 if(command != null){
                     if(a.stage != null){

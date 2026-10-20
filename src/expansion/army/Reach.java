@@ -66,6 +66,8 @@ public final class Reach{
                 if(seen[n]) continue;
                 //the tiles of a building of one's own side or another's are not walls: one's own a unit walks round, another's
                 //it shoots through (cores included, which is where it is going)
+                //(nothing beyond the map's open area: units cannot leave it, as a sector shut till its tasks are done keeps them)
+                if(Vars.state.rules.limitMapArea && !Vars.world.isInMapArea(nx, ny)) continue;
                 var tile = Vars.world.tiles.geti(n);
                 boolean building = tile.build != null;
                 if(!building && cost.getCost(team.id, Vars.pathfinder.get(nx, ny)) == -1) continue;

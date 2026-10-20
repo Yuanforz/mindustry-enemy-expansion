@@ -44,6 +44,8 @@ public final class Tactics{
     public static float squadRadius = 10f, nearOurs = 50f;
     /** How many of the other side's buildings a squad weighs attacking, the nearest it can get to. */
     public static int targets = 4;
+    /** How many times its worth a building the map's tasks ask to have destroyed counts (-Darmy.tactics.asked). */
+    public static float askedWorth = Float.parseFloat(System.getProperty("army.tactics.asked", "5"));
     /** Seconds of walk past the horizon over which an attack's leaf value falls to 1/e (-Darmy.tactics.leaf). */
     public static float leafDiscount = Float.parseFloat(System.getProperty("army.tactics.leaf", "90"));
     /** Worth of a hit point by what it is on. */
@@ -105,9 +107,12 @@ public final class Tactics{
     static final class Site{
         final Building build;
         final boolean ours;
-        final float x, y, health, dps, range, worth;
+        final float x, y, health, dps, range;
+        float worth;
         final boolean hitsAir, hitsGround;
         float ph;
+        /** Whether the map's tasks ask for it to be destroyed (worth more: the map opens up when it is). */
+        boolean asked;
 
         Site(Building build, boolean ours, float x, float y, float health, float dps, float range, float worth, boolean air, boolean ground){
             this.build = build;
@@ -157,6 +162,11 @@ public final class Tactics{
         squads(mine, ours, true);
         squads(foes, theirs, false);
         sitesOf(team);
+        //what the map's tasks ask to have destroyed (set on the push by whoever reads the tasks)
+        for(Site t : sites) if(!t.ours && t.build != null && army.push.asked.contains(t.build, true)){
+            t.asked = true;
+            t.worth *= askedWorth;
+        }
         //the other side's groups that are near anything of ours (the ones worth meeting)
         Seq<Group> near = new Seq<>();
         for(Group g : theirs) if(nearAnything(g)) near.add(g);
@@ -171,6 +181,8 @@ public final class Tactics{
             for(Site t : sites) if(!t.ours && canReach(s, t.x, t.y)) worth.add(t);
             worth.sort(t -> Mathf.dst2(t.x, t.y, s.x, s.y));
             for(int i = 0; i < Math.min(targets, worth.size); i++) o.add(worth.get(i));
+            //(and what the map's tasks ask to have destroyed, wherever it is among them)
+            for(Site t : worth) if(t.asked && !o.contains(t, true)) o.add(t);
             options.add(o);
         }
         //from what each squad was doing (the scripts its units were sent on), or holding
@@ -557,6 +569,15 @@ public final class Tactics{
     }
 
     public String report(){
-        return "tactics: " + state + " (" + decisions + " decisions)";
+        StringBuilder b = new StringBuilder("tactics: " + state + " (" + decisions + " decisions)");
+        if(Boolean.getBoolean("army.tactics.debug")){
+            for(int i = 0; i < army.team.data().units.size && i < 6; i++){
+                Unit u = army.team.data().units.get(i);
+                if(Bait.coreUnit(u) || !u.type.canAttack) continue;
+                String c = u.controller() instanceof CommandAI ai ? (ai.attackTarget == null ? "no target" : "target " + ai.attackTarget) + (ai.targetPos == null ? "" : " pos " + (int)(ai.targetPos.x / 8) + "," + (int)(ai.targetPos.y / 8)) + " cmd " + ai.command : u.controller().getClass().getSimpleName();
+                b.append(String.format("\n      %s at %d,%d: %s; goal %s", u.type.name, u.tileX(), u.tileY(), c, goals.get(u.id)));
+            }
+        }
+        return b.toString();
     }
 }
