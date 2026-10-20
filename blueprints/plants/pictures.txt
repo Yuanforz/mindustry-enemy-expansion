@@ -1,0 +1,111 @@
+unit-vanquish-own  unit plant: tank-assembler making vanquish from tank-fabricator (stell) and two constructors (tungsten-wall-large)
+  8           Iv    
+  7         ?.?.?.  
+  6 n.      ?.?.?., 
+  5 ,       ?v?.?.Lv
+  4 Iv    ?.?.?.?.?.
+  3 ?.?.?.?.?.?.?.?.
+  2 ?.?.?.?.?.?.?.?.
+  1 ?>?.?.?.?.?.?.?.
+  0 I^n.  ?>?.?.?.?.
+ -1 ,       ?.?.?.  
+ -2         ?.?.?.  
+ -3 n.      ?^?.?.  
+ -4           I^    
+    I=item-source  ?=constructor  n=beam-node  L=liquid-source  ?=tank-assembler  ?=tank-fabricator  
+
+unit-conquer-own  unit plant: tank-assembler making conquer from tank-fabricator (stell) and tank-refabricator (locus) and two constructors (carbide-wall-large), with a basic assembler module
+ 13                               ?.?.?.?.?.
+ 12                               ?.?.?.?.?.
+ 11                               ?.?.?.?.?.
+ 10                               ?.?.?.?.?.
+  9           n.    , ,           ?v?.?.?.?.
+  8                 IvIv  , , , , , , , , , 
+  7               ?.?.?.  , , , , , , , , , 
+  6 n.            ?.?.?., , , , , , , , , , 
+  5 ,     ,       ?v?.?.Lv, , , , , , , , , 
+  4 Iv    Iv    ?.?.?.?.?., , , , , , , , , 
+  3 ?.?.?.?.?.?.?.?.?.?.?., , , , , , , , , 
+  2 ?.?.?.?.?.?.?.?.?.?.?., , , , , , , , , 
+  1 ?>?.?.?>?.?.?.?.?.?.?., , , , , , , , , 
+  0 I^n.  I^  L^?>?.?.?.?., , , , , , , , , 
+ -1 ,     ,   ,   ?.?.?.  , , , , , , , , , 
+ -2               ?.?.?.  , , , , , , , , , 
+ -3 n.    n.      ?^?.?.  , , , , , , , , , 
+ -4                 I^I^  , , , , , , , , , 
+    ?=basic-assembler-module  n=beam-node  I=item-source  ?=constructor  L=liquid-source  ?=tank-assembler  ?=tank-fabricator  ?=tank-refabricator  
+
+unit-tecta-own  unit plant: mech-assembler making tecta from mech-fabricator (merui) and two constructors (tungsten-wall-large)
+  8           Iv    
+  7         ?.?.?.  
+  6 n.      ?.?.?., 
+  5 ,       ?v?.?.Lv
+  4 Iv    ?.?.?.?.?.
+  3 ?.?.?.?.?.?.?.?.
+  2 ?.?.?.?.?.?.?.?.
+  1 ?>?.?.?.?.?.?.?.
+  0 I^n.  ?>?.?.?.?.
+ -1 ,       ?.?.?.  
+ -2         ?.?.?.  
+ -3 n.      ?^?.?.  
+ -4           I^    
+    I=item-source  ?=constructor  n=beam-node  L=liquid-source  ?=mech-assembler  ?=mech-fabricator  
+
+unit-collaris-own  unit plant: mech-assembler making collaris from mech-fabricator (merui) and mech-refabricator (cleroi) and two constructors (carbide-wall-large), with a basic assembler module
+ 13                               ?.?.?.?.?.
+ 12                               ?.?.?.?.?.
+ 11                               ?.?.?.?.?.
+ 10                               ?.?.?.?.?.
+  9           n.    , ,           ?v?.?.?.?.
+  8                 IvIv  , , , , , , , , , 
+  7               ?.?.?.  , , , , , , , , , 
+  6 n.            ?.?.?., , , , , , , , , , 
+  5 ,     ,       ?v?.?.Lv, , , , , , , , , 
+  4 Iv    Iv    ?.?.?.?.?., , , , , , , , , 
+  3 ?.?.?.?.?.?.?.?.?.?.?., , , , , , , , , 
+  2 ?.?.?.?.?.?.?.?.?.?.?., , , , , , , , , 
+  1 ?>?.?.?>?.?.?.?.?.?.?., , , , , , , , , 
+  0 I^n.  I^  L^?>?.?.?.?., , , , , , , , , 
+ -1 ,     ,   ,   ?.?.?.  , , , , , , , , , 
+ -2               ?.?.?.  , , , , , , , , , 
+ -3 n.    n.      ?^?.?.  , , , , , , , , , 
+ -4                 I^I^  , , , , , , , , , 
+    ?=basic-assembler-module  n=beam-node  I=item-source  ?=constructor  L=liquid-source  ?=mech-assembler  ?=mech-fabricator  ?=mech-refabricator  
+
+unit-quell-own  unit plant: ship-assembler making quell from ship-fabricator (elude) and two constructors (beryllium-wall-large)
+  8           Iv    
+  7         ?.?.?.  
+  6 n.      ?.?.?., 
+  5 ,       ?v?.?.Lv
+  4 Iv    ?.?.?.?.?.
+  3 ?.?.?.?.?.?.?.?.
+  2 ?.?.?.?.?.?.?.?.
+  1 ?>?.?.?.?.?.?.?.
+  0 I^n.  ?>?.?.?.?.
+ -1 ,       ?.?.?.  
+ -2         ?.?.?.  
+ -3 n.      ?^?.?.  
+ -4           I^    
+    I=item-source  ?=constructor  n=beam-node  L=liquid-source  ?=ship-assembler  ?=ship-fabricator  
+
+unit-disrupt-own  unit plant: ship-assembler making disrupt from ship-fabricator (elude) and ship-refabricator (avert) and two constructors (carbide-wall-large), with a basic assembler module
+ 13                               ?.?.?.?.?.
+ 12                               ?.?.?.?.?.
+ 11                               ?.?.?.?.?.
+ 10                               ?.?.?.?.?.
+  9           n.    , ,           ?v?.?.?.?.
+  8                 IvIv  , , , , , , , , , 
+  7               ?.?.?.  , , , , , , , , , 
+  6 n.            ?.?.?., , , , , , , , , , 
+  5 ,     ,       ?v?.?.Lv, , , , , , , , , 
+  4 Iv    Iv    ?.?.?.?.?., , , , , , , , , 
+  3 ?.?.?.?.?.?.?.?.?.?.?., , , , , , , , , 
+  2 ?.?.?.?.?.?.?.?.?.?.?., , , , , , , , , 
+  1 ?>?.?.?>?.?.?.?.?.?.?., , , , , , , , , 
+  0 I^n.  I^  L^?>?.?.?.?., , , , , , , , , 
+ -1 ,     ,   ,   ?.?.?.  , , , , , , , , , 
+ -2               ?.?.?.  , , , , , , , , , 
+ -3 n.    n.      ?^?.?.  , , , , , , , , , 
+ -4                 I^I^  , , , , , , , , , 
+    ?=basic-assembler-module  n=beam-node  I=item-source  ?=constructor  L=liquid-source  ?=ship-assembler  ?=ship-fabricator  ?=ship-refabricator  
+

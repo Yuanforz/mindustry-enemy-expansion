@@ -165,6 +165,7 @@ public class Army{
             if(flags.hold) hold.update(flags.push ? push : null);
         }
         if(flags.creep && frame % 60 == 5) creep.update();
+        if(frame % 300 == 7) upgrades();
         if(flags.bait || flags.decoy || flags.creep){
             if(frame % 30 == 4) bait.plan();
             bait.track();
@@ -184,6 +185,56 @@ public class Army{
                 else if(ai.targetPos != null) dodger.commandPosition(ai.targetPos);
             }
         }
+    }
+
+    /**
+     * Units with no orders walk into a refabricator or an assembler of ours that waits for one, as a player sends them:
+     * one that doesn't stand in front of the fabricator making them waits for good otherwise, and so does one whose
+     * fabricator stopped at the unit cap (in a game with no fighting, fifteen tanks stood and no tank of the next tier ever
+     * came). One unit a building at a time. A building that waits counts as ready once it has its power and its items
+     * (with nothing inside it does no work, so its plain efficiency reads 0).
+     */
+    void upgrades(){
+        for(int i = 0; i < team.data().buildings.size; i++){
+            if(!(team.data().buildings.get(i) instanceof mindustry.world.blocks.units.UnitAssembler.UnitAssemblerBuild asm) || asm.potentialEfficiency <= 0f) continue;
+            var plan = asm.plan();
+            if(plan == null || plan.requirements == null) continue;
+            for(mindustry.type.PayloadStack st : plan.requirements){
+                if(!(st.item instanceof mindustry.type.UnitType kind) || asm.blocks.get(kind) >= st.amount) continue;
+                send(kind, asm);
+                break;
+            }
+        }
+        for(int i = 0; i < team.data().buildings.size; i++){
+            if(!(team.data().buildings.get(i) instanceof mindustry.world.blocks.units.Reconstructor.ReconstructorBuild rc) || rc.payload != null || rc.potentialEfficiency <= 0f) continue;
+            mindustry.world.blocks.units.Reconstructor block = (mindustry.world.blocks.units.Reconstructor)rc.block;
+            for(mindustry.type.UnitType[] up : block.upgrades){
+                if(!mindustry.entities.Units.canCreate(team, up[1])) continue;
+                if(send(up[0], rc)) break;
+            }
+        }
+    }
+
+    /** The nearest unit of this kind with no orders sent into the building as a payload, unless one is on its way there already. */
+    boolean send(mindustry.type.UnitType kind, mindustry.gen.Building into){
+        Unit best = null;
+        float bestD = Float.MAX_VALUE;
+        for(int u = 0; u < team.data().units.size; u++){
+            Unit unit = team.data().units.get(u);
+            if(unit.type != kind || !(unit.controller() instanceof CommandAI ai) || unit.isPlayer() || !unit.type.allowedInPayloads) continue;
+            if(ai.command == mindustry.ai.UnitCommand.enterPayloadCommand && ai.targetPos != null && ai.targetPos.within(into.x, into.y, 1f)) return false;
+            if(ai.hasCommand() || ai.attackTarget != null) continue;
+            float d = unit.dst(into);
+            if(d < bestD){
+                bestD = d;
+                best = unit;
+            }
+        }
+        if(best == null) return false;
+        CommandAI ai = (CommandAI)best.controller();
+        ai.command(mindustry.ai.UnitCommand.enterPayloadCommand);
+        ai.commandPosition(new arc.math.geom.Vec2(into.x, into.y));
+        return true;
     }
 
     float ourDps(){

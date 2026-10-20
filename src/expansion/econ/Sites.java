@@ -79,6 +79,46 @@ public final class Sites{
         //tiles of anything else
         boolean[] reach = reach(field, team), shot = danger(team);
         int w = Vars.world.width();
+        String around = System.getProperty("xp.sitearound");
+        if(around != null){
+            int ax = Integer.parseInt(around.split(",")[0]), ay = Integer.parseInt(around.split(",")[1]);
+            System.out.println("  around " + around + " (. reached, o open but not reached, # rock, letter: ore in rock, ~ deep, x shot at, - not to build on):");
+            for(int y = ay + 15; y >= ay - 15; y--){
+                StringBuilder row = new StringBuilder("    ");
+                for(int x = ax - 25; x <= ax + 25; x++){
+                    Tile t = Vars.world.tile(x, y);
+                    if(t == null){ row.append(' '); continue; }
+                    int q = x + y * w;
+                    char c;
+                    if(shot[q]) c = 'x';
+                    else if(t.block().isStatic()) c = t.wallDrop() != null ? t.wallDrop().name.charAt(0) : '#';
+                    else if(t.floor().isDeep()) c = '~';
+                    else if(reach[q]) c = '.';
+                    else if(t.floor().placeableOn && (t.block() == mindustry.content.Blocks.air || t.block().alwaysReplace || t.build != null)) c = 'o';
+                    else c = '-';
+                    if(x == ax && y == ay) c = '@';
+                    row.append(c);
+                }
+                System.out.println(row);
+            }
+        }
+        if(DEBUG){
+            //for each kind, one place left out and why
+            Set<String> told = new HashSet<>();
+            for(Field.Site site : all){
+                String kind = site.ground + "/" + (site.item >= 0 ? cat.get(site.item).name : "-");
+                boolean hit = false, near = false;
+                for(int t : site.tiles) if(shot[t]) hit = true;
+                for(int t : site.tiles){
+                    int x = t % w, y = t / w;
+                    for(int d = 0; d < 4; d++){
+                        int nx = x + arc.math.geom.Geometry.d4x(d), ny = y + arc.math.geom.Geometry.d4y(d);
+                        if(Vars.world.tile(nx, ny) != null && reach[nx + ny * w]) near = true;
+                    }
+                }
+                if((hit || !near) && told.add(kind)) System.out.println("  left out: " + kind + " at " + site.x + "," + site.y + (hit ? " (shot at)" : " (no way there for a line)"));
+            }
+        }
         all.removeIf(site -> {
             for(int t : site.tiles) if(shot[t]) return true;
             for(int t : site.tiles){

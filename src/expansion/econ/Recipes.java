@@ -55,6 +55,8 @@ public final class Recipes{
             if(block instanceof Reconstructor rec) for(UnitType[] pair : rec.upgrades){ unit(cat, pair[0]); unit(cat, pair[1]); }
             //(units only designs make, by assemblers, are known too, so every recipe's arrays are as long as the catalog)
             if(block instanceof UnitAssembler asm) for(UnitAssembler.AssemblerUnitPlan plan : asm.plans) unit(cat, plan.unit);
+            //(and each turret's stand-in for a post of it, blueprints/posts: what a post "makes" while it is fed)
+            if(block instanceof mindustry.world.blocks.defense.turrets.Turret && cat.byName.get(block.name) == null) cat.add(block.name, Res.Kind.unit, false, false);
         }
         for(Block block : list) read(cat, block);
         return cat;
@@ -174,6 +176,14 @@ public final class Recipes{
             mindustry.type.UnitType strongest = null;
             for(var e : m.units){
                 mindustry.type.UnitType type = Vars.content.unit(e.key);
+                //a turret post (blueprints/posts): it "makes" a stand-in named after its turret while it is fed, so that a
+                //post built and fed is an aim like a unit
+                if(type == null && e.value > 0f && Vars.content.block(e.key) instanceof mindustry.world.blocks.defense.turrets.Turret){
+                    Res r = cat.byName.get(e.key);
+                    unitOut = r != null ? r.id : cat.add(e.key, Res.Kind.unit, false, false).id;
+                    unitSeconds = 1f / e.value;
+                    break;
+                }
                 if(type == null || e.value <= 0f) continue;
                 if(strongest == null || type.health > strongest.health){
                     strongest = type;

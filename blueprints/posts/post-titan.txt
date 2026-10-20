@@ -1,0 +1,6 @@
+post-titan  titan with thorium from behind and hydrogen beside it
+  3   ?.?.?.?.
+  2 L>?.?.?.?.
+  1 I>?.?.?.?.
+  0   ?>?.?.?.
+    ?=titan  L=liquid-source  I=item-source  
