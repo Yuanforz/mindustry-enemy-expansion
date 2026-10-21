@@ -121,11 +121,14 @@ public final class Command{
     static final class Scenario{
         final float lag, sendAt;
         final boolean mirror;
+        /** What the other side has, as its yards work now or at their own pace. */
+        final Forecast forecast;
 
-        Scenario(float lag, boolean mirror, float sendAt){
+        Scenario(float lag, boolean mirror, float sendAt, Forecast forecast){
             this.lag = lag;
             this.mirror = mirror;
             this.sendAt = sendAt;
+            this.forecast = forecast;
         }
     }
 
@@ -164,11 +167,15 @@ public final class Command{
     public Forecast forecast;
     public final StringBuilder log = new StringBuilder();
     long dpAt;
-    /** What was seen of the other side's yards at earlier weighings (see Forecast#idle). */
-    final IntMap<float[]> yardsSeen = new IntMap<>();
-    /** When the other side was first weighed against, and how many buildings it had then. */
-    float foeFirstSeen = -1f;
-    int foeFirstCount;
+    /** When the other side was first weighed against, and what its buildings cost in all then. */
+    float foeFirstSeen = -1f, foeFirstSpend;
+
+    /** What a side's buildings cost in all (items of every kind). */
+    static float spent(Team team){
+        float sum = 0f;
+        for(Building b : team.data().buildings) for(var st : b.block.requirements) sum += st.amount;
+        return sum;
+    }
 
     public Command(Team me, Team foe){
         this.me = me;
@@ -189,7 +196,9 @@ public final class Command{
         long t0 = System.nanoTime();
         log.setLength(0);
         weighed.clear();
-        forecast = new Forecast(me, foe, horizon, step, yardsSeen);
+        forecast = new Forecast(me, foe, horizon, step);
+        //(and with its yards at their own pace, when one is not at it now: a scenario of its own)
+        Forecast full = forecast.slack ? new Forecast(me, foe, horizon, step, true) : null;
         reachCache.clear();
         nowReaching = mobileNow(true);
         nowStaying = mobileNow(false);
@@ -300,19 +309,26 @@ public final class Command{
         long d1 = System.nanoTime();
         dpAt = d1;
 
-        //whether the other side builds, from what is seen of it: its buildings counted at each weighing; one whose count has
-        //grown builds (the mirror scenarios stay), one seen for a minute or more that has not does not (the game's own
-        //enemy on a sector plays the base it was given); before there is anything to go by, both
+        //how fast the other side builds, from what is seen of it: what its buildings cost in all, at each weighing, gained
+        //since it was first weighed against, a second, against what our fastest stage spends a second; the mirror scenarios
+        //have it build as fast as we could, slowed by that (before there is anything to go by, as fast; the game's own enemy
+        //on a sector, that plays the base it was given, comes to build at no pace at all)
         float seen = (float)(Vars.state.tick / 60.0);
-        int count = foe.data().buildings.size;
+        float spent = spent(foe);
         if(foeFirstSeen < 0f){
             foeFirstSeen = seen;
-            foeFirstCount = count;
+            foeFirstSpend = spent;
         }
-        boolean builds = count > foeFirstCount + 3 || seen - foeFirstSeen < 60f;
+        float ours = 0f;
+        if(fastest != null){
+            for(Machine m : fastest.model.order) for(int c : m.cost) ours += c;
+            ours /= Math.max(1f, Float.isInfinite(fastest.model.t) ? horizon : Math.min(fastest.model.t, horizon));
+        }
+        float pace = seen - foeFirstSeen <= 0f || ours <= 0f ? 1f : Math.min(1f, Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen) / ours);
+        boolean builds = fastest != null && pace > 0f;
         List<Scenario> scenarios = new ArrayList<>();
-        for(float lag : lags) for(boolean m : builds ? new boolean[]{false, true} : new boolean[]{false}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s));
-        if(!builds) log.append("  command: the other side has not built since it was first seen: no mirror\n");
+        for(Forecast fc : full == null ? List.of(forecast) : List.of(forecast, full)) for(float lag : lags) for(boolean m : builds ? new boolean[]{false, true} : new boolean[]{false}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s, fc));
+        log.append(String.format("  command: the other side builds at %.0f%% of our fastest pace (%.1f items a second since %s, ours %.1f)%s\n", pace * 100f, seen - foeFirstSeen <= 0f ? 0f : Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen), Plan.time(foeFirstSeen), ours, builds ? "" : ": no mirror"));
         Force foeGuard = foeGuard();
         //(the mirror, the defences and each stage's units under each lag: worked out once)
         //(what our fastest stage adds over what our standing makers turn out anyway: what the other side could add, as fast;
@@ -327,7 +343,9 @@ public final class Command{
                 mirrors.put(lag, null);
                 continue;
             }
-            Force[] with = unitCurve(fastest, lag), without = unitCurve(fastest, lag, List.of());
+            //(at the pace it is seen to build at: a slower economy is a later curve)
+            float slow = lag / Math.max(1e-3f, pace);
+            Force[] with = unitCurve(fastest, slow), without = unitCurve(fastest, slow, List.of());
             Force[] added = new Force[with.length];
             for(int i = 0; i < with.length; i++){
                 added[i] = minus(with[i], without[i]);
@@ -414,12 +432,12 @@ public final class Command{
         long p1 = System.nanoTime();
         weighed.sort((a, b) -> Float.compare(b.score, a.score));
         log.append(String.format("  command: times: stages %.1f + %.1f s, defences %.1f s, stages after them %.1f s, playing %.1f s\n", (w1 - w0) / 1e9f, (w2 - w1) / 1e9f, (d1 - d0) / 1e9f, afterNanos / 1e9f, (p1 - d1 - afterNanos) / 1e9f));
-        log.append(String.format("  command (%s, horizon %s, %d scenarios): theirs at our core by the horizon at most %s; %s\n", posture, Plan.time(horizon), scenarios.size(), forecast.at[forecast.steps], forecast.notes));
+        log.append(String.format("  command (%s, horizon %s, %d scenarios): theirs at our core by the horizon at most %s%s; %s\n", posture, Plan.time(horizon), scenarios.size(), forecast.at[forecast.steps], full == null ? "" : " (" + full.at[full.steps] + " with its yards at their own pace)", forecast.notes));
         for(int i = 0; i < Math.min(weighed.size(), 8); i++) log.append("    ").append(weighed.get(i)).append('\n');
         if(weighed.size() > 8) log.append("    (").append(weighed.size() - 8).append(" more)\n");
         if(Boolean.getBoolean("ops.all")){
             StringBuilder head = new StringBuilder("    scenarios (lag/mirror/sendAt):");
-            for(Scenario sc : scenarios) head.append(String.format(" %.2f/%s/%.1f", sc.lag, sc.mirror ? "m" : "-", sc.sendAt));
+            for(Scenario sc : scenarios) head.append(String.format(" %.2f/%s/%.1f%s", sc.lag, sc.mirror ? "m" : "-", sc.sendAt, sc.forecast.full ? "/full" : ""));
             log.append(head).append('\n');
             for(Candidate c : weighed){
                 log.append("    ").append(c.stage()).append(c.modules == 0 ? "" : "+d" + c.modules + c.kind).append(String.format(" %.1f:", c.score));
@@ -453,7 +471,7 @@ public final class Command{
             float done = sched == null ? 0f : (Float)sched[2];
             //(one core unit builds both: the stage after the defence is all up)
             Force[] units = shifted(curves.get(sc.lag), done);
-            Outcome o = play(units, sched, sc.mirror ? mirrors.get(sc.lag) : null, foeGuard, sc.sendAt, aim.reaches);
+            Outcome o = play(units, sched, sc.mirror ? mirrors.get(sc.lag) : null, foeGuard, sc.sendAt, aim.reaches, sc.forecast);
             scores[i] = score(o);
             cand.outcomes[i] = o;
             if(scores[i] < worst){
@@ -657,7 +675,7 @@ public final class Command{
      * by the posture's edge, walks there, fights, and takes their cores down. A side beaten at home is besieged: the
      * winner's damage a second takes the core down while what the loser turns out fights on.
      */
-    Outcome play(Force[] curve, Object[] sched, Force[] mirrored, Force foeGuard, float sendAt, boolean reaches){
+    Outcome play(Force[] curve, Object[] sched, Force[] mirrored, Force foeGuard, float sendAt, boolean reaches, Forecast forecast){
         Outcome o = new Outcome();
         //(units that can get to the other side's base go out; those that can't, as tanks across deep water, only hold ours)
         Force units = nowReaching.copy(), stay = nowStaying.copy(), fixed = new Force();
