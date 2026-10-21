@@ -286,6 +286,7 @@ public class Match{
         expansion.ops.Command command = null;
         if(System.getProperty("match.command") != null && !brainSide){
             command = new expansion.ops.Command(us, them);
+            commandNow = command;
             command.posture = expansion.ops.Command.Posture.of(System.getProperty("match.command"));
         }
         //chosen from the game as it goes (expansion.army.Muster): what to make, and how many makers, each stage
@@ -398,6 +399,7 @@ public class Match{
                 if(task != null) ways = new String[]{task.stage};
                 else if(command != null){
                     expansion.ops.Command.Candidate best = decided;
+                    command.expect(best);
                     currentSpec = null;
                     if(best == null) ways = new String[0];
                     else if(best.modules > 0){
@@ -405,7 +407,13 @@ public class Match{
                         defendModules = best.modules;
                         defendRank = best.rank;
                     }else{
-                        ways = new String[]{best.stage()};
+                        //(the best, then the next ways the command layer weighed, by score: one that laid out never makes its
+                        //unit is not built, the next is planned)
+                        //(one a kind of unit: another number of makers of a kind that failed fails alike)
+                        List<String> list = new ArrayList<>(List.of(best.stage()));
+                        Set<String> kindsTried = new HashSet<>(List.of(best.stage().split(":")[0]));
+                        for(expansion.ops.Command.Candidate c : command.weighed) if(c.modules == 0 && !c.keep && c.aim.item == null && kindsTried.add(c.aim.type.name)) list.add(c.stage());
+                        ways = list.toArray(new String[0]);
                         currentSpec = best.aim.item == null ? best.stage() : null;
                     }
                 }else ways = stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
@@ -436,7 +444,8 @@ public class Match{
                     st = way.split(":");
                     //units that can't get to the Brain's base are not worth making (tanks, where deep water parts the bases)
                     mindustry.type.UnitType kind = Vars.content.unit(st[0]);
-                    if(kind != null && !homeGuard && !expansion.army.Reach.toFoe(kind, us, them)){
+                    //(the command layer weighs reach itself: a kind that only holds home may be its choice)
+                    if(kind != null && !homeGuard && command == null && !expansion.army.Reach.toFoe(kind, us, them)){
                         System.out.println("  stage " + (stage + 1) + ": " + way + " passed over, " + kind.name + " can't get to the Brain's cores from ours");
                         continue;
                     }
@@ -470,6 +479,18 @@ public class Match{
                             plan = p.defend(us, blocks, allowed, dp, feedable);
                         }else{
                             plan = p.make(us, blocks, allowed, library, st[0], Float.parseFloat(st[1]), income(us, f));
+                            if(plan != null && command != null && plan.model != null && plan.unit >= 0 && Float.isInfinite(plan.model.first[plan.unit])){
+                                System.out.println("  stage " + (stage + 1) + ": " + way + " laid out never makes its unit: the next way");
+                                plan = null;
+                                continue;
+                            }
+                            if(plan != null && command != null){
+                                currentSpec = Vars.content.unit(st[0]) != null ? way : null;
+                                for(expansion.ops.Command.Candidate c : command.weighed) if(c.modules == 0 && c.stage().equals(way)){
+                                    command.expect(c);
+                                    break;
+                                }
+                            }
                         }
                     }catch(Throwable t){
                         System.out.println("  stage " + (stage + 1) + " (" + way + ") could not be planned: " + t);
@@ -915,6 +936,19 @@ public class Match{
             int have = now.get(e.key, 0);
             units.merge(e.key, (int)Math.ceil(have + e.value), Math::max);
         }
+        //(with the command layer: what its forecast has of the other side's army, by kind, a sending's worth: what it has
+        //gathered by the time the defence is weighed for, half the way to the horizon; the rules above only where nothing is
+        //foreseen, for the kinds; one predictor for the economy, the defence and the war)
+        if(commandNow != null && commandNow.forecast != null){
+            expansion.ops.Forecast fc = commandNow.forecast;
+            expansion.ops.Force army = fc.army[fc.steps / 2];
+            Map<String, Integer> foreseen = new TreeMap<>();
+            for(String k : army.kindNames()) if(expansion.defense.Foe.get(k) != null) foreseen.put(k, Math.max(1, Math.round(army.countOf(k))));
+            if(!foreseen.isEmpty()){
+                units.clear();
+                units.putAll(foreseen);
+            }
+        }
         ask.units.putAll(units);
         //the map's waves (a sector the game's enemy plays by waves): those of the next few minutes, each from where it comes
         //(the spawns, the map edge for air), sized by the largest of them (on intersect three stells of the first wave took
@@ -1100,6 +1134,8 @@ public class Match{
 
     /** So many modules at each place for the defence planned now (0: as many as hold what comes). */
     static int fixedModules, fixedRank;
+    /** The command layer, when one plays our side (its forecast is the defence planner's threat). */
+    static expansion.ops.Command commandNow;
     /** The defence ask's reading of the catalog and the places, for the frame it was made in. */
     static final Map<String, Object[]> askReads = new HashMap<>();
     /** How many modules of the defence the command layer chose (Integer.MAX_VALUE: all). */

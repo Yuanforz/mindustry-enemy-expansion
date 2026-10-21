@@ -140,6 +140,19 @@ public final class Force{
         return f;
     }
 
+    /** The unit kinds in it, by name. */
+    public java.util.List<String> kindNames(){
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for(var e : kinds) if(e.value > 1e-3f && e.key instanceof UnitType u) out.add(u.name);
+        return out;
+    }
+
+    /** How many of a unit kind, by name. */
+    public float countOf(String name){
+        for(var e : kinds) if(e.key instanceof UnitType u && u.name.equals(name)) return e.value;
+        return 0f;
+    }
+
     /** Whether it has nothing that fights or takes hits. */
     public boolean empty(){
         return health <= 0f;

@@ -30,6 +30,8 @@ public final class Machine{
     public float draw = 0.5f;
     /** Whether it is a machine of the map's that stood idle, taken up by the plan: it stands already, only its lines are built. */
     public boolean revived;
+    /** Laid out with something it takes that no line brings it: it does nothing (the model counts it so, see Plan). */
+    public boolean unfed;
     /**
      * Whether no line could be laid from it to the core, so the core unit carries what it makes there by hand; then it
      * gives no more than {@link #haulRate} a second (a stack a round trip).

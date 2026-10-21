@@ -324,6 +324,25 @@ public final class Plan{
         if(Boolean.getBoolean("xp.time")) out.print("  where the time went:\n" + Took.report());
         out.println(String.format("  the plan cost %d in items, the layout %d; ordered again on what it really costs: done by %s, first %s at %s (was %s, %s)",
             modelSpent, realSpent, time(model.t), unitName, time(model.first[unit]), time(doneModel), time(firstModel)));
+        //what the layout could not feed after all its rounds does nothing in the model, and the plan's times are as that has
+        //them: the plan the hand builds is the plan its model tells of (onset: a fabricator no silicon line reached was counted
+        //on for forty minutes)
+        int cut = 0;
+        StringBuilder cutNames = new StringBuilder();
+        for(Object[] u : works.unfed()){
+            if(u.length > 3) continue;
+            Machine c = (Machine)u[1];
+            if(c.unfed || c.existing) continue;
+            c.unfed = true;
+            cut++;
+            cutNames.append(' ').append(c);
+        }
+        if(cut > 0){
+            Timeline honest = new Timeline(cat, field, model.order);
+            honest.runToGoal(unit, planner.limit);
+            model = honest;
+            out.println(String.format("  %d machine(s) no line feeds count for nothing:%s; then done by %s, first %s at %s", cut, cutNames, time(model.t), unitName, time(model.first[unit])));
+        }
         for(String p : works.problems) out.println("  checker: " + p);
         return this;
     }

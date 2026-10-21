@@ -68,8 +68,12 @@ public final class Planner{
         public Capacity capacity;
         /** How many times what the table says a module holds is asked of it. */
         public float safety = 1.5f;
-        /** The share of the time turrets fire, for the average supply. */
-        public float duty = 0.3f;
+        /**
+         * The share of the time turrets fire, for the supply they are fed: all of it. The Brain fights without pause till
+         * one side is gone, and turrets fed at a third of what they fire stood dry half their time (aegis: 165 of 328
+         * turret-seconds) and fell to five stells; a fight is when a defence is wanted, and then it fires all the time.
+         */
+        public float duty = Float.parseFloat(System.getProperty("def.duty", "1"));
         /** How far out from the core a defence may stand at most, beyond the nearest it may stand, along the way in. */
         public float reach = 90f;
         /** How far a wall line may reach to each side of a place to close it against rock. */

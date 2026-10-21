@@ -200,14 +200,15 @@ public final class Hand extends mindustry.entities.units.AIController{
         if(job == null && !first) for(Part p : watch.repairs) (watch.hot(p) ? held : mend).add(p);
         if(held.size > 0 && mend.isEmpty() && job == null && !first) watch.heldBack++;
         if(job == null && !mend.isEmpty() && !first){
-            //paid for first, like any job (building waits on the core for what it lacks, and the hand would wait with it)
+            //paid for first, like any job (building waits on the core for what it lacks, and the hand would wait with it);
+            //what nothing that stands brings in is not waited for (on siege a repair saved for 250 tungsten all game)
             int[] need = cost(mend);
             if(affordable(need)){
                 job = mend;
                 watch.repairs = held;
                 repairing = true;
                 unit.mineTile = null;
-            }else{
+            }else if(notComing(need) == null){
                 doing = "saving up to put back what went missing: " + shortOf(need);
                 dig(need);
                 return;
@@ -260,16 +261,13 @@ public final class Hand extends mindustry.entities.units.AIController{
                 //nothing coming in for it: put off, and the next step begun (an item none of our machines makes yet and the
                 //core unit can't dig: on caldera a ship fabricator ordered before the first furnace waited for silicon 200 of
                 //250 for eight minutes, while 3800 of everything else piled up and no turret went down)
-                int shortNow = shortfall(need);
-                if(saveSince[0] != next || shortNow < saveSince[2]){
-                    saveSince[0] = next;
-                    saveSince[1] = now();
-                    saveSince[2] = shortNow;
-                }else if(putOff && now() - saveSince[1] > stallTime){
+                //(put off when something it is short of has nothing that stands to bring it in: no machine of ours making it
+                //that is at work, and the core unit can't dig it; while something does, it is waited for)
+                String none = putOff ? notComing(need) : null;
+                if(none != null){
                     skipped.add(next);
-                    trouble.add(String.format("#%d %s put off: %s, none of it come in for %.0f s", next + 1, m.recipe.name, shortOf(need), stallTime));
+                    trouble.add(String.format("#%d %s put off: %s, nothing that stands brings %s in", next + 1, m.recipe.name, shortOf(need), none));
                     pending = null;
-                    saveSince[0] = -1f;
                     next++;
                     return;
                 }
@@ -679,6 +677,45 @@ public final class Hand extends mindustry.entities.units.AIController{
     }
 
     /** How much of a cost the core is short of, every item together. */
+    /**
+     * Of what a cost is short of in the core, the first item nothing that stands brings in (null if all of it comes): the
+     * core unit can't dig it, and no building of ours that makes it is at work (looked at once a second).
+     */
+    String notComing(int[] need){
+        var core = unit.team.core();
+        if(core == null) return null;
+        if(now() - comingAt >= 1f){
+            comingAt = now();
+            coming.clear();
+            for(Building b : unit.team.data().buildings){
+                if(!Sites.producing(b)) continue;
+                Recipe r = Sites.existing(works.cat, b);
+                if(r == null) continue;
+                for(int k = 0; k < works.cat.size(); k++) if(r.out[k] > 1e-4f || r.perFactor[k] > 0f && madeBy(b, k)) coming.add(k);
+            }
+        }
+        for(int k = 0; k < need.length; k++){
+            if(need[k] <= 0) continue;
+            Item item = Vars.content.item(works.cat.get(k).name);
+            if(item == null || core.items.get(item) >= need[k]) continue;
+            if(works.field.handRate(works.cat, k) > 0f || coming.contains(k)) continue;
+            return item.name;
+        }
+        return null;
+    }
+
+    /** Whether a drill digs this item (what it stands on gives). */
+    boolean madeBy(Building b, int k){
+        String name = works.cat.get(k).name;
+        if(b instanceof mindustry.world.blocks.production.Drill.DrillBuild d) return d.dominantItem != null && d.dominantItem.name.equals(name);
+        if(b instanceof mindustry.world.blocks.production.BeamDrill.BeamDrillBuild d) return d.lastItem != null && d.lastItem.name.equals(name);
+        if(b.block instanceof mindustry.world.blocks.production.WallCrafter w) return w.output != null && w.output.name.equals(name);
+        return false;
+    }
+
+    final arc.struct.IntSet coming = new arc.struct.IntSet();
+    float comingAt = -1f;
+
     int shortfall(int[] need){
         var core = unit.team.core();
         if(core == null) return Integer.MAX_VALUE;

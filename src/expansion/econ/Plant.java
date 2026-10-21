@@ -60,7 +60,7 @@ public final class Plant{
         for(int i = 0; i < m; i++){
             Machine mc = machines.get(i);
             Recipe r = mc.recipe;
-            cap[i] = active == null || active[i] ? 1f : 0f;
+            cap[i] = (active == null || active[i]) && !mc.unfed ? 1f : 0f;
             eff[i] = cap[i];
             int ni = 0, no = 0;
             int[] ti = new int[power + 2], to = new int[power + 2];
