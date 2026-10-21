@@ -192,7 +192,7 @@ public final class Sites{
             //at once, before any income is measured; it may be taken up with lines of the plan's own. On crevice nine
             //crushers stood with their sand backed up, the plan counted on them, and its furnace never got sand)
             if(!r.makesUnits() && !producing(build)){
-                field.revivable.add(m);
+                if(!unfeedable.contains(arc.math.geom.Point2.pack(build.tileX(), build.tileY()))) field.revivable.add(m);
                 continue;
             }
             field.existing.add(m);
@@ -205,6 +205,13 @@ public final class Sites{
      * each item, if what the core was seen to get (a second, watched over a while) is under a tenth of what those machines
      * would make, they stand idle or feed something else, and the plan may not count on them. What was left out, in words.
      */
+    /**
+     * The places of the map's idle machines a layout found no way to feed (what they take nothing within reach makes, or
+     * no line can be laid to them): not counted as to be taken up again (onset's idle furnace, with no sand to be had near
+     * it, was counted on by every plan for twenty minutes, and no unit came). Learned as the game goes, by place.
+     */
+    public static final Set<Integer> unfeedable = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public static String prune(Catalog cat, Field field, Map<String, Float> income, Team team){
         StringBuilder out = new StringBuilder();
         for(int k = 0; k < cat.size(); k++){
@@ -227,7 +234,7 @@ public final class Sites{
             field.existing.removeAll(makers);
             //(one within reach of another side's turrets is not: a line to it would be shot down, which may be why it is idle)
             boolean[] shot = danger(team);
-            for(Machine m : makers) if(m.recipe.ground != Recipe.Ground.none && !field.revivable.contains(m) && !shot[m.x + m.y * Vars.world.width()]) field.revivable.add(m);
+            for(Machine m : makers) if(m.recipe.ground != Recipe.Ground.none && !field.revivable.contains(m) && !shot[m.x + m.y * Vars.world.width()] && !unfeedable.contains(arc.math.geom.Point2.pack(m.x, m.y))) field.revivable.add(m);
             out.append(String.format("%d makers of %s left out (they would make %.2f/s, the core got %.2f/s), but may be taken up; ", makers.size(), r.name, made, got));
         }
         //what is left of the map's own: what the model says they give the core against what it got, the difference a drain

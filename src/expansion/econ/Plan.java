@@ -250,6 +250,14 @@ public final class Plan{
                 }
                 Machine m = planner.makerNear(res, c);
                 if(m != null) more.add(m);
+                //(one of the map's idle machines that nothing can be brought to: not counted on, now or again, and the plan made
+                //again without it)
+                else if(c.revived){
+                    Sites.unfeedable.add(arc.math.geom.Point2.pack(c.x, c.y));
+                    field.revivable.removeIf(o -> o.x == c.x && o.y == c.y);
+                    replan = true;
+                    out.println("  " + c + " can't be fed " + cat.get(res).name + ": the map's idle machine is not counted on");
+                }
             }
             //the map's machines on a grid that can't be joined to the plan's give it no power
             if(!cut.isEmpty()){

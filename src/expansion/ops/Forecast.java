@@ -37,22 +37,21 @@ public final class Forecast{
     final Team me, foe;
     final Building home;
     final ObjectMap<UnitType, boolean[]> reach = new ObjectMap<>();
-    /** Whether its yards are counted at their own pace (see the constructor), and whether any of them is not at it now. */
-    public final boolean full;
-    public boolean slack;
+    /** The share of their own pace the other side's yards are counted at (see the constructor). */
+    public final float use;
 
     public Forecast(Team me, Team foe, float horizon, float step){
-        this(me, foe, horizon, step, false);
+        this(me, foe, horizon, step, 1f);
     }
 
     /**
-     * With full on, the other side's yards are counted at their own pace whatever they are doing now: what a yard not
-     * working at this moment does next is not known (on lake the sector's ship fabricator had not begun at the landing,
-     * counted as idle nothing was foreseen, and its eludes took the core at four minutes), so the command layer weighs
-     * both, as scenarios of their own.
+     * With the other side's yards counted at the share of their own pace they have been seen to work at (use, 0 to 1; see
+     * Command#yardUse): what a yard does next is not what it does this moment (on lake the sector's ship fabricator had not
+     * begun at the landing, counted idle nothing was foreseen, and its eludes took the core at four minutes; counted at its
+     * own pace the Brain's starved yards made thirty-six stells in twelve minutes, and basin built walls all game).
      */
-    public Forecast(Team me, Team foe, float horizon, float step, boolean full){
-        this.full = full;
+    public Forecast(Team me, Team foe, float horizon, float step, float use){
+        this.use = use;
         this.me = me;
         this.foe = foe;
         this.step = step;
@@ -148,11 +147,10 @@ public final class Forecast{
             if(b instanceof UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0){
                 UnitFactory block = (UnitFactory)b.block;
                 var plan = block.plans.get(yard.currentPlan);
-                //as it works now (one making nothing, starved or unpowered, makes nothing), or at its own pace
-                float eff = b.cheating() || full ? 1f : Math.min(1f, yard.efficiency);
-                if(eff < 0.999f) slack = true;
-                if(eff <= 0.01f) continue;
-                float time = plan.time / Math.max(0.01f, eff) / 60f;
+                //at the share of its pace the side's yards are seen to work at (one that cheats, at its pace)
+                float eff = b.cheating() ? 1f : use;
+                if(eff <= 1e-3f) continue;
+                float time = plan.time / eff / 60f;
                 float left = (1f - yard.fraction()) * time;
                 for(float t = left; t <= steps * step && made < room; t += time){
                     put(plan.unit, 1f, t, b.x, b.y);
@@ -160,11 +158,10 @@ public final class Forecast{
                 }
                 kinds.increment(plan.unit.name);
             }else if(b instanceof Reconstructor.ReconstructorBuild re && b.block instanceof Reconstructor block && block.upgrades.size > 0){
-                float eff = b.cheating() || full ? 1f : Math.min(1f, re.efficiency);
-                if(eff < 0.999f) slack = true;
-                if(eff <= 0.01f) continue;
+                float eff = b.cheating() ? 1f : use;
+                if(eff <= 1e-3f) continue;
                 UnitType[] up = block.upgrades.first();
-                float time = block.constructTime / Math.max(0.01f, eff) / 60f;
+                float time = block.constructTime / eff / 60f;
                 for(float t = time; t <= steps * step; t += time){
                     //(the difference: one of the tier above, one fewer of the tier below)
                     put(up[1], 1f, t, b.x, b.y);

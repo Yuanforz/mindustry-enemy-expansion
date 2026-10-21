@@ -169,6 +169,36 @@ public final class Command{
     public Forecast forecast;
     public final StringBuilder log = new StringBuilder();
     long dpAt;
+    /** The other side's fighting units seen at the weighings so far, how many new ones came since the first, and how many its yards would have made at their pace meanwhile. */
+    final IntSet foeUnitsSeen = new IntSet();
+    float foeMade, foeExpected = 0f, lastWeighAt = -1f;
+
+    /**
+     * The share of their own pace the other side's yards have been seen to work at: the units that came since the first
+     * weighing over those its yards would have made at their pace meanwhile, with one unit's worth of prior that they do
+     * (as fast as they could before anything is seen; Laplace's rule of succession for a rate).
+     */
+    float yardUse(){
+        float now = (float)(Vars.state.tick / 60.0);
+        float pace = 0f;
+        for(Building b : foe.data().buildings){
+            if(b.cheating()) continue;
+            if(b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0) pace += 60f / Math.max(1f, ((mindustry.world.blocks.units.UnitFactory)b.block).plans.get(yard.currentPlan).time);
+            else if(b.block instanceof mindustry.world.blocks.units.Reconstructor re) pace += 60f / Math.max(1f, re.constructTime);
+        }
+        int fresh = 0;
+        for(Unit u : foe.data().units){
+            if(u.spawnedByCore || !u.type.canAttack) continue;
+            if(foeUnitsSeen.add(u.id) && lastWeighAt >= 0f) fresh++;
+        }
+        if(lastWeighAt >= 0f){
+            foeMade += fresh;
+            foeExpected += Math.max(0f, now - lastWeighAt) * pace;
+        }
+        lastWeighAt = now;
+        return Math.min(1f, (foeMade + 1f) / (foeExpected + 1f));
+    }
+
     /** When the other side was first weighed against, and what its buildings cost in all then. */
     float foeFirstSeen = -1f, foeFirstSpend;
 
@@ -208,9 +238,7 @@ public final class Command{
         long t0 = System.nanoTime();
         log.setLength(0);
         weighed.clear();
-        forecast = new Forecast(me, foe, horizon, step);
-        //(and with its yards at their own pace, when one is not at it now: a scenario of its own)
-        Forecast full = forecast.slack ? new Forecast(me, foe, horizon, step, true) : null;
+        forecast = new Forecast(me, foe, horizon, step, yardUse());
         reachCache.clear();
         nowReaching = mobileNow(true);
         nowStaying = mobileNow(false);
@@ -339,7 +367,7 @@ public final class Command{
         float pace = seen - foeFirstSeen <= 0f || ours <= 0f ? 1f : Math.min(1f, Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen) / ours);
         boolean builds = fastest != null && pace > 0f;
         List<Scenario> scenarios = new ArrayList<>();
-        for(Forecast fc : full == null ? List.of(forecast) : List.of(forecast, full)) for(float lag : lags) for(boolean m : builds ? new boolean[]{false, true} : new boolean[]{false}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s, fc));
+        for(Forecast fc : List.of(forecast)) for(float lag : lags) for(boolean m : builds ? new boolean[]{false, true} : new boolean[]{false}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s, fc));
         log.append(String.format("  command: the other side builds at %.0f%% of our fastest pace (%.1f items a second since %s, ours %.1f)%s\n", pace * 100f, seen - foeFirstSeen <= 0f ? 0f : Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen), Plan.time(foeFirstSeen), ours, builds ? "" : ": no mirror"));
         Force foeGuard = foeGuard();
         //(the mirror, the defences and each stage's units under each lag: worked out once)
@@ -455,12 +483,12 @@ public final class Command{
         long p1 = System.nanoTime();
         weighed.sort((a, b) -> Float.compare(b.score, a.score));
         log.append(String.format("  command: times: stages %.1f + %.1f s, defences %.1f s, stages after them %.1f s, playing %.1f s\n", (w1 - w0) / 1e9f, (w2 - w1) / 1e9f, (d1 - d0) / 1e9f, afterNanos / 1e9f, (p1 - d1 - afterNanos) / 1e9f));
-        log.append(String.format("  command (%s, horizon %s, %d scenarios): theirs at our core by the horizon at most %s%s; %s\n", posture, Plan.time(horizon), scenarios.size(), forecast.at[forecast.steps], full == null ? "" : " (" + full.at[full.steps] + " with its yards at their own pace)", forecast.notes));
+        log.append(String.format("  command (%s, horizon %s, %d scenarios): theirs at our core by the horizon at most %s (its yards at %.0f%% of their pace, as seen); %s\n", posture, Plan.time(horizon), scenarios.size(), forecast.at[forecast.steps], forecast.use * 100f, forecast.notes));
         for(int i = 0; i < Math.min(weighed.size(), 8); i++) log.append("    ").append(weighed.get(i)).append('\n');
         if(weighed.size() > 8) log.append("    (").append(weighed.size() - 8).append(" more)\n");
         if(Boolean.getBoolean("ops.all")){
             StringBuilder head = new StringBuilder("    scenarios (lag/mirror/sendAt):");
-            for(Scenario sc : scenarios) head.append(String.format(" %.2f/%s/%.1f%s", sc.lag, sc.mirror ? "m" : "-", sc.sendAt, sc.forecast.full ? "/full" : ""));
+            for(Scenario sc : scenarios) head.append(String.format(" %.2f/%s/%.1f", sc.lag, sc.mirror ? "m" : "-", sc.sendAt));
             log.append(head).append('\n');
             for(Candidate c : weighed){
                 log.append("    ").append(c.stage()).append(c.modules == 0 ? "" : "+d" + c.modules + c.kind).append(String.format(" %.1f:", c.score));
