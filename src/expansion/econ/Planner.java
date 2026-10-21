@@ -221,9 +221,15 @@ public final class Planner{
                     sofar = plan;
                     if(add == null) break;
                     if(Math.hypot(add.x - c.x, add.y - c.y) > localLiquid * 1.5f){
-                        Field.Site back = new Field.Site(add.recipe.ground, add.x, add.y, add.rotation, add.item, add.factor, add.distance, new int[0]);
-                        back.block = add.recipe.block;
-                        free.add(0, back);
+                        //(the place given back as it was, seen or not, its tiles and all, behind the rest: made afresh, a vent no
+                        //one had seen could be built at once, and went first)
+                        Field.Site back = placeOf.get(add);
+                        if(back == null){
+                            back = new Field.Site(add.recipe.ground, add.x, add.y, add.rotation, add.item, add.factor, add.distance, new int[0]);
+                            back.block = add.recipe.block;
+                            back.seen = !add.unseen;
+                        }
+                        if(!free.contains(back)) free.add(back);
                         break;
                     }
                     plan.add(add);
@@ -466,9 +472,13 @@ public final class Planner{
         if(site != null){
             m.rotation = site.rotation;
             m.unseen = !site.seen;
+            placeOf.put(m, site);
         }
         return m;
     }
+
+    /** The place each machine was put on (to give it back as it was). */
+    final Map<Machine, Field.Site> placeOf = new HashMap<>();
 
     /** The seconds the core unit takes to put a machine up with its lines, as estimate() has them. */
     public float estimateSeconds(Recipe r, int siteItem, boolean onSite, float d){

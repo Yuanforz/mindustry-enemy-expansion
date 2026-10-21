@@ -393,3 +393,42 @@ E. **Execution without rules**: put off by whether anything that stands brings t
 planner asked for what the Forecast has at our core, with a budget from the model.
 
 F. **The constants of 3.13 and 4.10** replaced one by one by what they stand for, as each layer is reworked.
+
+## 8. A scan for hidden errors (2026-10-21, after c17)
+
+Five readers over the whole of Operations (economy model, layout, execution and Match, army and defence, the command
+layer), each claim checked against the code and the game's bytecode before it was fixed. Fixed (commits 651143b, 0a24209
+and the one after):
+
+- **Model**: taps off the map's own lines never reached the flow model (a fabricator where every site was taken could not
+  be fed in the model: onset made nothing in ninety minutes); a fed machine read as backed up (by all it holds); a unit
+  maker's first batch filled at what was left after its own draw; a refabricator handing on to the next kept "holding";
+  the place of an extra left free; makerNear without fits(); gated plans dropped what stands of blocks they may not build;
+  the core's capacity of one core block; a liquid maker's place given back blank and first; the fog rule toggled by
+  several planning threads at once.
+- **Predictor**: yard pace by all yards at once and at the pace of those now standing (12% where it was full); health
+  under the team's multiplier left out for what stands (hard campaign: 80%); waves without the difficulty's count and
+  their shields; their units already on our side walked from their base; lightning's default damage; point-defence,
+  repair, build and mining weapons counted as attacks; fights worn alike over kinds that cannot be hit; dry plans taken
+  as they were weighed (now laid out best-first and weighed again on what they really cost).
+- **Execution**: put-off steps waited on the first; steps on unseen ground kept a stage from ending; machines between
+  deliveries read as idle (a stage given up 16 silicon short); earlier stages' losses counted again every two seconds;
+  a guard's pause timed the stage's job out; other hands' build plans left on the unit; all sites in reach begun at once
+  (now one at a time, as the game's builder); parts on wrongly facing blocks taken as built; deferred parts and cuts lost
+  at a stage's end; repeated power mends; the audit's time counted twice; the campaign's last wave won early.
+- **Layout**: a design's unit exits open to nodes and bridges; an unpowerable machine taken into the grid; a trunk duct a
+  drill feeds from the side made a dock; a failed commit clearing another net's quiet tiles; the core line never cut when
+  nothing later needs its item.
+- **Army and defence**: two squad AIs on our side, and the game's taking the tactics search's units (it stands by now);
+  holders' spots redrawn every two seconds; refabricator trips called back; power turrets loaded without power; anti-air
+  turrets counted as none; the distance cache kept past a growing map area; walls and ground priced by the flow field
+  against a control-pathfinder attacker (a million a tile: it goes round); attacks valued as if every squad arrived at
+  once (now in order of arrival).
+
+Left (checked, smaller or needing more than a fix): the hold and push layers (off under tactics) aim at the mean of all
+foes and treat every order as theirs; the dodger's "stand still"; boats counted as reaching land; wall lines with gaps
+over standing ducts; the no-build ring round enemy cores; Router bridges taken by the same net's own bridges and the
+negotiation's unpriced starts and quiet tiles; the rules' build-time and unit multipliers; a large cliff crusher can be
+chosen where its sites rank first though surge alloy can't be had (the site value by ground's first recipe hides it:
+valued by the site's own block, gen maps planned nothing); walls before a turret take our units' fire in the game but not
+in the tactics model (a single breach behind walls took twenty stells on gen-1).

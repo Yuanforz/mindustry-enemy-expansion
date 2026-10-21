@@ -305,6 +305,20 @@ public final class Timeline{
         return true;
     }
 
+    /** A refabricator's unit gone out of it: a maker before it with a unit waiting hands that over (and so on up the chain). */
+    private void release(int i){
+        holding[i] = false;
+        for(int j = 0; j < built.size(); j++){
+            if(waiting[j] && feeds[j] == i){
+                waiting[j] = false;
+                progress[j] = 0f;
+                holding[i] = true;
+                if(built.get(j).recipe.unitIn >= 0) release(j);
+                break;
+            }
+        }
+    }
+
     /** A unit is finished at machine i: it goes on to the refabricator the factory feeds, or to the army. True when what can work has changed. */
     private boolean unitDone(int i){
         Machine m = built.get(i);
@@ -319,22 +333,16 @@ public final class Timeline{
             }
             holding[into] = true;
             progress[i] = 0f;
+            //(a refabricator that hands its unit on to the next has nothing in it till the one before hands it another:
+            //left holding, it went on turning out units of its tier with none coming in)
+            if(r.unitIn >= 0) release(i);
             return true;
         }
         progress[i] = 0f;
         made[r.unitOut]++;
         if(Float.isInfinite(first[r.unitOut])) first[r.unitOut] = t;
         if(r.unitIn >= 0){
-            holding[i] = false;
-            //a factory with a unit waiting for this refabricator hands it over
-            for(int j = 0; j < built.size(); j++){
-                if(waiting[j] && feeds[j] == i){
-                    waiting[j] = false;
-                    progress[j] = 0f;
-                    holding[i] = true;
-                    break;
-                }
-            }
+            release(i);
             return true;
         }
         //a factory that hands its units to no one goes on as it was: what runs, and so the plant's flows, are the same

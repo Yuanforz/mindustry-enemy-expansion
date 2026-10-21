@@ -122,6 +122,7 @@ public final class Hand extends mindustry.entities.units.AIController{
         if(now() < mendAt) return;
         mendAt = now() + 10f;
         arc.struct.IntSet now = new arc.struct.IntSet();
+        boolean mendedOne = false;
         Seq<Part> mine = new Seq<>();
         for(int i = 0; i < Math.min(next, order.size()); i++){
             Part self = works.at.get(order.get(i));
@@ -137,7 +138,7 @@ public final class Hand extends mindustry.entities.units.AIController{
             if(b.power.graph.getBatteryStored() > 0.01f) continue;
             int pos = b.pos();
             now.add(pos);
-            if(!cutOff.contains(pos)) continue;
+            if(!cutOff.contains(pos) || mendedOne) continue;
             Seq<Part> nodes = Wiring.mend(works.cat, unit.team, b);
             if(nodes == null || nodes.isEmpty()){
                 if(!unmendable.contains(pos)){
@@ -146,11 +147,24 @@ public final class Hand extends mindustry.entities.units.AIController{
                 }
                 continue;
             }
-            for(Part p : nodes) if(!watch.repairs.contains(p, true)) watch.repairs.add(p);
-            mended++;
-            trouble.add(String.format("%s at %d,%d had no power: %d nodes to join it to the grid", b.block.name, b.tileX(), b.tileY(), nodes.size));
-            //(one at a time: the next look sees whether that did it for the others on the same island)
-            break;
+            //(the same node at the same place once: the mend is worked out afresh at each look, and its nodes, new each
+            //time, were queued again every ten seconds while it waited)
+            int added = 0;
+            for(Part p : nodes){
+                boolean had = false;
+                for(Part q : watch.repairs) if(q.x == p.x && q.y == p.y && q.block == p.block) had = true;
+                if(!had){
+                    watch.repairs.add(p);
+                    added++;
+                }
+            }
+            if(added > 0){
+                mended++;
+                trouble.add(String.format("%s at %d,%d had no power: %d nodes to join it to the grid", b.block.name, b.tileX(), b.tileY(), nodes.size));
+            }
+            //(one at a time: the next look sees whether that did it for the others on the same island; the rest are still
+            //looked at, so that what is cut off stays known)
+            mendedOne = true;
         }
         cutOff.clear();
         cutOff.addAll(now);
@@ -579,7 +593,9 @@ public final class Hand extends mindustry.entities.units.AIController{
         for(Part p : job){
             Tile tile = Vars.world.tile(p.x, p.y);
             if(tile == null) continue;
-            if(tile.block() == p.block && tile.build != null && !(tile.build instanceof ConstructBuild)) continue;
+            //(standing, and facing as planned: a duct of the map's the plan runs on, the other way round, was taken for built,
+            //never turned, and its line went nowhere; turned as a player turns it, by putting it down again, at no cost)
+            if(tile.block() == p.block && tile.build != null && !(tile.build instanceof ConstructBuild) && (!p.block.rotate || tile.build.rotation == p.rotation)) continue;
             all = false;
             left++;
             float d = unit.dst(tile.worldx(), tile.worldy());

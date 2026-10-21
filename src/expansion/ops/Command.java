@@ -1019,7 +1019,7 @@ public final class Command{
      * A fight's step: one body against all the parts of another (each part worn down alike, as the fire falls on them by
      * their share of the health), over dt seconds in sub-steps, both firing at once. The bodies are changed.
      */
-    static void wear(Force a, List<Force> parts, float dt){
+    public static void wear(Force a, List<Force> parts, float dt){
         float h = dt / fightSteps;
         for(int k = 0; k < fightSteps; k++){
             Force b = new Force(parts.get(0).team);

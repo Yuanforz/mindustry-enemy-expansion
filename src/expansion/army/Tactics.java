@@ -605,14 +605,23 @@ public final class Tactics{
         }
         for(var e : going){
             Site target = e.key;
-            expansion.ops.Force mine = new expansion.ops.Force(army.team);
-            float walk = 0f, myWorth = 0f;
+            float walk = 0f, myWorth = 0f, total = 0f;
+            //(each squad gets there in its own time, and fights what is there from then: counted as one body arriving at
+            //once, squads that came one by one out of the factory were sent at a breach together in the model, and it took
+            //them one at a time)
+            Seq<float[]> arrivals = new Seq<>();
+            Seq<expansion.ops.Force> bodies = new Seq<>();
             for(Group g : e.value){
-                mine.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
+                expansion.ops.Force f = g.force.copy().scl(g.ph / Math.max(1f, g.health));
                 float dist = Math.max(0f, Mathf.dst(g.px, g.py, target.x, target.y) - g.range);
-                walk = Math.max(walk, dist / Math.max(1f, g.speed * 60f));
+                float at = dist / Math.max(1f, g.speed * 60f);
+                arrivals.add(new float[]{at, bodies.size});
+                bodies.add(f);
+                walk = Math.max(walk, at);
                 myWorth += g.ph * g.worth();
+                total += f.health;
             }
+            arrivals.sort(a -> a[0]);
             expansion.ops.Force guard = target.force.copy().scl(target.ph / Math.max(1f, target.health));
             //(their core taken is the game won: all they have)
             float guardWorth = target.build instanceof CoreBlock.CoreBuild && target.build == foeCore(target) ? theirStake : target.ph * target.worth;
@@ -624,10 +633,23 @@ public final class Tactics{
                 guard.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
                 guardWorth += g.ph * g.worth();
             }
-            float[] fight = mine.fight(guard);
+            //(those there fight what guards it till the next comes, worn down as Command.wear has it; then all that is
+            //there fights it out)
+            float guardTotal = Math.max(1f, guard.health);
+            expansion.ops.Force mine = new expansion.ops.Force(army.team);
+            float t = 0f;
+            for(float[] a : arrivals){
+                float gap = a[0] - t;
+                for(float step = 0f; step < gap && !mine.empty() && !guard.empty(); step += 2f) expansion.ops.Command.wear(mine, java.util.List.of(guard), Math.min(2f, gap - step));
+                mine.add(bodies.get((int)a[1]));
+                t = a[0];
+            }
+            float[] fight = guard.empty() ? new float[]{1f, 1f, 0f} : mine.fight(guard);
+            float ourLeft = fight[0] > 0f ? fight[1] * mine.health / Math.max(1f, total) : 0f;
+            float theirLeft = fight[0] < 0f ? fight[1] * guard.health / guardTotal : fight[0] > 0f ? 0f : guard.health / guardTotal;
             float d = (float)Math.exp(-(walk + (Float.isInfinite(fight[2]) ? 0f : fight[2])) / expansion.ops.Command.discount);
-            if(fight[0] > 0f) score += d * (guardWorth - myWorth * (1f - fight[1]));
-            else if(fight[0] < 0f) score += d * (guardWorth * (1f - fight[1]) - myWorth);
+            if(fight[0] > 0f) score += d * (guardWorth - myWorth * (1f - ourLeft));
+            else if(fight[0] < 0f) score += d * (guardWorth * (1f - theirLeft) - myWorth);
         }
         return score;
     }

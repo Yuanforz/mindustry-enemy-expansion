@@ -321,7 +321,12 @@ final class Router{
             }
         }
         for(Part p : all) grid.plan(p, n.id, n.res, -1);
-        for(int i = 0; i < n.quiet.size; i++) grid.quiet[n.quiet.get(i)] = true;
+        //(what was quiet before stays so if this is taken back: a tile two nets keep quiet was cleared for the other too)
+        boolean[] wasQuiet = new boolean[n.quiet.size];
+        for(int i = 0; i < n.quiet.size; i++){
+            wasQuiet[i] = grid.quiet[n.quiet.get(i)];
+            grid.quiet[n.quiet.get(i)] = true;
+        }
         //and what it now is against the rest: anything pushing a wrong thing into it, a bridge linking across nets
         for(Part p : all){
             String bad = wrongInto(p, n);
@@ -329,7 +334,7 @@ final class Router{
             if(bad != null){
                 refusal = bad;
                 for(Part q : all) grid.unplan(q);
-                for(int i = 0; i < n.quiet.size; i++) grid.quiet[n.quiet.get(i)] = false;
+                for(int i = 0; i < n.quiet.size; i++) grid.quiet[n.quiet.get(i)] = wasQuiet[i];
                 return false;
             }
         }

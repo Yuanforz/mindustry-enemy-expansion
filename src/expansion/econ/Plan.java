@@ -435,6 +435,8 @@ public final class Plan{
             hit = scans.get(key);
             if(hit == null){
                 Catalog c = Recipes.read(blocks, (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+                //(what the core holds of each thing: all the side's cores and the vaults on them, as the game counts it)
+                c.coreCap = Math.max(c.coreCap, core.storageCapacity);
                 c.logistics(allowed);
                 Field fl = Sites.scan(c, me, radius);
                 hit = new Object[]{c, fl};
@@ -555,7 +557,13 @@ public final class Plan{
         if(maxDepth == Integer.MAX_VALUE) out.println("  not yet (what they are built of is neither in the core nor dug here): " + String.join(" ", left));
         Set<String> fewer = new HashSet<>(allowed);
         fewer.removeAll(left);
-        scan(kept, fewer, me);
+        //(and what of ours stands already, of any block: read without it, a large bore up and running gave nothing and
+        //took no power in the plans that may not build one; more of it can't be had here anyway, being dearer than they reach)
+        List<String> read = new ArrayList<>(kept);
+        Set<String> standing = new HashSet<>();
+        for(var b : me.data().buildings) standing.add(b.block.name);
+        for(String name : left) if(standing.contains(name)) read.add(name);
+        scan(read, fewer, me);
         return fewer;
     }
 

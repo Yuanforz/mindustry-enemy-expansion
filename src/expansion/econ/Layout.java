@@ -732,6 +732,13 @@ public final class Layout{
             Part cut = n.trunk.get(lastDock + 1);
             int after = -1;
             for(int i = 0; i < order.size(); i++) if(realCost(order.get(i))[n.res] > 0) after = i;
+            //(and not before the job that lays the piece: with nothing to come needing the thing, it was after none, and
+            //never cut)
+            for(int i = 0; i < order.size(); i++){
+                Seq<Part> laid = lines.get(order.get(i));
+                if(laid != null && laid.contains(cut, true)) after = Math.max(after, i);
+            }
+            if(after < 0) continue;
             cuts.computeIfAbsent(after, x -> new Seq<>()).add(cut);
         }
     }
