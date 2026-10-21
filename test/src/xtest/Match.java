@@ -180,10 +180,9 @@ public class Match{
         //the game gives the side of the waves no unit cap at all (Units.getCap); where the two sides are to start alike (even,
         //gen) ours gets none either. In a sector it keeps the cap a player has there.
         if((mode.equals("even") || generated) && !sandbox && !Boolean.getBoolean("match.cap")) us.ignoreUnitCap = true;
-        //the squad AI, which the game runs for its AI sides only: run here for ours by hand
+        //the squad AI, which the game runs for every side whose rule has it (Logic.update)
         us.rules().rtsAi = !brainSide;
         if(brainSide) Brain.side = us;
-        mindustry.ai.RtsAI squads = new mindustry.ai.RtsAI(us.data());
         //and our army layer over it (-Dmatch.us=rts for the squad AI alone, or army:parts); the Brain is played as the main
         //line has it, without the layer (-Dmatch.brainarmy=true to give it the layer too)
         String ours = System.getProperty("match.us", "army:defaults,push,hold");
@@ -556,7 +555,9 @@ public class Match{
                 if(plan != null && plan.model != null) stageModel = plan.model;
                 if(plan != null && plan.model != null){
                     if(hand != null) before.add(hand);
+                    expansion.econ.Hand last = hand;
                     hand = new expansion.econ.Hand(plan.works, plan.model.order);
+                    hand.takeOver(last);
                     if(Boolean.getBoolean("match.order")){
                         StringBuilder ob = new StringBuilder("  the order:");
                         for(Machine m : plan.model.order) ob.append(" ").append(m.recipe.name);
@@ -573,7 +574,10 @@ public class Match{
                     hand.rallyUnits = false;
                     Intent.current = plan.works.intent();
                     hand.intent = Intent.current;
-                    if(builder != null && !builder.dead()) builder.controller(hand);
+                    if(builder != null && !builder.dead()){
+                        hand.resume();
+                        builder.controller(hand);
+                    }
                 }
             }
             //a guard up, or out of time: the stage's hand takes over again
@@ -582,7 +586,10 @@ public class Match{
                 before.add(hand);
                 hand = paused;
                 paused = null;
-                if(builder != null && !builder.dead()) builder.controller(hand);
+                if(builder != null && !builder.dead()){
+                        hand.resume();
+                        builder.controller(hand);
+                    }
             }
             if(f % 3600 == 0){
                 coreHitLastMinute = coreHitRecent;
@@ -659,7 +666,10 @@ public class Match{
                         hand.urgent = true;
                         hand.rallyUnits = false;
                         hand.watch.losses = lossBook;
-                        if(builder != null && !builder.dead()) builder.controller(hand);
+                        if(builder != null && !builder.dead()){
+                        hand.resume();
+                        builder.controller(hand);
+                    }
                     }
                 }
             }
@@ -675,6 +685,9 @@ public class Match{
                     Tile tile = Vars.world.tile(p.x, p.y);
                     if(tile != null && tile.build == null && !hand.watch.repairs.contains(p, true)) hand.watch.repairs.add(p);
                 }
+                //(handed over, not lost again: cleared, the old watch found each again two seconds on and counted a loss,
+                //till all it had were "lost too often" and none was ever put back)
+                old.watch.handed.addAll(old.watch.repairs);
                 old.watch.repairs.clear();
             }
             if(campaign && preset != null && f % 60 == 0){
@@ -701,7 +714,7 @@ public class Match{
             long q1 = System.nanoTime();
             ControlSync.step();
             long q2 = System.nanoTime();
-            if(!brainSide) squads.update();
+            //(the game itself runs the squad AI of every side whose rule has it: run here as well, ours had two)
             long q3 = System.nanoTime();
             if(army != null) army.update();
             long q4 = System.nanoTime();
@@ -791,7 +804,8 @@ public class Match{
                     winner = "us";
                     break;
                 }
-                if(!rules.attackMode && rules.winWave > 0 && Vars.state.wave >= rules.winWave && Vars.state.enemies == 0){
+                //(as the game has it: the last wave out, not still coming, and none of it left)
+                if(!rules.attackMode && rules.winWave > 0 && Vars.state.wave >= rules.winWave && Vars.state.enemies == 0 && !Vars.spawner.isSpawning()){
                     if(preset != null && preset.attackAfterWaves && !them.cores().isEmpty()) rules.attackMode = true;
                     else{
                         winner = "us";

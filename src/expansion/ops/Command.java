@@ -1134,7 +1134,7 @@ public final class Command{
         ourCore = new Force(me);
         if(home != null){
             ourCore.addBuilding(home);
-            for(Building b : me.data().buildings) if(b instanceof Turret.TurretBuild t && t.hasAmmo() && b.within(home, 40f * Vars.tilesize)) ourTurrets.addTurret(t);
+            for(Building b : me.data().buildings) if(b instanceof Turret.TurretBuild t && Combat.loaded(t) && b.within(home, 40f * Vars.tilesize)) ourTurrets.addTurret(t);
         }
         foeCores = new Force(foe);
         foeCoresWhole = true;
@@ -1148,7 +1148,7 @@ public final class Command{
     Force foeGuard(){
         Force f = new Force(foe);
         for(Building b : foe.data().buildings){
-            if(!(b instanceof Turret.TurretBuild t) || !t.hasAmmo()) continue;
+            if(!(b instanceof Turret.TurretBuild t) || !Combat.loaded(t)) continue;
             boolean near = false;
             for(CoreBlock.CoreBuild c : foe.cores()) if(b.within(c, 40f * Vars.tilesize)) near = true;
             if(near) f.addTurret(t);

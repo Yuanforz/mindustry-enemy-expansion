@@ -93,6 +93,10 @@ public final class Watch{
      * "put it back", for the same silicon, for the rest of the game.
      */
     public java.util.function.IntPredicate notBuilt = i -> false;
+    /** What it found missing and handed to another hand to put back: not lost again till it stands again. */
+    public final Seq<Part> handed = new Seq<>();
+    /** Whether its hand is at work on a part now (set by the hand). */
+    public java.util.function.Predicate<Part> busy = p -> false;
 
     /** Looks at the jobs done so far (the first {@code done} of the order). */
     int lastDone;
@@ -110,7 +114,12 @@ public final class Watch{
                 Tile t = Vars.world.tile(p.x, p.y);
                 if(t == null) continue;
                 boolean there = t.block() == p.block || t.build instanceof ConstructBuild;
-                if(!there && !repairs.contains(p, true) && Build.validPlace(p.block, layout.team, p.x, p.y, p.rotation)){
+                if(there){
+                    if(handed.size > 0) handed.remove(p, true);
+                    continue;
+                }
+                //(nor while its hand has it in hand to put back: lost again on the way there, it was soon "lost too often")
+                if(!repairs.contains(p, true) && !handed.contains(p, true) && !busy.test(p) && Build.validPlace(p.block, layout.team, p.x, p.y, p.rotation)){
                     repairs.add(p);
                     lost(p, now);
                     repaired++;

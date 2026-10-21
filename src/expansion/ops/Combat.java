@@ -47,6 +47,15 @@ public final class Combat{
         }
     }
 
+    /**
+     * Whether a turret fires now: its ammunition in, and power where it runs on power (a power turret's hasAmmo is always
+     * true: one whose power was cut counted as firing at full).
+     */
+    public static boolean loaded(Turret.TurretBuild t){
+        if(!t.hasAmmo()) return false;
+        return t.block.consPower == null || t.power == null || t.power.status > 0.01f;
+    }
+
     /** The ammunition a turret is taken to fire: what it holds now, else the strongest it can be given (one power runs on). */
     public static BulletType ammoOf(Turret type, Turret.TurretBuild build){
         BulletType held = build == null ? null : build.peekAmmo();
@@ -158,9 +167,15 @@ public final class Combat{
 
     /** (worked out once: the rules do not change in a game; -Dops.nocache for checking) */
     static final java.util.concurrent.ConcurrentHashMap<Key, Float> dpsSeen = new java.util.concurrent.ConcurrentHashMap<>();
+    static volatile Rules dpsRules;
 
     /** Damage a second of a fighter (a unit kind, a Gun) of a team against a target (a unit kind, a block) of another. */
     public static float dps(Object fighter, Team team, Object target, Team targetTeam){
+        //(worked out again for another game's rules: the multipliers differ from map to map)
+        if(dpsRules != Vars.state.rules){
+            dpsSeen.clear();
+            dpsRules = Vars.state.rules;
+        }
         Key k = new Key(fighter, team, target, targetTeam);
         Float d = dpsSeen.get(k);
         if(d == null) dpsSeen.put(k, d = dpsNow(fighter, team, target, targetTeam));

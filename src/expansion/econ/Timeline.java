@@ -370,14 +370,20 @@ public final class Timeline{
         //the first is full
         float[] free = plant.toCore.clone();
         draw = new float[cat.size()];
+        //(what each that draws already takes: its own fill counts it, not what is left once it has taken it; counted on what
+        //was left, one behind an underflow dock filled at its machines' rate alone, all it drew lost)
+        float[][] took = new float[built.size()][];
         for(int pass = 0; pass < 2; pass++){
             for(int i = 0; i < built.size(); i++){
                 Recipe r = built.get(i).recipe;
-                if(!r.makesUnits()) continue;
+                //(one the layout could not feed takes nothing in, as it makes nothing)
+                if(!r.makesUnits() || built.get(i).unfed) continue;
                 float share = built.get(i).draw;
                 if(pass == 0 && drawUntil[i] > t + 1e-6f){
+                    took[i] = new float[r.in.length];
                     for(int k = 0; k < r.in.length; k++){
                         if(r.in[k] <= 0f || cat.get(k).kind != Res.Kind.item) continue;
+                        took[i][k] = free[k] * share;
                         draw[k] += free[k] * share;
                         free[k] -= free[k] * share;
                     }
@@ -391,7 +397,7 @@ public final class Timeline{
                     float fill = 0f;
                     for(int k = 0; k < r.in.length; k++){
                         if(r.in[k] <= 0f || cat.get(k).kind != Res.Kind.item) continue;
-                        float batch = r.in[k] * r.unitSeconds, rate = r.in[k] * (active[i] ? plant.eff[i] : 0f) + free[k] * share;
+                        float batch = r.in[k] * r.unitSeconds, rate = r.in[k] * (active[i] ? plant.eff[i] : 0f) + (took[i] != null ? took[i][k] : free[k] * share);
                         fill = Math.max(fill, rate <= 1e-6f ? Float.POSITIVE_INFINITY : batch / rate);
                     }
                     fillRate[i] = Float.isInfinite(fill) ? 0f : 1f / fill;

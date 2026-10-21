@@ -127,7 +127,8 @@ public final class Tactics{
             this.ours = ours;
             this.x = x;
             this.y = y;
-            this.health = health;
+            //(what it can take as the game has it: its health under its team's multiplier, as the fire on it is counted)
+            this.health = force != null ? force.health : health;
             this.dps = dps;
             this.range = range;
             this.worth = worth;
@@ -155,7 +156,9 @@ public final class Tactics{
         Seq<Unit> mine = new Seq<>();
         for(int i = 0; i < team.data().units.size; i++){
             Unit u = team.data().units.get(i);
-            if(Bait.coreUnit(u) || !u.type.canAttack || u.isPlayer() || u.dead() || !(u.controller() instanceof CommandAI)) continue;
+            if(Bait.coreUnit(u) || !u.type.canAttack || u.isPlayer() || u.dead() || !(u.controller() instanceof CommandAI ai)) continue;
+            //(one on its way into a refabricator is the army's to upgrade: sent elsewhere every two seconds, none got there)
+            if(ai.command == mindustry.ai.UnitCommand.enterPayloadCommand && ai.targetPos != null) continue;
             mine.add(u);
         }
         if(mine.isEmpty()){
@@ -319,9 +322,10 @@ public final class Tactics{
             for(Building b : data.buildings){
                 if(b instanceof Turret.TurretBuild t){
                     Turret type = (Turret)b.block;
-                    //(a turret without ammunition fires nothing: a body that only takes hits)
-                    expansion.ops.Force f = t.hasAmmo() ? new expansion.ops.Force(data.team).addTurret(t) : new expansion.ops.Force(data.team).addBuilding(b);
-                    sites.add(new Site(b, mine, b.x, b.y, b.health, f.dps, t.range(), worthTurret, type.targetAir, type.targetGround, f));
+                    //(a turret without ammunition, or power, fires nothing: a body that only takes hits; one that fires at flyers
+                    //alone fires all the same: counted against a tank, a disperse was no turret at all)
+                    expansion.ops.Force f = expansion.ops.Combat.loaded(t) ? new expansion.ops.Force(data.team).addTurret(t) : new expansion.ops.Force(data.team).addBuilding(b);
+                    sites.add(new Site(b, mine, b.x, b.y, b.health, f.dpsAny(), t.range(), worthTurret, type.targetAir, type.targetGround, f));
                 }else if(b instanceof CoreBlock.CoreBuild){
                     sites.add(new Site(b, mine, b.x, b.y, b.health, 0f, 0f, worthCore, false, false, new expansion.ops.Force(data.team).addBuilding(b)));
                 }else if(b.block instanceof UnitFactory || b.block instanceof Reconstructor){
@@ -653,6 +657,9 @@ public final class Tactics{
         return new float[]{g.x + vx * 60f * horizon, g.y + vy * 60f * horizon};
     }
 
+    /** Where each unit holding at home stands. */
+    final IntMap<Vec2> spots = new IntMap<>();
+
     /** The squad's units sent on its script; those already going there left to it. */
     void order(Group s, Object t){
         float[] at = goal(t);
@@ -665,10 +672,19 @@ public final class Tactics{
             goals.put(u.id, k);
             if(t instanceof Site site && site.build != null){
                 if(ai.attackTarget != site.build) ai.commandTarget(site.build);
+            }else if(t instanceof Building){
+                //(at home, spread round the core rather than all on one tile: each unit its own spot, kept while it holds there;
+                //a spot drawn afresh each time and checked against the core's own, half the holders were sent elsewhere every
+                //two seconds, and one that got there and stood had no orders, for the squad AI to take)
+                Vec2 spot = spots.get(u.id);
+                if(spot == null || !spot.within(to, 6f * Vars.tilesize)){
+                    float angle = (u.id * 137.508f) % 360f, r = (((Building)t).block.size / 2f + 2f + (u.id % 3)) * Vars.tilesize;
+                    spot = new Vec2(to.x + Angles.trnsx(angle, r), to.y + Angles.trnsy(angle, r));
+                    spots.put(u.id, spot);
+                }
+                if(ai.targetPos == null ? !u.within(spot, 2f * Vars.tilesize) : !ai.targetPos.within(spot, 1f)) ai.commandPosition(spot);
             }else if(ai.targetPos == null || !ai.targetPos.within(to, 3f * Vars.tilesize)){
-                //(at home, spread round the core rather than all on one tile)
-                Vec2 spot = t instanceof Building ? new Vec2(to.x + Mathf.range(4f * Vars.tilesize), to.y + Mathf.range(4f * Vars.tilesize)) : to;
-                ai.commandPosition(spot);
+                ai.commandPosition(to);
             }
         }
     }

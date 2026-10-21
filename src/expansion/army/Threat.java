@@ -97,7 +97,7 @@ public class Threat{
         gun.air = type.targetAir;
         gun.ground = type.targetGround;
         gun.health = t.health;
-        gun.loaded = t.hasAmmo();
+        gun.loaded = expansion.ops.Combat.loaded(t);
         gun.items = type instanceof ItemTurret;
         gun.power = type.consPower != null;
         BulletType bullet = t.peekAmmo();

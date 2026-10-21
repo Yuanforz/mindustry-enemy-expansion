@@ -25,6 +25,8 @@ public final class Terrain{
      * ground (near rock, near liquid, on damaging floor, through what stands): the way it really walks. Null where not read.
      */
     public float[] groundCost;
+    /** Whether the side that attacks finds its way as a player's units do (the control pathfinder), else by the flow field. */
+    public boolean rts = true;
 
     public Terrain(int w, int h){
         this.w = w;

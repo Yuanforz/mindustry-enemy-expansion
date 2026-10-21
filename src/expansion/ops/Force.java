@@ -60,6 +60,16 @@ public final class Force{
         dps = d;
     }
 
+    /** Damage a second against whatever each kind hits best of a plain tank and a plain flyer: whether it can hurt anything at all. */
+    public float dpsAny(){
+        float d = 0f;
+        for(var e : kinds){
+            if(e.value <= 1e-6f || e.key instanceof Block && !(e.key instanceof Turret)) continue;
+            d += e.value * Math.max(Combat.dps(e.key, team, UnitTypes.stell, null), Combat.dps(e.key, team, UnitTypes.flare, null));
+        }
+        return d;
+    }
+
     /** Damage a second against a plain target times health: for the report and for sorting, not for fights. */
     public float strength(){
         return dps * health;

@@ -169,6 +169,7 @@ public final class Design{
         }
         //and where units come out: two rows in front of a factory or refabricator that hands to nothing of the design's
         //own, and the whole square an assembler builds its unit on
+        int before = out.size();
         for(Stile t : turned[o].tiles){
             Block b = t.block;
             int size = b.size, off = (size - 1) / 2;
@@ -189,10 +190,19 @@ public final class Design{
                 }
             }
         }
+        exit[o] = out.subList(before, out.size()).toArray(new int[0][]);
         //and a lane straight out from each port, LANE tiles long: the way a line comes into an input (behind its router)
         //and the way an output's line goes off; kept clear, or ports side by side by a cliff can be shut in
         for(int[] t : lanes(o)) if(seen.add(t[0] * 4096 + t[1])) out.add(t);
         return foot[o] = out.toArray(new int[0][]);
+    }
+
+    private final int[][][] exit = new int[4][][];
+
+    /** Where its units come out (of the footprint): nothing solid may stand there, or no unit comes. */
+    public int[][] exits(int o){
+        footprint(o);
+        return exit[o];
     }
 
     /** How long the lane kept clear before each port is. */

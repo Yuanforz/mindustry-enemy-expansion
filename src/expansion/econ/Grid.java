@@ -78,8 +78,9 @@ public final class Grid{
         Arrays.fill(carry, -1);
         Arrays.fill(dumps, -1);
         //what the side can build on is worked out without fog: ground not yet seen is built on once a unit has looked
-        boolean fog = Vars.state.rules.fog;
-        Vars.state.rules.fog = false;
+        //(off for every thread that looks at once, and back with the last: see Sites.fogOff)
+        boolean fog = Sites.fogOff();
+        try{
         boolean[] shot = Sites.danger(team);
         for(int y = 0; y < h; y++){
             for(int x = 0; x < w; x++){
@@ -94,7 +95,9 @@ public final class Grid{
                 }
             }
         }
-        Vars.state.rules.fog = fog;
+        }finally{
+            Sites.fogBack();
+        }
         if(fog && Vars.state.rules.staticFog){
             try{
                 Vars.fogControl.update();

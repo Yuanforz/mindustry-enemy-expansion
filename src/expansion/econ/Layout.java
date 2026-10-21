@@ -341,6 +341,12 @@ public final class Layout{
         //an output's first tile stays free of anything solid: the line starts there; the lanes before the ports are dear
         //for other lines, so they go round
         for(int[] w : world) if(w[0] == 0) g.noSolid[g.pos(w[2], w[3])] = true;
+        //(and where its units come out: a node or a bridge put down in front of a fabricator, or on an assembler's square,
+        //and no unit came out)
+        for(int[] t : d.exits(o)){
+            int x = p[0] + t[0], y = p[1] + t[1];
+            if(g.in(x, y)) g.noSolid[g.pos(x, y)] = true;
+        }
         for(int[] t : d.lanes(o)){
             int q = g.pos(p[0] + t[0], p[1] + t[1]);
             if(g.in(p[0] + t[0], p[1] + t[1])) g.kept[q] = Math.max(g.kept[q], 6);
@@ -648,9 +654,9 @@ public final class Layout{
                 islands = new Seq<>();
             }
             if(nodes == null){
+                //(not on the grid: taken for a part of it, the machines after it were joined to it, and had no power either)
                 log.append("no way to power ").append(m.recipe.name).append(" at ").append(p.x).append(',').append(p.y).append('\n');
                 nodes = new Seq<>();
-                wiring.add(grid.pos(p.x, p.y));
             }
             wires.put(m, nodes);
         }

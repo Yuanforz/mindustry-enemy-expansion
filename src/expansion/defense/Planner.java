@@ -412,7 +412,7 @@ public final class Planner{
         Terrain t = ask.terrain;
         if(walled == null) walled = new float[t.w * t.h];
         //a large tungsten wall: 720 health a tile, 2880 for the block, which is what the game counts for each of its tiles
-        if(t.in(x, y)) walled[x + y * t.w] = Lanes.wallCost(2880f);
+        if(t.in(x, y)) walled[x + y * t.w] = Lanes.wallCost(t, 2880f);
     }
 
     /**
@@ -430,7 +430,7 @@ public final class Planner{
                 for(int n = sign > 0 ? 0 : 1; n <= ask.wallReach + 1; n++){
                     int x = cx + sx * sign * n, y = cy + sy * sign * n;
                     if(!t.passable(Foe.Move.ground, x, y)) break;
-                    test.extra[x + y * t.w] = Lanes.wallCost(2880f);
+                    test.extra[x + y * t.w] = Lanes.wallCost(t, 2880f);
                 }
             }
         }

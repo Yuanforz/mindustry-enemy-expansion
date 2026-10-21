@@ -28,6 +28,43 @@ public final class Sites{
     static final int[] dbg = new int[4];
 
     public static Field scan(Catalog cat, Team team, int radius){
+        try{
+            return scanning(cat, team, radius);
+        }finally{
+            //(fog given back, however the scan ended)
+            if(fogHeld.get()) fogBack();
+        }
+    }
+
+    /**
+     * The fog rule off while places are looked for, for all the threads that look at once: off with the first, back with
+     * the last (each thread saving and giving back its own, the second saved it off and gave it back off, and the game
+     * went on with no fog at all).
+     */
+    static final Object fogLock = new Object();
+    static int fogDepth;
+    static boolean fogSaved;
+    static final ThreadLocal<Boolean> fogHeld = ThreadLocal.withInitial(() -> false);
+
+    static boolean fogOff(){
+        synchronized(fogLock){
+            if(fogDepth++ == 0){
+                fogSaved = Vars.state.rules.fog;
+                Vars.state.rules.fog = false;
+            }
+            fogHeld.set(true);
+            return fogSaved;
+        }
+    }
+
+    static void fogBack(){
+        synchronized(fogLock){
+            fogHeld.set(false);
+            if(--fogDepth == 0) Vars.state.rules.fog = fogSaved;
+        }
+    }
+
+    static Field scanning(Catalog cat, Team team, int radius){
         Field field = new Field(cat);
         CoreBlock.CoreBuild core = team.core();
         field.coreX = core.tileX();
@@ -46,8 +83,7 @@ public final class Sites{
 
         //every place for every kind of ground machine, then the best that do not overlap, across all kinds.
         //ground not yet seen counts: the core unit flies fast enough to have a look before it builds
-        boolean fog = Vars.state.rules.fog;
-        Vars.state.rules.fog = false;
+        boolean fog = fogOff();
         List<Field.Site> all = new ArrayList<>();
         Set<String> done = new HashSet<>();
         for(Recipe r : cat.recipes){
@@ -145,7 +181,7 @@ public final class Sites{
             int pieces = lineSteps(steps, st.tiles);
             if(pieces >= 0) st.distance = Math.max(st.distance, pieces);
         }
-        Vars.state.rules.fog = fog;
+        fogBack();
         //what the side has seen so far: the game works its fog out on a thread of its own, which this makes it do now
         if(fog && Vars.state.rules.staticFog){
             try{
@@ -486,8 +522,25 @@ public final class Sites{
     /** Whether a building is making something that goes somewhere: working, and not full of what it makes. */
     static boolean producing(Building build){
         if(build.efficiency <= 0.01f && build.block.consPower != null) return false;
-        if(build.items != null && build.block.hasItems && build.block.itemCapacity > 0 && build.items.total() >= build.block.itemCapacity - 1) return false;
-        return true;
+        return !backedUp(build);
+    }
+
+    /**
+     * Whether what a machine makes has backed up in it, with nowhere to go: a crafter whose output is full (as the game
+     * stops one), a drill or a crusher holding all it can (all it holds is what it made). (Counted by all it holds, a
+     * furnace or a fabricator fed for its next batch read as backed up: a unit maker holds two batches of each thing it
+     * takes, and its item capacity is the largest of them alone.)
+     */
+    static boolean backedUp(Building build){
+        if(build.items == null || !build.block.hasItems || build.block.itemCapacity <= 0) return false;
+        if(build.block instanceof mindustry.world.blocks.production.GenericCrafter gc){
+            if(gc.outputItems == null) return false;
+            for(mindustry.type.ItemStack out : gc.outputItems) if(build.items.get(out.item) + out.amount > gc.itemCapacity) return true;
+            return false;
+        }
+        if(build.block instanceof UnitFactory || build.block instanceof mindustry.world.blocks.units.Reconstructor
+            || build.block instanceof mindustry.world.blocks.units.UnitAssembler || build.block instanceof mindustry.world.blocks.defense.turrets.Turret) return false;
+        return build.items.total() >= build.block.itemCapacity - 1;
     }
 
     /**
@@ -496,7 +549,7 @@ public final class Sites{
      */
     static boolean waitingFed(Building build){
         if(build.block.consPower != null && build.power != null && build.power.status <= 0.01f) return false;
-        if(build.items != null && build.block.hasItems && build.block.itemCapacity > 0 && build.items.total() >= build.block.itemCapacity - 1) return false;
+        if(backedUp(build)) return false;
         boolean holds = build.items != null && build.items.total() > 0;
         if(!holds && build.liquids != null) holds = build.liquids.currentAmount() > 1e-3f;
         return holds;

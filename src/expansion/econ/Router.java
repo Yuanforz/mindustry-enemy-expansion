@@ -559,6 +559,8 @@ final class Router{
                 if(j == p.rotation || j == (p.rotation + 2) % 4) continue;
                 Part o = own.get(grid.pos(p.x + Geometry.d4x(j), p.y + Geometry.d4y(j)));
                 if(o != null && o.x + Geometry.d4x(o.rotation) == p.x && o.y + Geometry.d4y(o.rotation) == p.y) fed = true;
+                //(nor a machine beside it that hands what it makes into it, as tap() asks: a dock there cut the drill off)
+                if(grid.pushes(p.x + Geometry.d4x(j), p.y + Geometry.d4y(j), p.x, p.y, false) != -1) fed = true;
             }
             //and an underflow duct takes only from straight behind: the piece before must push straight in
             if(i == 0) continue;

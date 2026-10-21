@@ -254,7 +254,8 @@ public final class Planner{
             //(one that can't be built or fed here is no maker: a large cliff crusher where there is no surge alloy or hydrogen)
             if(!gives || (chains != null && !chains.feasible(r))) continue;
             for(Field.Site s : free){
-                if(s.ground != r.ground || (r.perFactor[res] > 0f && s.item != res)) continue;
+                //(and only where it fits: a plasma bore on a large bore's place, with the large one's three beams, was no bore)
+                if(s.ground != r.ground || !s.fits(r) || (r.perFactor[res] > 0f && s.item != res)) continue;
                 double d = Math.hypot(s.x - tx, s.y - ty) - (r.perFactor[res] > 0f ? r.perFactor[res] * s.factor : r.out[res]) * 2;
                 if(d < bestD){
                     bestD = d;
@@ -595,7 +596,13 @@ public final class Planner{
         scored.clear();
         ordering = true;
         try{
-            return ordered(plant, unit);
+            Timeline line = ordered(plant, unit);
+            //(the places of the extras taken are taken: left free, a maker added later for an unfed taker went on one)
+            for(Machine m : line.order){
+                Field.Site st = extraSites.get(m);
+                if(st != null) free.remove(st);
+            }
+            return line;
         }finally{
             ordering = false;
             scored.clear();
@@ -979,6 +986,8 @@ public final class Planner{
         Machine b = new Machine(m.recipe, m.item, m.factor, m.x, m.y, m.distance, cost, true, false);
         b.rotation = m.rotation;
         b.unseen = m.unseen;
+        //(its lines take their time as the plain one's do)
+        b.buildSeconds = m.buildSeconds;
         return b;
     }
 

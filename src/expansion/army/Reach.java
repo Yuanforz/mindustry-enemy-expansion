@@ -90,9 +90,13 @@ public final class Reach{
         //(the ground does not change in a game: worked out once a kind, a team and a start)
         String key = type.name + "|" + team.id + "|" + fx + "," + fy;
         synchronized(distances){
-            if(distancesWorld != Vars.world.tiles){
+            //(and again once the map's open part grows, as a campaign map's does: what lay past its edge was out of reach)
+            var r = Vars.state.rules;
+            long area = r.limitMapArea ? (((long)r.limitX * 4099L + r.limitY) * 4099L + r.limitWidth) * 4099L + r.limitHeight : -1L;
+            if(distancesWorld != Vars.world.tiles || distancesArea != area){
                 distances.clear();
                 distancesWorld = Vars.world.tiles;
+                distancesArea = area;
             }
             float[] had = distances.get(key);
             if(had != null) return had;
@@ -106,6 +110,7 @@ public final class Reach{
 
     static final java.util.HashMap<String, float[]> distances = new java.util.HashMap<>();
     static Object distancesWorld;
+    static long distancesArea = Long.MIN_VALUE;
 
     static float[] distanceNow(UnitType type, Team team, int fx, int fy){
         int w = Vars.world.width(), h = Vars.world.height();

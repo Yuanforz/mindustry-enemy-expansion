@@ -55,9 +55,20 @@ public final class GameData{
         Team attacker = null;
         for(Teams.TeamData data : Vars.state.teams.active) if(data.team != us && data.team != Team.derelict && (attacker == null || data.cores.size > 0)) attacker = data.team;
         if(attacker == null) attacker = Vars.state.rules.waveTeam;
+        //(by the way it finds its way: units led as a player leads them (the Brain's, a base's squads) by the control
+        //pathfinder, that puts a million on each tile of another side's block and so goes round any wall it can; the map's
+        //waves by the flow field, that walks into a wall at what its health costs)
+        t.rts = attacker.rules().rtsAi || attacker != Vars.state.rules.waveTeam;
+        int led = 0, flowed = 0;
+        for(Unit u : attacker.data().units){
+            if(u.controller() instanceof mindustry.ai.types.CommandAI) led++;
+            else if(u.controller() instanceof mindustry.ai.types.GroundAI) flowed++;
+        }
+        if(led + flowed > 0) t.rts = led >= flowed;
+        mindustry.ai.Pathfinder.PathCost flow = mindustry.ai.Pathfinder.costTypes.get(mindustry.ai.Pathfinder.costGround);
         t.groundCost = new float[w * h];
         for(int x = 0; x < w; x++) for(int y = 0; y < h; y++){
-            int c = mindustry.ai.ControlPathfinder.costGround.getCost(attacker.id, Vars.pathfinder.get(x, y));
+            int c = (t.rts ? mindustry.ai.ControlPathfinder.costGround : flow).getCost(attacker.id, Vars.pathfinder.get(x, y));
             t.groundCost[x + y * w] = c < 0 ? 0f : Math.max(0f, c - 1f);
         }
         for(Building core : otherCores){

@@ -60,8 +60,13 @@ public final class Lanes{
         return own + (extra != null ? extra[i] : 0f);
     }
 
-    /** Path cost the game gives one tile of a wall of this much health. */
-    public static float wallCost(float health){
+    /**
+     * Path cost the game gives one tile of a wall of this much health, for the way the side that attacks finds its way: the
+     * control pathfinder's million (it goes round), or the flow field's for its health (it walks into it). (The flow field's
+     * alone, against the control pathfinder's ground, had a wall line hold that the Brain's units walked round.)
+     */
+    public static float wallCost(Terrain t, float health){
+        if(t != null && t.rts) return 1000000f - 1f;
         return Math.min(health / 40f, 80f) * 5f;
     }
 

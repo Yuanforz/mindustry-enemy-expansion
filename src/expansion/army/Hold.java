@@ -126,7 +126,7 @@ public class Hold{
     float ourGuard(float x, float y, boolean air){
         float dps = 0f, health = 0f;
         for(Building b : Vars.indexer.getFlagged(army.team, mindustry.world.meta.BlockFlag.turret)){
-            if(!(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t) || !t.hasAmmo()) continue;
+            if(!(b instanceof mindustry.world.blocks.defense.turrets.Turret.TurretBuild t) || !expansion.ops.Combat.loaded(t)) continue;
             var turret = (mindustry.world.blocks.defense.turrets.Turret)b.block;
             if(air ? !turret.targetAir : !turret.targetGround) continue;
             if(!b.within(x, y, turret.range + 4f * Vars.tilesize)) continue;

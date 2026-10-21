@@ -41,6 +41,7 @@ public final class Hand extends mindustry.entities.units.AIController{
         this.order = order;
         watch = new Watch(works, order);
         watch.notBuilt = i -> skipped.contains(i) || i == retrying;
+        watch.busy = p -> job != null && job.contains(p, true);
         begun = new float[order.size()];
         finished = new float[order.size()];
         partsOf = new int[order.size()];
@@ -66,11 +67,36 @@ public final class Hand extends mindustry.entities.units.AIController{
      */
     public boolean stuck(){
         if(next < order.size() || job != null) return false;
+        if(now() - stuckAt < 1f) return stuckWas;
+        stuckAt = now();
+        stuckWas = true;
         for(int i = 0; i < skipped.size; i++){
             Machine m = order.get(skipped.get(i));
-            if(affordable(m.cost) || notComing(m.cost) == null) return false;
+            //(one whose ground no one can see is not to be had now; one that can be paid for, or whose want comes in, is)
+            Part where = works.at.get(m);
+            if(where != null && unseen(where) != null && !canScout()) continue;
+            int[] need = cost(works.job(m));
+            if(affordable(need) || notComing(need) == null){
+                stuckWas = false;
+                break;
+            }
         }
-        return true;
+        return stuckWas;
+    }
+
+    float stuckAt = -1f;
+    boolean stuckWas;
+
+    /**
+     * Back in charge of the core unit (a guard put up meanwhile, a stage before): what it was waiting on is timed afresh,
+     * and the build plans another hand left on the unit go (they spent what this one saves for, on parts no hand follows).
+     */
+    public void resume(){
+        stallJob = null;
+        stallSince = now();
+        fogSince[0] = -1;
+        stuckAt = -1f;
+        if(unit != null) unit.plans.clear();
     }
 
     /** Whether everything of the order is up (nothing begun and nothing put off is left). */
@@ -149,9 +175,9 @@ public final class Hand extends mindustry.entities.units.AIController{
             spentAt = t;
             return;
         }
-        int dt = Math.round(t - spentAt);
+        int dt = (int)(t - spentAt);
         if(dt <= 0) return;
-        spentAt = t;
+        spentAt += dt;
         String d = doing == null ? "" : doing;
         String what;
         if(d.startsWith("building")) what = "building";
@@ -296,22 +322,30 @@ public final class Hand extends mindustry.entities.units.AIController{
         }
         //what was put off for want of a look is tried again once its ground is seen
         if(!skipped.isEmpty()){
+            //(every step put off is looked at: one that can be paid for is begun, whatever comes before it; else the first
+            //whose want comes in is saved up for. Saving for the first alone, a fabricator short of silicon kept the furnace
+            //that would make it, put off behind it and paid for, from ever being begun)
+            int saveFor = -1;
+            int[] saveNeed = null;
             for(int i = 0; i < skipped.size; i++){
                 int idx = skipped.get(i);
                 Machine m = order.get(idx);
                 Part where = works.at.get(m);
                 if(where != null && unseen(where) != null){
+                    Tile dark = unseen(where);
                     if(canScout()){
-                        Tile dark = unseen(where);
                         if(dark != null) scout(new Part(where.block, dark.x, dark.y, 0, null));
-                    }
+                    }else if(dark != null) radar(dark);
                     continue;
                 }
                 Seq<Part> parts = works.job(m);
-                if(!affordable(cost(parts))){
-                    doing = String.format("saving up for #%d %s (put off before): %s", idx + 1, m.recipe.name, shortOf(cost(parts)));
-                    dig(cost(parts));
-                    return;
+                int[] need = cost(parts);
+                if(!affordable(need)){
+                    if(saveFor < 0 && notComing(need) == null){
+                        saveFor = idx;
+                        saveNeed = need;
+                    }
+                    continue;
                 }
                 skipped.removeIndex(i);
                 begun[idx] = now();
@@ -320,6 +354,11 @@ public final class Hand extends mindustry.entities.units.AIController{
                 job = parts;
                 machine = m;
                 unit.mineTile = null;
+                return;
+            }
+            if(saveFor >= 0){
+                doing = String.format("saving up for #%d %s (put off before): %s", saveFor + 1, order.get(saveFor).recipe.name, shortOf(saveNeed));
+                dig(saveNeed);
                 return;
             }
         }
@@ -456,6 +495,18 @@ public final class Hand extends mindustry.entities.units.AIController{
     /** Pieces to take up. */
     final Seq<Part> cuts = new Seq<>();
 
+    /**
+     * Takes over what a hand before it left undone: parts put off till their ground is seen, and lines still to be cut
+     * (left with the stage that had them, nothing ever built or cut them: lines across fog were lost for good).
+     */
+    public void takeOver(Hand before){
+        if(before == null) return;
+        for(Part p : before.deferred) if(!deferred.contains(p, true)) deferred.add(p);
+        before.deferred.clear();
+        for(Part p : before.cuts) if(!cuts.contains(p, true)) cuts.add(p);
+        before.cuts.clear();
+    }
+
     void cut(){
         Part p = cuts.first();
         Tile t = Vars.world.tile(p.x, p.y);
@@ -537,8 +588,11 @@ public final class Hand extends mindustry.entities.units.AIController{
                 target = p;
             }
             //(a site is begun only within the core unit's building reach, as a player's: further off it stays a plan, and the game
-            //begins it once the unit has flown near)
-            if(!(tile.build instanceof ConstructBuild site && site.current == p.block) && unit.within(tile.worldx(), tile.worldy(), unit.type.buildRange)){
+            //begins it once the unit has flown near; and one at a time, the one it is building now, as the game's builder
+            //does: begun all at once, every part in reach stood as an empty site, holding its tiles before it was paid for)
+            BuildPlan current = unit.buildPlan();
+            boolean now = current != null && current.x == p.x && current.y == p.y && current.block == p.block;
+            if(now && !(tile.build instanceof ConstructBuild site && site.current == p.block) && unit.within(tile.worldx(), tile.worldy(), unit.type.buildRange)){
                 if(Build.validPlace(p.block, unit.team, p.x, p.y, p.rotation)){
                     Call.beginPlace(unit, p.block, unit.team, p.x, p.y, p.rotation, p.config);
                 }
@@ -572,6 +626,12 @@ public final class Hand extends mindustry.entities.units.AIController{
         }
         if(all && retrying >= 0){
             finished[retrying] = now();
+            //(the lines to the core it made unwanted are cut, as for any step)
+            Seq<Part> due = works.cuts.get(retrying);
+            if(due != null) for(Part p : due){
+                cuts.add(p);
+                watch.taken.add(p);
+            }
             retrying = -1;
             job = null;
             machine = null;
@@ -598,6 +658,8 @@ public final class Hand extends mindustry.entities.units.AIController{
                 repairing = false;
             }else if(retrying >= 0){
                 trouble.add(String.format("#%d %s given up again after %.0f s with no progress", retrying + 1, machine == null ? "" : machine.recipe.name, stallTime));
+                //(put off again, not dropped: dropped, its parts never built were taken for lost and put back for ever)
+                skipped.add(retrying);
                 retrying = -1;
             }else{
                 trouble.add(String.format("#%d %s put off after %.0f s with no progress (%d parts left)", next + 1, machine == null ? "" : machine.recipe.name, stallTime, left));

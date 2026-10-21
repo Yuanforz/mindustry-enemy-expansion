@@ -153,6 +153,20 @@ public class Army{
         listen();
         baseMinSquad = team.rules().rtsMinSquad;
         baseMinWeight = team.rules().rtsMinWeight;
+        //(the search leads every unit: the squad AI is left to stand by. Kept from forming squads, it still sent units to every
+        //damaged block, and took those that had got to where the search had them stand)
+        if(flags.tactics) team.data().rtsAi = new StandBy(team.data());
+    }
+
+    /** The squad AI that does nothing (the team's rule stays on, so its units take orders as a player's do). */
+    static final class StandBy extends mindustry.ai.RtsAI{
+        StandBy(mindustry.game.Teams.TeamData data){
+            super(data);
+        }
+
+        @Override
+        public void update(){
+        }
     }
 
     /** Once a frame. */
