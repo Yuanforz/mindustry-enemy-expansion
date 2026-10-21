@@ -208,37 +208,77 @@ public final class Recipes{
     }
 
     /**
-     * A machine that needs heat, with the heaters it has against it: heat goes from a heater only into the block its face
-     * touches (Building.calculateHeat: a heater's heat over its size, times the tiles in contact), so each machine has
-     * heaters of its own, as many whole ones as its need takes; as many as its sides hold (each heater's face along one
-     * side). With fewer than the need, it works at the share of its need it gets (Turret, HeatCrafter: efficiency is
-     * heat over need, at most its cap). Null if none of these heaters fits against it.
+     * A machine that needs heat, with the heaters that give it: against its sides, or gathered into heat redirectors that
+     * stand against it. The game's rule (Building.calculateHeat): a block gets from each heat block whose face points at
+     * it that one's heat over its size, times the tiles in contact; a redirector (HeatConductor, not split) gathers all
+     * that points at it the same way and gives it on, whole, out of its face. So along a side of S tiles, S / h heaters of
+     * size h touch with their whole face and one more with the tiles left over (a corner each: a 5x5 takes eight 2x2
+     * heaters whole and four by one tile); a redirector of size c against a side takes c of its tiles and gathers from
+     * its other three sides as many heaters as touch them. With this many redirectors (none to one a side), the fewest
+     * heaters that give the need, the best placed first; with too few for the need, it works at the share it gets
+     * (efficiency is heat over need, Turret, HeatCrafter). One way for each number of redirectors that does better than
+     * fewer; empty if no heater of this kind fits.
      */
-    public static Recipe heated(Recipe r, Recipe heater){
-        if(r.heatNeed <= 0f || heater.heatOut <= 0f) return null;
-        //(what heaters of this kind give against its sides: along a side of S tiles, S / h heaters of size h touch with
-        //their whole face; the tiles left over, at the side's end, by one more that touches with only those, giving that
-        //share of its heat; four sides, a corner each for the ones at the ends. A 5x5 takes eight 2x2 heaters whole and
-        //four by one tile: 150 heat of phase heaters, not 10 x 15)
+    public static List<Recipe> heated(Recipe r, Recipe heater, List<mindustry.world.Block> conductors){
+        List<Recipe> out = new ArrayList<>();
+        if(r.heatNeed <= 0f || heater.heatOut <= 0f) return out;
         int s = r.size, h = heater.size;
-        List<Float> give = new ArrayList<>();
-        if(h >= s){
-            for(int i = 0; i < 4; i++) give.add(heater.heatOut / h * s);
-        }else{
-            for(int i = 0; i < 4 * (s / h); i++) give.add(heater.heatOut);
-            if(s % h > 0) for(int i = 0; i < 4; i++) give.add(heater.heatOut / h * (s % h));
+        float q = heater.heatOut;
+        List<mindustry.world.Block> cs = new ArrayList<>();
+        cs.add(null);
+        cs.addAll(conductors);
+        int bestK = Integer.MAX_VALUE;
+        float bestShare = 0f;
+        for(mindustry.world.Block cond : cs){
+            for(int reds = 0; reds <= (cond == null ? 0 : 4); reds++){
+                List<Float> give = new ArrayList<>();
+                for(int side = 0; side < 4; side++){
+                    int free = s;
+                    if(side < reds){
+                        int c = cond.size, contact = Math.min(c, s);
+                        free = s - contact;
+                        float pass = (float)contact / c;
+                        //(what it gathers: its three other sides, each of c tiles)
+                        for(int i = 0; i < 3; i++) slots(give, c, h, q * pass);
+                    }
+                    slots(give, free, h, q);
+                }
+                give.sort(Comparator.reverseOrder());
+                float got = 0f;
+                int k = 0;
+                for(float g : give){
+                    if(got >= r.heatNeed - 1e-4f) break;
+                    got += g;
+                    k++;
+                }
+                if(k <= 0) continue;
+                float share = Math.min(r.maxEfficiency, got / r.heatNeed);
+                //(only a way that does better: fewer heaters for the whole need, or more of the need)
+                boolean whole = share >= 1f - 1e-4f;
+                if(whole ? k >= bestK : share <= bestShare + 1e-4f) continue;
+                if(whole) bestK = k;
+                bestShare = Math.max(bestShare, share);
+                out.add(compose(r, heater, k, cond, reds, Math.min(1f, share)));
+            }
         }
-        float got = 0f;
-        int k = 0;
-        for(float g : give){
-            if(got >= r.heatNeed - 1e-4f) break;
-            got += g;
-            k++;
+        return out;
+    }
+
+    /** What heaters of size h give touching a stretch of so many tiles: whole ones, then one by the tiles left over. */
+    static void slots(List<Float> give, int tiles, int h, float q){
+        if(tiles <= 0) return;
+        if(h >= tiles){
+            give.add(q / h * tiles);
+            return;
         }
-        if(k <= 0) return null;
-        float share = Math.min(1f, got / r.heatNeed);
-        Recipe c = new Recipe(r.name + "+" + k + "x" + heater.name, r.block, r.kind, r.ground, r.dug);
+        for(int i = 0; i < tiles / h; i++) give.add(q);
+        if(tiles % h > 0) give.add(q / h * (tiles % h));
+    }
+
+    static Recipe compose(Recipe r, Recipe heater, int k, mindustry.world.Block cond, int reds, float share){
+        Recipe c = new Recipe(r.name + "+" + k + "x" + heater.name + (reds > 0 ? "+" + reds + "x" + cond.name : ""), r.block, r.kind, r.ground, r.dug);
         c.parts.put(heater.block, k);
+        if(reds > 0) c.parts.put(cond, reds);
         for(var e : r.in.entrySet()) c.in.put(e.getKey(), e.getValue() * (Vars.content.liquid(e.getKey()) != null ? 1f : share));
         for(var e : r.out.entrySet()) c.out.put(e.getKey(), e.getValue() * share);
         //(its heaters burn as long as they stand, busy or not)
@@ -246,9 +286,15 @@ public final class Recipes{
         for(var e : heater.out.entrySet()) c.out.merge(e.getKey(), e.getValue() * k, Float::sum);
         c.powerUse = r.powerUse;
         c.fixedPowerUse = heater.powerUse * k;
-        c.heatNeed = 0f;
         c.stopsWhenFull.addAll(r.stopsWhenFull);
         return c;
+    }
+
+    /** The heat redirectors there are (conductors that pass heat on whole, not split). */
+    public static List<mindustry.world.Block> conductors(){
+        List<mindustry.world.Block> out = new ArrayList<>();
+        for(mindustry.world.Block b : Vars.content.blocks()) if(b instanceof HeatConductor hc && !hc.splitHeat && b.isOnPlanet(Planets.erekir)) out.add(b);
+        return out;
     }
 
     public static void main(String[] args){

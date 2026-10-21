@@ -62,6 +62,8 @@ public final class Balance{
      * at 100% on 36, and which is worth having is the layout's question, not the balance's.
      */
     public Float areaCap;
+    /** What a tile of ground, an item of cost and a second of building weigh against one another in the objective. */
+    public float perTile = 1f, perItem = 0f, perSecond = 0f;
 
     /** A goal's rate, a thousandth under as written (0.0286 a second asked of a yard that makes one in 35 s, 0.02857, had two put down). */
     double goal(String k){
@@ -86,14 +88,14 @@ public final class Balance{
         //the machines: for a block on no ground, a whole count and its work; for one on ground, one per place (taken or not).
         //A machine that needs heat comes with heaters of its own, of each kind there is (Recipes.heated)
         List<Recipe> using = new ArrayList<>();
+        List<mindustry.world.Block> conductors = Recipes.conductors();
         for(Recipe r : recipes){
             if(r.heatNeed <= 0f){
                 using.add(r);
                 continue;
             }
             for(Recipe h : recipes) if(h.kind == Recipe.Kind.heater && (!h.name.equals("heat-source") || sources.contains("heat"))){
-                Recipe c = Recipes.heated(r, h);
-                if(c != null) using.add(c);
+                using.addAll(Recipes.heated(r, h, conductors));
             }
         }
         List<Object[]> vars = new ArrayList<>();
@@ -196,8 +198,9 @@ public final class Balance{
             power.setCoefficient(a, rt.powerOut - rt.powerUse);
             if(r.fixedPowerUse > 0f) power.setCoefficient(n, -r.fixedPowerUse);
             heat.setCoefficient(a, rt.heatOut - rt.heatNeed);
-            //(the ground it stands on first; one machine more costs a little besides)
-            obj.setCoefficient(n, r.area() + 0.01);
+            //(the ground it stands on, what it costs, the time it takes to build, as weighed; one machine more costs a
+            //little besides)
+            obj.setCoefficient(n, perTile * r.area() + perItem * r.cost() + perSecond * r.buildSeconds() + 0.01);
             //(and working it a little, so that nothing works for nothing)
             obj.setCoefficient(a, 1e-4);
         }
@@ -273,6 +276,21 @@ public final class Balance{
             b.goals.put(p[0], Float.parseFloat(p[1]));
         }
         if(args.length > 2) b.sources.addAll(Arrays.asList(args[2].split(",")));
+        //(weights:tile=1,item=0.01,second=0)
+        for(int i = 3; i < args.length; i++) if(args[i].startsWith("weights:")){
+            for(String w : args[i].substring(8).split(",")){
+                String[] p = w.split("=");
+                float v = Float.parseFloat(p[1]);
+                if(p[0].equals("tile")) b.perTile = v;
+                else if(p[0].equals("item")) b.perItem = v;
+                else if(p[0].equals("second")) b.perSecond = v;
+            }
+        }
+        if(Arrays.asList(args).contains("ways")){
+            //(the ways of heating each machine that needs heat, as the balance has them to choose from)
+            for(Recipe r : Recipes.all()) if(r.heatNeed > 0f && b.goals.containsKey(r.name)) for(Recipe h : Recipes.all()) if(h.kind == Recipe.Kind.heater && !h.name.equals("heat-source"))
+                for(Recipe c : Recipes.heated(r, h, Recipes.conductors())) System.out.println(String.format("    way: %s: %d tiles, %d items, %.0f s to build, works at %.0f%%, burns %s", c.name, c.area(), c.cost(), c.buildSeconds(), c.out.getOrDefault(r.name, 0f) * 100f, Recipe.fmt(c.fixedIn)));
+        }
         //(places for machines on ground: at:recipe=yield/yield/...)
         for(int i = 3; i < args.length; i++) if(args[i].startsWith("at:")){
             String[] p = args[i].substring(3).split("=");
