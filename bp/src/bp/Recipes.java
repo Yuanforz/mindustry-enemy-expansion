@@ -171,6 +171,10 @@ public final class Recipes{
             consumers(b, r, cg.itemDuration, false);
             r.powerOut = perSecond(cg.powerProduction);
             if(cg.outputLiquid != null) r.out.put(cg.outputLiquid.liquid.name, perSecond(cg.outputLiquid.amount));
+            //(one that gives heat too, the neoplasia reactor: what its liquid output fills up it blows up with, and so
+            //must be led away all)
+            if(b instanceof HeaterGenerator hg) r.heatOut = hg.heatOutput;
+            r.out.put(b.name, 1f);
             out.add(r);
             return;
         }
@@ -184,14 +188,17 @@ public final class Recipes{
             }
             return;
         }
-        if(b instanceof Turret t && (t.heatRequirement > 0f || b.consPower != null)){
-            //a turret kept ready: what it takes to fire at full (its power, its heat); what it "makes" is itself working
-            Recipe r = new Recipe(b.name, b, Recipe.Kind.turret, Recipe.Ground.none, null);
+        if(b instanceof Turret t){
+            turret(t, out);
+            return;
+        }
+        if(b instanceof VariableReactor v){
+            //a reactor run on heat (the flux reactor): power and its fuel both at heat over maxHeat, at most all of it
+            //(VariableReactor.updateEfficiencyMultiplier); short of fuel for its heat, it grows unstable and blows up
+            Recipe r = new Recipe(b.name, b, Recipe.Kind.generator, Recipe.Ground.none, null);
             consumers(b, r, 0f, false);
-            if(t.heatRequirement > 0f){
-                r.heatNeed = t.heatRequirement;
-                r.maxEfficiency = t.maxHeatEfficiency;
-            }
+            r.powerOut = perSecond(v.powerProduction);
+            r.heatNeed = v.maxHeat;
             r.out.put(b.name, 1f);
             out.add(r);
             return;
@@ -204,6 +211,55 @@ public final class Recipes{
                 r.out.put(up[1].name, 60f / re.constructTime);
                 out.add(r);
             }
+        }
+    }
+
+    /**
+     * A turret kept firing, one way for each ammunition it takes and with or without its coolant: what it takes a second
+     * firing all the time. Its shots a second are 60 / reload times the ammunition's reload multiplier, and with coolant
+     * more by the coolant's amount a tick times its heat capacity times the turret's coolant multiplier
+     * (ReloadTurret.updateCooling); each shot takes ammoPerShot of ammunition (per bullet unless it takes it once a
+     * shot), and an item gives the bullet's ammoMultiplier of it (ItemTurret.handleItem). A liquid turret takes its
+     * liquid a tick while it fires; power and heat as it needs them. What it gives is a firing turret, by the way's name.
+     */
+    static void turret(Turret t, List<Recipe> out){
+        Map<String, mindustry.entities.bullet.BulletType> ammo = new LinkedHashMap<>();
+        if(t instanceof ItemTurret it) for(var e : it.ammoTypes.entries()) ammo.put(e.key.name, e.value);
+        else if(t instanceof LiquidTurret lt) for(var e : lt.ammoTypes.entries()) ammo.put(e.key.name, e.value);
+        else if(t instanceof ContinuousLiquidTurret ct) for(var e : ct.ammoTypes.entries()) ammo.put(e.key.name, e.value);
+        else ammo.put("", null);
+        boolean coolable = t.coolant != null;
+        for(var e : ammo.entrySet()) for(boolean cooled : coolable ? new boolean[]{false, true} : new boolean[]{false}){
+            String name = t.name + (e.getKey().isEmpty() ? "" : ":" + e.getKey()) + (cooled ? "+coolant" : "");
+            Recipe r = new Recipe(name, t, Recipe.Kind.turret, Recipe.Ground.none, null);
+            //(what it takes besides its ammunition and coolant: power, a liquid it needs, as the titan's hydrogen)
+            for(Consume c : t.consumers){
+                if(c == t.coolant || c.optional) continue;
+                if(c instanceof ConsumeLiquid cl) r.in.merge(cl.liquid.name, perSecond(cl.amount), Float::sum);
+                else if(c instanceof ConsumePower cp) r.powerUse += perSecond(cp.usage);
+            }
+            mindustry.entities.bullet.BulletType bullet = e.getValue();
+            float rm = bullet == null ? 1f : bullet.reloadMultiplier;
+            float shots = 60f / t.reload * rm;
+            if(cooled){
+                Liquid coolant = t.coolant instanceof ConsumeLiquid cl ? cl.liquid : Liquids.water;
+                shots *= 1f + t.coolant.amount * coolant.heatCapacity * t.coolantMultiplier;
+                r.in.merge(coolant.name, perSecond(t.coolant.amount), Float::sum);
+            }
+            if(t instanceof ItemTurret && bullet != null){
+                float perShot = t.ammoPerShot * (t.consumeAmmoOnce ? 1 : t.shoot.shots);
+                r.in.merge(e.getKey(), shots * perShot / Math.max(1f, bullet.ammoMultiplier), Float::sum);
+            }else if(t instanceof ContinuousLiquidTurret ct){
+                r.in.merge(e.getKey(), perSecond(ct.liquidConsumed), Float::sum);
+            }else if(t instanceof LiquidTurret && bullet != null){
+                r.in.merge(e.getKey(), shots * t.ammoPerShot / Math.max(1f, bullet.ammoMultiplier), Float::sum);
+            }
+            if(t.heatRequirement > 0f){
+                r.heatNeed = t.heatRequirement;
+                r.maxEfficiency = t.maxHeatEfficiency;
+            }
+            r.out.put(name, 1f);
+            out.add(r);
         }
     }
 
@@ -269,9 +325,11 @@ public final class Recipes{
         for(var e : r.out.entrySet()) c.out.put(e.getKey(), e.getValue() * share);
         //(its heaters burn as long as they stand, busy or not)
         for(var e : heater.in.entrySet()) c.fixedIn.merge(e.getKey(), e.getValue() * k, Float::sum);
-        for(var e : heater.out.entrySet()) c.out.merge(e.getKey(), e.getValue() * k, Float::sum);
+        for(var e : heater.out.entrySet()) c.fixedOut.merge(e.getKey(), e.getValue() * k, Float::sum);
         c.powerUse = r.powerUse;
+        c.powerOut = r.powerOut * share;
         c.fixedPowerUse = heater.powerUse * k;
+        c.fixedPowerOut = heater.powerOut * k;
         c.stopsWhenFull.addAll(r.stopsWhenFull);
         return c;
     }

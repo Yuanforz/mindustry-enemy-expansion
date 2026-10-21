@@ -64,8 +64,8 @@ public final class Recipe{
      * What it takes a second for being there, however much it works: its heaters burn what they burn whether or not the
      * machine they heat is busy (a heater gives heat as long as it has its fuel and power).
      */
-    public final LinkedHashMap<String, Float> fixedIn = new LinkedHashMap<>();
-    public float fixedPowerUse;
+    public final LinkedHashMap<String, Float> fixedIn = new LinkedHashMap<>(), fixedOut = new LinkedHashMap<>();
+    public float fixedPowerUse, fixedPowerOut;
 
     public Recipe(String name, Block block, Kind kind, Ground ground, String dug){
         this.name = name;
