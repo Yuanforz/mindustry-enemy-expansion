@@ -36,6 +36,13 @@ public final class Recipes{
         float perItem = unit.mineHardnessScaling ? 50f + 15f * 3f : 65f;
         //the unit's timer has to pass the mark, which it does in whole frames
         cat.mineRate = 60f / (float)Math.ceil(perItem / unit.mineSpeed);
+        //(item by item: the game's time for one is 50 + 15 a point of the item's hardness, graphite and sand 0, beryllium 3)
+        cat.mineRates = new float[cat.size()];
+        for(Item item : Vars.content.items()){
+            if(!cat.byName.containsKey(item.name)) continue;
+            float each = unit.mineHardnessScaling ? 50f + 15f * item.hardness : 65f;
+            cat.mineRates[cat.id(item.name)] = 60f / (float)Math.ceil(each / unit.mineSpeed);
+        }
         cat.carry = unit.itemCapacity;
         cat.flySpeed = unit.speed * 60f / Vars.tilesize;
         cat.handOverRange = Vars.mineTransferRange / Vars.tilesize;

@@ -27,6 +27,12 @@ public final class Catalog{
     public float[] drain;
     /** The core unit: build speed, items a second it digs from a wall, how much it carries, how fast it flies (tiles a second). */
     public float buildSpeed = 1f, mineRate = 5f, flySpeed = 40f;
+    /** Items a second the core unit digs of each item, by its hardness (null: mineRate for all). */
+    public float[] mineRates;
+
+    public float mineRate(int item){
+        return mineRates != null && item < mineRates.length && mineRates[item] > 0f ? mineRates[item] : mineRate;
+    }
     public int carry = 60;
     /** How near the core it has to be for what it digs to go straight in, how near a wall to dig it, how near a site to build (tiles). */
     public float handOverRange = 27.5f, mineRange = 8.75f, buildRange = 27.5f;
@@ -54,6 +60,7 @@ public final class Catalog{
         c.drain = drain == null ? null : drain.clone();
         c.buildSpeed = buildSpeed;
         c.mineRate = mineRate;
+        c.mineRates = mineRates == null ? null : mineRates.clone();
         c.flySpeed = flySpeed;
         c.carry = carry;
         c.handOverRange = handOverRange;

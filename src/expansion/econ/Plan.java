@@ -512,7 +512,8 @@ public final class Plan{
         int added = 0;
         for(int i = 0; i < before.order.size(); i++){
             Machine m = before.order.get(i);
-            if(Float.isNaN(before.finished[i]) || skip.contains(m)) continue;
+            //(the turrets and what feeds them are a thing apart: their ammunition is no demand on the economy to come)
+            if(Float.isNaN(before.finished[i]) || skip.contains(m) || Defence.is(m)) continue;
             Recipe r = cat.recipe(m.recipe.name);
             if(r == null) continue;
             int item = m.item < 0 ? -1 : cat.byName.containsKey(before.cat.get(m.item).name) ? cat.id(before.cat.get(m.item).name) : -1;

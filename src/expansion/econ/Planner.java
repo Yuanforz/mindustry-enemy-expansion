@@ -170,14 +170,31 @@ public final class Planner{
             if(cat.get(k).kind != Res.Kind.liquid) continue;
             List<Machine> all = new ArrayList<>(field.existing);
             all.addAll(plan);
+            //(what each maker has left to give: a condenser given to one taker is not given in full to the next as well)
+            Map<Machine, Float> left = new HashMap<>();
             for(Machine c : new ArrayList<>(plan)){
                 float need = c.recipe.in[k] + (c.boosted && c.recipe.boostRes == k ? c.recipe.boostUse : 0f);
                 if(c.recipe.ground == Recipe.Ground.none || need <= 0f) continue;
-                //what is made near enough (counting makers already given to others near it as shared alike)
+                //what is made near enough and not yet given to another taker
                 for(int guard = 0; guard < 4; guard++){
                     float near = 0f;
-                    for(Machine m : all) if(m != c && m.out(k) > 0f && m.recipe.ground != Recipe.Ground.none && Math.hypot(m.x - c.x, m.y - c.y) <= localLiquid) near += m.out(k);
-                    if(near >= need - 1e-3f) break;
+                    List<Machine> by = new ArrayList<>();
+                    for(Machine m : all) if(m != c && m.out(k) > 0f && m.recipe.ground != Recipe.Ground.none && Math.hypot(m.x - c.x, m.y - c.y) <= localLiquid){
+                        near += left.getOrDefault(m, m.out(k));
+                        by.add(m);
+                    }
+                    if(near >= need - 1e-3f){
+                        //(given out, the nearest first)
+                        by.sort(Comparator.comparingDouble(m -> Math.hypot(m.x - c.x, m.y - c.y)));
+                        float still = need;
+                        for(Machine m : by){
+                            float give = Math.min(still, left.getOrDefault(m, m.out(k)));
+                            left.put(m, left.getOrDefault(m, m.out(k)) - give);
+                            still -= give;
+                            if(still <= 1e-4f) break;
+                        }
+                        break;
+                    }
                     sofar = List.of(c);
                     Machine add = maker(k, need - near, false);
                     sofar = plan;
@@ -294,9 +311,13 @@ public final class Planner{
         for(Machine old : revivable){
             if(old.out(res) <= 1e-4f) continue;
             revivable.remove(old);
-            Machine m = new Machine(old.recipe, old.item, old.factor, old.x, old.y, old.distance, new int[cat.size()], false, false);
+            //(it stands: what it costs is its lines, and the time to lay them)
+            int[] lines = estimate(old.recipe, old.item, old.item >= 0, old.distance);
+            for(int k = 0; k < lines.length; k++) lines[k] = Math.max(0, lines[k] - old.recipe.cost[k]);
+            Machine m = new Machine(old.recipe, old.item, old.factor, old.x, old.y, old.distance, lines, false, false);
             m.rotation = old.rotation;
             m.revived = true;
+            m.buildSeconds = Math.max(0f, estimateSeconds(old.recipe, old.item, old.item >= 0, old.distance) - cat.buildSeconds(old.recipe));
             notes.append(String.format("the map's idle %s at %d,%d taken up\n", old.recipe.name, old.x, old.y));
             return m;
         }

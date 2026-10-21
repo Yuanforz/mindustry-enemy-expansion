@@ -43,6 +43,8 @@ public final class Timeline{
     float[] draw;
     /** Until when each machine still draws to fill its buffer (it holds two batches: the game's unit makers do). */
     float[] drawUntil = new float[0];
+    /** For each unit maker filling its first batch: how much of it is in, at what share a second, since when. */
+    float[] filled = new float[0], fillRate = new float[0], fillSince = new float[0];
     /** How many batches a machine draws for before the core gets that thing again (for testing the model: xp.draw). */
     public static float drawBatches = Float.parseFloat(System.getProperty("xp.draw", "2"));
     /** For each unit kind: how many were made, and when the first was. */
@@ -92,6 +94,9 @@ public final class Timeline{
         feeds = o.feeds.clone();
         ready = o.ready.clone();
         drawUntil = o.drawUntil.clone();
+        filled = o.filled.clone();
+        fillRate = o.fillRate.clone();
+        fillSince = o.fillSince.clone();
         made = o.made.clone();
         first = o.first.clone();
         goal = o.goal;
@@ -377,17 +382,25 @@ public final class Timeline{
                         free[k] -= free[k] * share;
                     }
                 }
-                if(pass == 1 && Float.isNaN(ready[i])){
+                //(a maker still filling its first batch: what is in so far at the rate it had, and the rest at the rate it has now,
+                //worked out again whenever what flows changes: one built on a trickle is ready sooner once a furnace comes)
+                if(pass == 1 && (Float.isNaN(ready[i]) || ready[i] > t + 1e-6f) && filled[i] < 1f){
+                    boolean wasDrawing = drawUntil[i] > t + 1e-6f;
+                    if(fillRate[i] > 0f) filled[i] = Math.min(1f, filled[i] + (t - fillSince[i]) * fillRate[i]);
+                    fillSince[i] = t;
                     float fill = 0f;
                     for(int k = 0; k < r.in.length; k++){
                         if(r.in[k] <= 0f || cat.get(k).kind != Res.Kind.item) continue;
                         float batch = r.in[k] * r.unitSeconds, rate = r.in[k] * (active[i] ? plant.eff[i] : 0f) + free[k] * share;
                         fill = Math.max(fill, rate <= 1e-6f ? Float.POSITIVE_INFINITY : batch / rate);
                     }
+                    fillRate[i] = Float.isInfinite(fill) ? 0f : 1f / fill;
+                    if(Float.isInfinite(fill)) ready[i] = Float.NaN;
                     if(!Float.isInfinite(fill)){
-                        ready[i] = t + fill;
-                        drawUntil[i] = t + drawBatches * fill;
-                        if(drawBatches > 0f) for(int k = 0; k < r.in.length; k++){
+                        ready[i] = t + (1f - filled[i]) * fill;
+                        drawUntil[i] = t + (drawBatches - filled[i]) * fill;
+                        //(its draw counted once: in the first pass, when it was drawing already)
+                        if(drawBatches > 0f && !wasDrawing) for(int k = 0; k < r.in.length; k++){
                             if(r.in[k] <= 0f || cat.get(k).kind != Res.Kind.item) continue;
                             draw[k] += free[k] * share;
                             free[k] -= free[k] * share;
@@ -416,6 +429,9 @@ public final class Timeline{
             Arrays.fill(feeds, old, n, -1);
             ready = Arrays.copyOf(ready, n);
             drawUntil = Arrays.copyOf(drawUntil, n);
+            filled = Arrays.copyOf(filled, n);
+            fillRate = Arrays.copyOf(fillRate, n);
+            fillSince = Arrays.copyOf(fillSince, n);
             //what stood from the start has its items in already
             for(int i = old; i < n; i++) ready[i] = built.get(i).existing ? 0f : Float.NaN;
         }

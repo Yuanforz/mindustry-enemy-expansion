@@ -99,8 +99,8 @@ public final class Field{
         float d = handDistance[item];
         if(Float.isInfinite(d)) return 0f;
         float reach = cat.handOverRange + cat.mineRange;
-        if(d <= reach) return cat.mineRate;
-        float digging = cat.carry / cat.mineRate, flying = 2f * (d - reach) / cat.flySpeed;
+        if(d <= reach) return cat.mineRate(item);
+        float digging = cat.carry / cat.mineRate(item), flying = 2f * (d - reach) / cat.flySpeed;
         return cat.carry / (digging + flying);
     }
 }
