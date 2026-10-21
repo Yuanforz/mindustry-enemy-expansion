@@ -228,7 +228,6 @@ public final class Recipes{
         cs.add(null);
         cs.addAll(conductors);
         int bestK = Integer.MAX_VALUE;
-        float bestShare = 0f;
         for(mindustry.world.Block cond : cs){
             for(int reds = 0; reds <= (cond == null ? 0 : 4); reds++){
                 List<Float> give = new ArrayList<>();
@@ -253,26 +252,23 @@ public final class Recipes{
                 }
                 if(k <= 0) continue;
                 float share = Math.min(r.maxEfficiency, got / r.heatNeed);
-                //(only a way that does better: fewer heaters for the whole need, or more of the need)
-                boolean whole = share >= 1f - 1e-4f;
-                if(whole ? k >= bestK : share <= bestShare + 1e-4f) continue;
-                if(whole) bestK = k;
-                bestShare = Math.max(bestShare, share);
-                out.add(compose(r, heater, k, cond, reds, Math.min(1f, share)));
+                //(only ways that give the whole need, and of those only one that takes fewer heaters than fewer redirectors did)
+                if(share < 1f - 1e-4f || k >= bestK) continue;
+                bestK = k;
+                out.add(compose(r, heater, k, cond, reds, 1f));
             }
         }
         return out;
     }
 
-    /** What heaters of size h give touching a stretch of so many tiles: whole ones, then one by the tiles left over. */
+    /**
+     * What heaters of size h give touching a stretch of so many tiles: only whole ones, whose whole face touches (a heater
+     * touching by part of its face gives that part of its heat: a heater wasted in part, where a redirector gathers whole
+     * ones instead; ways that work at less than full are left out the same way, the user's rule for layouts).
+     */
     static void slots(List<Float> give, int tiles, int h, float q){
-        if(tiles <= 0) return;
-        if(h >= tiles){
-            give.add(q / h * tiles);
-            return;
-        }
+        if(tiles < h) return;
         for(int i = 0; i < tiles / h; i++) give.add(q);
-        if(tiles % h > 0) give.add(q / h * (tiles % h));
     }
 
     static Recipe compose(Recipe r, Recipe heater, int k, mindustry.world.Block cond, int reds, float share){
