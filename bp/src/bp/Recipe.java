@@ -27,7 +27,7 @@ public final class Recipe{
         liquidFloor
     }
 
-    public enum Kind{crafter, heater, generator, drill, pump, units, upgrade, source, sink}
+    public enum Kind{crafter, heater, generator, drill, pump, units, upgrade, turret, source, sink}
 
     public final String name;
     public final Block block;
@@ -55,6 +55,18 @@ public final class Recipe{
     /** Its outputs that it stops for when full (a liquid output it can't get rid of stops a crafter). */
     public final Set<String> stopsWhenFull = new HashSet<>();
 
+    /**
+     * The blocks it is made of: itself, and for a machine that needs heat, the heaters that sit against it (heat is not
+     * carried about: each machine has its own). What it stands on, costs and takes to build is theirs together.
+     */
+    public final LinkedHashMap<Block, Integer> parts = new LinkedHashMap<>();
+    /**
+     * What it takes a second for being there, however much it works: its heaters burn what they burn whether or not the
+     * machine they heat is busy (a heater gives heat as long as it has its fuel and power).
+     */
+    public final LinkedHashMap<String, Float> fixedIn = new LinkedHashMap<>();
+    public float fixedPowerUse;
+
     public Recipe(String name, Block block, Kind kind, Ground ground, String dug){
         this.name = name;
         this.block = block;
@@ -62,6 +74,28 @@ public final class Recipe{
         this.kind = kind;
         this.ground = ground;
         this.dug = dug;
+        parts.put(block, 1);
+    }
+
+    /** Tiles it stands on, its parts together. */
+    public int area(){
+        int a = 0;
+        for(var e : parts.entrySet()) a += e.getKey().size * e.getKey().size * e.getValue();
+        return a;
+    }
+
+    /** Items it costs to build, its parts together. */
+    public int cost(){
+        int c = 0;
+        for(var e : parts.entrySet()) for(var st : e.getKey().requirements) c += st.amount * e.getValue();
+        return c;
+    }
+
+    /** Seconds the game takes to build it at a build speed of one, its parts together. */
+    public float buildSeconds(){
+        float t = 0f;
+        for(var e : parts.entrySet()) t += e.getKey().buildTime / 60f * e.getValue();
+        return t;
     }
 
     /** The rates at a place of this yield (1 for blocks that need no ground). */

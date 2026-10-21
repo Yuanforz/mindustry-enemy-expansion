@@ -4,6 +4,7 @@ import mindustry.*;
 import mindustry.content.*;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.blocks.defense.turrets.*;
 import mindustry.world.blocks.heat.*;
 import mindustry.world.blocks.power.*;
 import mindustry.world.blocks.production.*;
@@ -183,6 +184,18 @@ public final class Recipes{
             }
             return;
         }
+        if(b instanceof Turret t && (t.heatRequirement > 0f || b.consPower != null)){
+            //a turret kept ready: what it takes to fire at full (its power, its heat); what it "makes" is itself working
+            Recipe r = new Recipe(b.name, b, Recipe.Kind.turret, Recipe.Ground.none, null);
+            consumers(b, r, 0f, false);
+            if(t.heatRequirement > 0f){
+                r.heatNeed = t.heatRequirement;
+                r.maxEfficiency = t.maxHeatEfficiency;
+            }
+            r.out.put(b.name, 1f);
+            out.add(r);
+            return;
+        }
         if(b instanceof Reconstructor re){
             for(UnitType[] up : re.upgrades){
                 Recipe r = new Recipe(b.name + ":" + up[1].name, b, Recipe.Kind.upgrade, Recipe.Ground.none, null);
@@ -192,6 +205,50 @@ public final class Recipes{
                 out.add(r);
             }
         }
+    }
+
+    /**
+     * A machine that needs heat, with the heaters it has against it: heat goes from a heater only into the block its face
+     * touches (Building.calculateHeat: a heater's heat over its size, times the tiles in contact), so each machine has
+     * heaters of its own, as many whole ones as its need takes; as many as its sides hold (each heater's face along one
+     * side). With fewer than the need, it works at the share of its need it gets (Turret, HeatCrafter: efficiency is
+     * heat over need, at most its cap). Null if none of these heaters fits against it.
+     */
+    public static Recipe heated(Recipe r, Recipe heater){
+        if(r.heatNeed <= 0f || heater.heatOut <= 0f) return null;
+        //(what heaters of this kind give against its sides: along a side of S tiles, S / h heaters of size h touch with
+        //their whole face; the tiles left over, at the side's end, by one more that touches with only those, giving that
+        //share of its heat; four sides, a corner each for the ones at the ends. A 5x5 takes eight 2x2 heaters whole and
+        //four by one tile: 150 heat of phase heaters, not 10 x 15)
+        int s = r.size, h = heater.size;
+        List<Float> give = new ArrayList<>();
+        if(h >= s){
+            for(int i = 0; i < 4; i++) give.add(heater.heatOut / h * s);
+        }else{
+            for(int i = 0; i < 4 * (s / h); i++) give.add(heater.heatOut);
+            if(s % h > 0) for(int i = 0; i < 4; i++) give.add(heater.heatOut / h * (s % h));
+        }
+        float got = 0f;
+        int k = 0;
+        for(float g : give){
+            if(got >= r.heatNeed - 1e-4f) break;
+            got += g;
+            k++;
+        }
+        if(k <= 0) return null;
+        float share = Math.min(1f, got / r.heatNeed);
+        Recipe c = new Recipe(r.name + "+" + k + "x" + heater.name, r.block, r.kind, r.ground, r.dug);
+        c.parts.put(heater.block, k);
+        for(var e : r.in.entrySet()) c.in.put(e.getKey(), e.getValue() * (Vars.content.liquid(e.getKey()) != null ? 1f : share));
+        for(var e : r.out.entrySet()) c.out.put(e.getKey(), e.getValue() * share);
+        //(its heaters burn as long as they stand, busy or not)
+        for(var e : heater.in.entrySet()) c.fixedIn.merge(e.getKey(), e.getValue() * k, Float::sum);
+        for(var e : heater.out.entrySet()) c.out.merge(e.getKey(), e.getValue() * k, Float::sum);
+        c.powerUse = r.powerUse;
+        c.fixedPowerUse = heater.powerUse * k;
+        c.heatNeed = 0f;
+        c.stopsWhenFull.addAll(r.stopsWhenFull);
+        return c;
     }
 
     public static void main(String[] args){
