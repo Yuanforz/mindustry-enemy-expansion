@@ -687,18 +687,33 @@ public final class Hand extends mindustry.entities.units.AIController{
         if(now() - comingAt >= 1f){
             comingAt = now();
             coming.clear();
+            for(int k = 0; k < works.cat.size(); k++) if(works.field.handRate(works.cat, k) > 0f) coming.add(k);
             for(Building b : unit.team.data().buildings){
                 if(!Sites.producing(b)) continue;
                 Recipe r = Sites.existing(works.cat, b);
                 if(r == null) continue;
                 for(int k = 0; k < works.cat.size(); k++) if(r.out[k] > 1e-4f || r.perFactor[k] > 0f && madeBy(b, k)) coming.add(k);
             }
+            //(and what the order's own machines will make once what they take comes: those not put off, built or to be,
+            //whose every item taken comes in, over and over till nothing more is added; a furnace being built, its crusher
+            //at work, brings silicon in)
+            for(boolean more = true; more; ){
+                more = false;
+                for(int i = 0; i < order.size(); i++){
+                    if(skipped.contains(i)) continue;
+                    Recipe r = order.get(i).recipe;
+                    boolean fed = true;
+                    for(int k = 0; k < works.cat.size() && fed; k++) if(r.in[k] > 0f && works.cat.get(k).kind == Res.Kind.item && !coming.contains(k)) fed = false;
+                    if(!fed) continue;
+                    for(int k = 0; k < works.cat.size(); k++) if(order.get(i).out(k) > 1e-4f && coming.add(k)) more = true;
+                }
+            }
         }
         for(int k = 0; k < need.length; k++){
             if(need[k] <= 0) continue;
             Item item = Vars.content.item(works.cat.get(k).name);
             if(item == null || core.items.get(item) >= need[k]) continue;
-            if(works.field.handRate(works.cat, k) > 0f || coming.contains(k)) continue;
+            if(coming.contains(k)) continue;
             return item.name;
         }
         return null;

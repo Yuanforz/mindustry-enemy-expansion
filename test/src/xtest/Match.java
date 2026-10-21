@@ -438,7 +438,8 @@ public class Match{
                 }
                 for(int pass = 0; pass < 2 && plan == null; pass++){
                 homeGuard = pass == 1;
-                if(homeGuard && (ways.length == 0 || ways[0].startsWith("defend"))) break;
+                //(the command layer's ways are tried all at once: a second pass would only try them again)
+                if(homeGuard && (command != null || ways.length == 0 || ways[0].startsWith("defend"))) break;
                 if(homeGuard) System.out.println("  stage " + (stage + 1) + ": nothing that can be made gets to the Brain's base; units to hold our own");
                 for(String way : ways){
                     st = way.split(":");

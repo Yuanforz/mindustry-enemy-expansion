@@ -8,7 +8,9 @@ public final class Field{
     public static final class Site{
         public final Recipe.Ground ground;
         public final int x, y, rotation, item;
-        public final float factor, distance;
+        public final float factor;
+        /** How far a line has to go from the core to it: the tiles of the way a line can take (Sites.reach), not the crow's. */
+        public float distance;
         /** The tiles it covers, as x + y * width, so that two sites that overlap are not both taken. */
         public final int[] tiles;
         /**

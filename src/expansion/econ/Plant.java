@@ -8,7 +8,10 @@ import java.util.*;
  * nothing uses goes to the core if the core keeps it, and is lost otherwise.
  *
  * Shortages are shared out the way the game does it for power: everyone who wants a thing that is short gets the same
- * share of what they want. Lines are assumed to be laid so that every maker reaches every user of what it makes.
+ * share of what they want. Lines are assumed to be laid so that every maker of the plan's reaches every user of what it
+ * makes; an item the map's own machines (those standing, existing) make reaches only theirs and the core, as their lines
+ * run: a new taker is fed by new makers (or by a tap the layout lays, which the plan's own model then counts). Power and
+ * liquids are shared by all (grids join; the layout leads liquids from what stands).
  */
 public final class Plant{
     public final Catalog cat;
@@ -23,6 +26,9 @@ public final class Plant{
     public float[] share;
 
     private final int power;
+    /** For each storable item: made and used by the machines standing (existing), and by the plan's; set by add(). */
+    private float[] sE, uE, sP, uP;
+    private boolean[] split;
 
     public Plant(Catalog cat){
         this.cat = cat;
@@ -84,6 +90,14 @@ public final class Plant{
         }
 
         float[] s = supply, u = used, wantBoost = new float[power];
+        split = new boolean[power];
+        for(int k = 0; k < power; k++) split[k] = cat.get(k).kind == Res.Kind.item && cat.get(k).storable;
+        sE = new float[power];
+        uE = new float[power];
+        sP = new float[power];
+        uP = new float[power];
+        boolean[] standing = new boolean[m];
+        for(int i = 0; i < m; i++) standing[i] = machines.get(i).existing;
         for(int round = 0; round < 300; round++){
             add(machines, m, ins, inAmt, outs, outAmt, boostRes, s, u, false);
             //boosters get what is left of their liquid once the machines that must have it are served
@@ -97,6 +111,15 @@ public final class Plant{
                 int[] in = ins[i];
                 for(int j = 0; j < in.length; j++){
                     int k = in[j];
+                    if(k < power && split[k]){
+                        //(the plan's takers get the plan's makers' share; the map's own get theirs, then what the plan's leave)
+                        float aP = sP[k] * (share == null ? 1f : 1f - share[k]);
+                        if(standing[i]){
+                            float have = sE[k] + Math.max(0f, aP - uP[k]);
+                            if(uE[k] > have + 1e-6f) limit = Math.min(limit, have / uE[k]);
+                        }else if(uP[k] > aP + 1e-6f) limit = Math.min(limit, aP / uP[k]);
+                        continue;
+                    }
                     float have = avail(k, s);
                     if(u[k] > have + 1e-6f) limit = Math.min(limit, have / u[k]);
                 }
@@ -120,11 +143,27 @@ public final class Plant{
             u[power] = 0f;
             for(int i = 0; i < m; i++) u[power] += eff[i] * machines.get(i).recipe.powerUse;
         }
-        for(int k = 0; k < power; k++) toCore[k] = cat.get(k).storable ? Math.max(0f, s[k] - u[k] - (cat.drain == null ? 0f : cat.drain[k])) : 0f;
+        for(int k = 0; k < power; k++){
+            float left = s[k] - u[k];
+            if(split[k]){
+                //(the map's own surplus, and what the plan's makers have past the plan's takers and what the map's lacked)
+                float fromE = Math.min(sE[k], uE[k]);
+                left = (sE[k] - fromE) + Math.max(0f, sP[k] - uP[k] - (uE[k] - fromE));
+            }
+            toCore[k] = cat.get(k).storable ? Math.max(0f, left - (cat.drain == null ? 0f : cat.drain[k])) : 0f;
+        }
     }
 
     private boolean feasible(float[] s, float[] u){
-        for(int k = 0; k <= power; k++) if(u[k] > avail(k, s) * 1.0001f + 1e-5f) return false;
+        for(int k = 0; k <= power; k++){
+            if(k < power && split != null && split[k]){
+                float aP = sP[k] * (share == null ? 1f : 1f - share[k]);
+                if(uP[k] > aP * 1.0001f + 1e-5f) return false;
+                if(uE[k] > sE[k] + Math.max(0f, aP - uP[k]) + 1e-5f) return false;
+                continue;
+            }
+            if(u[k] > avail(k, s) * 1.0001f + 1e-5f) return false;
+        }
         return true;
     }
 
@@ -137,13 +176,27 @@ public final class Plant{
     private void add(List<Machine> machines, int m, int[][] ins, float[][] inAmt, int[][] outs, float[][] outAmt, int[] boostRes, float[] s, float[] u, boolean countBoost){
         Arrays.fill(s, 0f);
         Arrays.fill(u, 0f);
+        if(sE != null){
+            Arrays.fill(sE, 0f);
+            Arrays.fill(uE, 0f);
+            Arrays.fill(sP, 0f);
+            Arrays.fill(uP, 0f);
+        }
         for(int i = 0; i < m; i++){
             Machine mc = machines.get(i);
             float e = eff[i];
             float mult = boostRes[i] >= 0 ? 1f + (mc.recipe.boostMultiplier - 1f) * boost[i] : 1f;
             int[] in = ins[i], out = outs[i];
-            for(int j = 0; j < out.length; j++) s[out[j]] += e * outAmt[i][j] * (out[j] == mc.item ? mult : 1f);
-            for(int j = 0; j < in.length; j++) u[in[j]] += e * inAmt[i][j];
+            for(int j = 0; j < out.length; j++){
+                float v = e * outAmt[i][j] * (out[j] == mc.item ? mult : 1f);
+                s[out[j]] += v;
+                if(sE != null && out[j] < power) (mc.existing ? sE : sP)[out[j]] += v;
+            }
+            for(int j = 0; j < in.length; j++){
+                float v = e * inAmt[i][j];
+                u[in[j]] += v;
+                if(uE != null && in[j] < power) (mc.existing ? uE : uP)[in[j]] += v;
+            }
             if(countBoost && boostRes[i] >= 0) u[boostRes[i]] += e * mc.recipe.boostUse * boost[i];
         }
     }

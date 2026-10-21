@@ -86,14 +86,28 @@ public final class Planner{
             List<Machine> all = new ArrayList<>(field.existing);
             all.addAll(plan);
             float[] want = demand.clone(), have = cat.zeros();
+            float[] eHave = cat.zeros(), eWant = cat.zeros(), pHave = cat.zeros(), pWant = cat.zeros();
             float powerWant = 0f, powerHave = 0f;
             for(Machine m : all){
                 for(int k = 0; k < cat.size(); k++){
                     want[k] += m.recipe.in[k];
                     have[k] += m.out(k);
+                    (m.existing ? eWant : pWant)[k] += m.recipe.in[k];
+                    (m.existing ? eHave : pHave)[k] += m.out(k);
                 }
                 powerWant += m.recipe.powerUse;
                 powerHave += m.powerOut();
+            }
+            //(a storable item, as the plant has it: the map's own machines feed theirs and the core; the plan's takers only
+            //the plan's makers, which also make up what the map's own lack)
+            for(int k = 0; k < cat.size(); k++){
+                Res r = cat.get(k);
+                if(r.kind != Res.Kind.item || !r.storable) continue;
+                float exLeft = Math.max(0f, eHave[k] - eWant[k]), exShort = Math.max(0f, eWant[k] - eHave[k]);
+                float planNeed = pWant[k] + exShort;
+                float shortBy = Math.max(0f, planNeed - pHave[k]) + Math.max(0f, demand[k] - exLeft - Math.max(0f, pHave[k] - planNeed));
+                want[k] = planNeed + demand[k];
+                have[k] = want[k] - shortBy;
             }
             //the thing most short of, as a share of what is wanted (what nothing more can make is left as it is: the rest is
             //still balanced)
@@ -404,11 +418,28 @@ public final class Planner{
         int[] cost = estimate(r, site == null ? -1 : site.item, site != null, d);
         int x = site == null ? field.coreX + (int)baseDistance : site.x, y = site == null ? field.coreY : site.y;
         Machine m = new Machine(r, site == null ? -1 : site.item, site == null ? 1f : site.factor, x, y, d, cost, false, false);
+        //(and the time its lines take to put up, as their cost has them: the layout puts in what they really take)
+        m.buildSeconds = estimateSeconds(r, m.item, site != null, d);
         if(site != null){
             m.rotation = site.rotation;
             m.unseen = !site.seen;
         }
         return m;
+    }
+
+    /** The seconds the core unit takes to put a machine up with its lines, as estimate() has them. */
+    public float estimateSeconds(Recipe r, int siteItem, boolean onSite, float d){
+        boolean items = false, liquids = false;
+        for(int k = 0; k < cat.size(); k++){
+            Res res = cat.get(k);
+            if((r.in[k] > 0f || r.out[k] > 0f || r.perFactor[k] > 0f && onSite && siteItem == k) && res.kind == Res.Kind.item) items = true;
+            if((r.in[k] > 0f || r.out[k] > 0f) && res.kind == Res.Kind.liquid) liquids = true;
+        }
+        float rate = cat.buildSpeed * cat.buildRule * 60f, sec = cat.buildSeconds(r);
+        if(items) sec += d * mindustry.content.Blocks.duct.buildTime / rate;
+        if(liquids) sec += d * mindustry.content.Blocks.reinforcedConduit.buildTime / rate;
+        if(r.powerUse > 0f || r.powerOut > 0f) sec += (float)Math.ceil(d / 10f) * mindustry.content.Blocks.beamNode.buildTime / rate;
+        return sec;
     }
 
     /** What the model counts a machine to cost before it is laid out: its own cost and its lines to the core over the distance. */

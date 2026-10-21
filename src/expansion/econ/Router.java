@@ -477,9 +477,48 @@ final class Router{
         if(last) n.feeds.put(takers.get(takers.size() - 1), "end of the spine");
         branches(n, first, last ? at.get(takers.get(takers.size() - 1)) : null);
         for(Machine c : spurs){
+            boolean wasOk = n.ok;
+            int whyBefore = n.why.size();
             spur(n, c);
+            //(no spur: a line of its own from the nearest of the net's makers, as a maker hands what it makes to every line
+            //beside it; the spine's takers no spur reached, silicon to fabricators the most, came to nothing)
+            if(!n.branch.containsKey(c) && ownLine(n, c)){
+                n.ok = wasOk;
+                while(n.why.size() > whyBefore) n.why.remove(n.why.size() - 1);
+                n.feeds.put(c, "a line of its own from a maker");
+                continue;
+            }
             n.feeds.put(c, n.branch.containsKey(c) ? "spur off the spine" : "not fed: no spur found");
         }
+    }
+
+    /** A line to a taker from the nearest of a net's makers that one can be laid from, as a branch of the net; whether one was. */
+    boolean ownLine(Net n, Machine c){
+        Part cp = at.get(c);
+        if(cp == null) return false;
+        List<Machine> makers = new ArrayList<>();
+        for(Machine m : n.from) if(at.get(m) != null) makers.add(m);
+        makers.sort(Comparator.comparingDouble(m -> Math.abs(at.get(m).x - cp.x) + Math.abs(at.get(m).y - cp.y)));
+        for(Machine m : makers){
+            if(touchFeeds(n, m, c)){
+                n.branch.put(c, new Seq<>());
+                return true;
+            }
+            Path path = search(n, starts(n, m), List.of(), into(n, cp), new int[]{cp.x, cp.y});
+            if(path == null) continue;
+            Seq<Part> mine = new Seq<>();
+            for(Part p : path.parts){
+                mine.add(p);
+                for(int t : grid.tiles(p)) own.put(t, p);
+            }
+            for(int k = 0; k < path.quiet.size; k++){
+                ownQuiet.add(path.quiet.get(k));
+                n.quiet.add(path.quiet.get(k));
+            }
+            n.branch.put(c, mine);
+            return true;
+        }
+        return false;
     }
 
     /** Whether a path puts two pieces on one tile (its stages let it pass a tile again on the way back). */

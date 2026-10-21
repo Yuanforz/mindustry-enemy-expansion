@@ -77,7 +77,9 @@ public final class Sites{
         }
         //only places a line can get to from the core: over ground that can be built on, or by bridge over up to three
         //tiles of anything else
-        boolean[] reach = reach(field, team), shot = danger(team);
+        int[] steps = reachSteps(field, team);
+        boolean[] reach = new boolean[steps.length], shot = danger(team);
+        for(int i = 0; i < steps.length; i++) reach[i] = steps[i] >= 0;
         int w = Vars.world.width();
         String around = System.getProperty("xp.sitearound");
         if(around != null){
@@ -137,6 +139,11 @@ public final class Sites{
             int left = 0;
             for(Field.Site st : all) if(st.ground == Recipe.Ground.liquidFloor) left++;
             System.out.println("  sites: liquid floor tiles " + dbg[0] + ", placeable " + dbg[1] + ", sites " + dbg[2] + ", left after reach/danger " + left);
+        }
+        //(how far: the pieces of the line to it, not the crow's way: a bore behind a ridge is as far as the way round it)
+        for(Field.Site st : all){
+            int pieces = lineSteps(steps, st.tiles);
+            if(pieces >= 0) st.distance = Math.max(st.distance, pieces);
         }
         Vars.state.rules.fog = fog;
         //what the side has seen so far: the game works its fog out on a thread of its own, which this makes it do now
@@ -278,8 +285,18 @@ public final class Sites{
 
     /** The tiles a line can get to from the core: ground that can be built on, crossing up to three tiles of anything else by bridge. */
     static boolean[] reach(Field field, Team team){
+        int[] steps = reachSteps(field, team);
+        boolean[] seen = new boolean[steps.length];
+        for(int i = 0; i < steps.length; i++) seen[i] = steps[i] >= 0;
+        return seen;
+    }
+
+    /** The same, with how many pieces a line from the core takes to each tile (a bridge's hop one); -1 where none gets. */
+    static int[] reachSteps(Field field, Team team){
         int w = Vars.world.width(), h = Vars.world.height();
         boolean[] open = new boolean[w * h], seen = new boolean[w * h], shot = danger(team);
+        int[] steps = new int[w * h];
+        java.util.Arrays.fill(steps, -1);
         for(int y = 0; y < h; y++){
             for(int x = 0; x < w; x++){
                 Tile t = Vars.world.tile(x, y);
@@ -294,6 +311,7 @@ public final class Sites{
                 int x = field.coreX + dx, y = field.coreY + dy;
                 if(x < 0 || y < 0 || x >= w || y >= h || !open[x + y * w] || seen[x + y * w]) continue;
                 seen[x + y * w] = true;
+                steps[x + y * w] = 0;
                 queue.addLast(x + y * w);
             }
         }
@@ -307,6 +325,8 @@ public final class Sites{
                     if(!open[q]) continue;
                     if(!seen[q]){
                         seen[q] = true;
+                        //(a hop of a bridge: two pieces, a duct a tile)
+                        steps[q] = steps[p] + (j > 1 ? 2 : 1);
                         queue.addLast(q);
                     }
                     //open ground is walked one step at a time; only over what can't be built on does it jump
@@ -314,7 +334,22 @@ public final class Sites{
                 }
             }
         }
-        return seen;
+        return steps;
+    }
+
+    /** The pieces a line takes from the core to the nearest tile beside these tiles (-1: none). */
+    static int lineSteps(int[] steps, int[] tiles){
+        int w = Vars.world.width(), h = Vars.world.height(), best = -1;
+        for(int t : tiles){
+            int x = t % w, y = t / w;
+            for(int d = 0; d < 4; d++){
+                int nx = x + arc.math.geom.Geometry.d4x(d), ny = y + arc.math.geom.Geometry.d4y(d);
+                if(nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                int st = steps[nx + ny * w];
+                if(st >= 0 && (best < 0 || st < best)) best = st;
+            }
+        }
+        return best;
     }
 
     /** Whether anything is built under where the block would go (the game would let some blocks be put over others; a plan may not count on that). */
