@@ -1,0 +1,23 @@
+# Silicon 12/s (three furnaces) on cramped ground with walls: one sand source, one graphite source.
+map
+####################
+#..................#
+#..................#
+#.....####.........#
+#.....####.........#
+#..................#
+#..................#
+#..........###.....#
+#..........###.....#
+#..................#
+#..................#
+####################
+end
+fixed
+core-bastion 16 5 0
+item-source 1 9 0 graphite
+item-source 1 2 0 sand
+power-source 9 1 0
+end
+goal silicon 12
+seconds 120
