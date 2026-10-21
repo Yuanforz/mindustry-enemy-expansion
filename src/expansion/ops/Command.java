@@ -238,6 +238,10 @@ public final class Command{
 
     /** When the other side was first weighed against, and what its buildings cost in all then. */
     float foeFirstSeen = -1f, foeFirstSpend;
+    /** Our fastest stage's first unit at the first weighing, and when the other side's first fighting unit came (-1: not yet). */
+    float fastestAtStart = -1f, foeFirstUnitAt = -1f;
+    /** How fast the other side comes to fight before anything is seen of it, as a share of our fastest (-Dops.mirrorprior). */
+    public static float mirrorPrior = Float.parseFloat(System.getProperty("ops.mirrorprior", "0.8"));
     /** Their base's guard when first weighed against, and since when; how fast it grows (a second). */
     Force foeGuardFirst, guardGrowth = new Force();
     float foeGuardSince;
@@ -254,7 +258,10 @@ public final class Command{
         this.foe = foe;
         arc.Events.on(mindustry.game.EventType.UnitCreateEvent.class, e -> {
             if(e.unit == null || !e.unit.type.canAttack || e.unit.spawnedByCore) return;
-            if(e.unit.team == foe) foeCreated++;
+            if(e.unit.team == foe){
+                foeCreated++;
+                if(foeFirstUnitAt < 0f) foeFirstUnitAt = (float)(Vars.state.tick / 60.0);
+            }
             //(the first of the kind the stage chosen is to turn out: how long it took against the model)
             if(e.unit.team == me && e.unit.type == expecting){
                 lagSeen.add(Math.max(0.5f, ((float)(Vars.state.tick / 60.0) - expectFrom) / expectIn));
@@ -410,19 +417,32 @@ public final class Command{
         if(foeFirstSeen < 0f){
             foeFirstSeen = seen;
             foeFirstSpend = spent;
+            //(fighting units it had from the start: it fights from the start)
+            for(Unit u : foe.data().units) if(!u.spawnedByCore && u.type.canAttack) foeFirstUnitAt = seen;
         }
         float ours = 0f;
         if(fastest != null){
             for(Machine m : fastest.model.order) for(int c : m.cost) ours += c;
             ours /= Math.max(1f, Float.isInfinite(fastest.model.t) ? horizon : Math.min(fastest.model.t, horizon));
         }
-        float pace = seen - foeFirstSeen <= 0f || ours <= 0f ? 1f : Math.min(1f, Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen) / ours);
+        float spendPace = seen - foeFirstSeen <= 0f || ours <= 0f ? 1f : Math.min(1f, Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen) / ours);
+        //(how fast it comes to fight, which is what the mirror is about: its first fighting unit's time against our fastest
+        //stage's first unit at the first weighing; none yet, at most as fast as it would have had to be by now; before
+        //anything is seen, the faster quarter of what the Brain has been measured at, its first unit at 1.25 times our
+        //fastest plan's (53 games: median 1.55))
+        if(fastestAtStart < 0f && fastest != null) fastestAtStart = soonest;
+        float militaryPace = mirrorPrior;
+        if(fastestAtStart > 0f){
+            if(foeFirstUnitAt >= 0f) militaryPace = Math.min(1f, fastestAtStart / Math.max(1f, foeFirstUnitAt - foeFirstSeen));
+            else if(seen - foeFirstSeen > fastestAtStart) militaryPace = Math.min(militaryPace, fastestAtStart / (seen - foeFirstSeen));
+        }
+        float pace = Math.min(spendPace, militaryPace);
         boolean builds = fastest != null && pace > 0f;
         List<Scenario> scenarios = new ArrayList<>();
         //(what is chance: how slow our economy runs, whether the other side builds; when it sends its army is its own choice,
         //and each of these is played at every sendAt and counted at the worst of them)
         for(Forecast fc : List.of(forecast)) for(float lag : lags) for(boolean m : builds ? new boolean[]{false, true} : new boolean[]{false}) scenarios.add(new Scenario(lag, m, 0f, fc));
-        log.append(String.format("  command: the other side builds at %.0f%% of our fastest pace (%.1f items a second since %s, ours %.1f)%s\n", pace * 100f, seen - foeFirstSeen <= 0f ? 0f : Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen), Plan.time(foeFirstSeen), ours, builds ? "" : ": no mirror"));
+        log.append(String.format("  command: the other side builds at %.0f%% of our fastest pace (spending %.1f items a second since %s against ours %.1f: %.0f%%; its first fighting unit %s against our fastest's %s: %.0f%%)%s\n", pace * 100f, seen - foeFirstSeen <= 0f ? 0f : Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen), Plan.time(foeFirstSeen), ours, spendPace * 100f, foeFirstUnitAt < 0f ? "not yet" : Plan.time(foeFirstUnitAt), Plan.time(fastestAtStart), militaryPace * 100f, builds ? "" : ": no mirror"));
         Force foeGuard = foeGuard();
         //(and how fast it has grown: what its loaded turrets about its cores gained a second since it was first weighed
         //against; a base seen with no turrets at the landing grew three breaches by the time the push the model counted on
