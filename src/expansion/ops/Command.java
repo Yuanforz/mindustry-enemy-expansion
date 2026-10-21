@@ -499,20 +499,20 @@ public final class Command{
         log.append(String.format("  command: weighed %d ways in %d scenarios in %.1f s\n", weighed.size(), scenarios.size(), (System.nanoTime() - t0) / 1e9f));
         if(Boolean.getBoolean("ops.time")) log.append(Took.report());
         if(weighed.isEmpty()) return null;
-        //(going on with the stage being built is left only for a way no worse in any scenario: of many ways weighed, the
-        //best looks better than it is by the model's errors alone (the optimizer's curse), and a stage left for one that
-        //only looked better was begun again every minute and none finished; one that has stuck is beaten in every one)
+        //(going on with the stage being built is left for another way only when what is gained by leaving it, scenario by
+        //scenario, is worth it by the posture's own attitude to risk (the worst gain, the mean of the worse half, the mean):
+        //of many ways weighed, the best looks better than it is by the model's errors alone (the optimizer's curse), and a
+        //stage left for one only a little better somewhere was begun again every minute and none finished; one that has
+        //stuck, or that the game has turned against, loses by much in most)
         Candidate keep = null;
         for(Candidate c : weighed) if(c.keep) keep = c;
         Candidate best = weighed.get(0);
         if(keep != null && best != keep){
-            boolean dominates = true, better = false;
-            for(int i = 0; i < best.scores.length; i++){
-                if(best.scores[i] < keep.scores[i]) dominates = false;
-                if(best.scores[i] > keep.scores[i]) better = true;
-            }
-            if(!dominates || !better){
-                log.append("  command: going on with the stage: ").append(best.stage()).append(!better ? " is no better in any scenario\n" : " is better on the whole but worse in some scenario\n");
+            float[] gain = new float[best.scores.length];
+            for(int i = 0; i < gain.length; i++) gain[i] = best.scores[i] - keep.scores[i];
+            float worth = aggregate(gain);
+            if(worth <= 0f){
+                log.append(String.format("  command: going on with the stage: %s gains %.1f by the posture's measure of risk\n", best.stage(), worth));
                 return keep;
             }
         }

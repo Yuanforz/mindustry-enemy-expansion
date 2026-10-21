@@ -191,8 +191,10 @@ public final class Sites{
             //(one of the map's that is not working now, or whose output has nowhere to go, gives nothing as it stands: seen
             //at once, before any income is measured; it may be taken up with lines of the plan's own. On crevice nine
             //crushers stood with their sand backed up, the plan counted on them, and its furnace never got sand)
-            if(!r.makesUnits() && !producing(build)){
-                if(!unfeedable.contains(arc.math.geom.Point2.pack(build.tileX(), build.tileY()))) field.revivable.add(m);
+            //(a unit maker too: one standing without what it takes turns out nothing, and every plan on onset counted on a tank
+            //fabricator no line of silicon reached, made two machines, and no stell came in forty minutes)
+            if(!producing(build)){
+                if(!r.makesUnits() && !unfeedable.contains(arc.math.geom.Point2.pack(build.tileX(), build.tileY()))) field.revivable.add(m);
                 continue;
             }
             field.existing.add(m);
