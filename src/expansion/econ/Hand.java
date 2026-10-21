@@ -701,11 +701,26 @@ public final class Hand extends mindustry.entities.units.AIController{
             comingAt = now();
             coming.clear();
             for(int k = 0; k < works.cat.size(); k++) if(works.field.handRate(works.cat, k) > 0f) coming.add(k);
+            //(at work: making now, or, waiting between deliveries, fed: holding some of what it takes, and what it lacks
+            //itself coming in; worked to a fixpoint, a chain at a time. Looked at in one frame, a furnace waiting for its next
+            //sand made silicon "not coming", and a stage 16 silicon short of its fabricator was given up)
+            List<Building> waiting = new ArrayList<>();
             for(Building b : unit.team.data().buildings){
-                if(!Sites.producing(b)) continue;
                 Recipe r = Sites.existing(works.cat, b);
-                if(r == null) continue;
-                for(int k = 0; k < works.cat.size(); k++) if(r.out[k] > 1e-4f || r.perFactor[k] > 0f && madeBy(b, k)) coming.add(k);
+                if(r == null || !Sites.producing(b) && !Sites.waitingFed(b)) continue;
+                if(Sites.producing(b)) makes(b, r);
+                else waiting.add(b);
+            }
+            for(boolean more = true; more;){
+                more = false;
+                for(int i = 0; i < waiting.size(); i++){
+                    Building b = waiting.get(i);
+                    Recipe r = Sites.existing(works.cat, b);
+                    if(!fedFrom(b, r)) continue;
+                    makes(b, r);
+                    waiting.remove(i--);
+                    more = true;
+                }
             }
             //(only what is at work: a maker of the order's yet to be built, behind the step waiting on it, never comes; one put
             //off now is begun again once it can be paid for, and the stage is over only when nothing comes for any of them)
@@ -718,6 +733,26 @@ public final class Hand extends mindustry.entities.units.AIController{
             return item.name;
         }
         return null;
+    }
+
+    void makes(Building b, Recipe r){
+        for(int k = 0; k < works.cat.size(); k++) if(r.out[k] > 1e-4f || r.perFactor[k] > 0f && madeBy(b, k)) coming.add(k);
+    }
+
+    /** Whether what a machine waiting for its inputs lacks is all coming in (what it holds is had). */
+    boolean fedFrom(Building b, Recipe r){
+        for(int k = 0; k < works.cat.size(); k++){
+            if(r.in[k] <= 0f || coming.contains(k)) continue;
+            Res res = works.cat.get(k);
+            if(res.kind == Res.Kind.item){
+                Item item = Vars.content.item(res.name);
+                if(item == null || b.items == null || b.items.get(item) <= 0) return false;
+            }else if(res.kind == Res.Kind.liquid){
+                mindustry.type.Liquid liquid = Vars.content.liquid(res.name);
+                if(liquid == null || b.liquids == null || b.liquids.get(liquid) <= 1e-3f) return false;
+            }
+        }
+        return true;
     }
 
     /** Whether a drill digs this item (what it stands on gives). */

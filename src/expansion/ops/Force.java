@@ -76,10 +76,23 @@ public final class Force{
         return add((Object)type, n);
     }
 
-    /** A unit as it stands: its kind, and what of its health it has lost (or has over, in shields). */
+    /** Health beyond what its kinds have at full (shields), in all. */
+    public Force addHealth(float hp){
+        if(hp == 0f) return this;
+        damage -= hp;
+        refresh();
+        return this;
+    }
+
+    /**
+     * A unit as it stands: its kind, and what of its health it has lost (or has over, in shields). (The game keeps a unit's
+     * health and shield unscaled and divides each hit by the team's health multiplier and the unit's own: what it can take
+     * is what it has times both. Taken as it was, the hard campaign's enemies, at 1.25, counted 80% of what they could take.)
+     */
     public Force add(Unit u){
         kinds.increment(u.type, 0f, 1f);
-        damage += Combat.health(u.type, u.team) - (u.health + u.shield);
+        float scale = u.healthMultiplier * mindustry.Vars.state.rules.unitHealth(u.team);
+        damage += Combat.health(u.type, u.team) - (u.health + u.shield) * scale;
         refresh();
         return this;
     }
@@ -92,7 +105,7 @@ public final class Force{
     public Force addTurret(Turret.TurretBuild build){
         Turret type = (Turret)build.block;
         kinds.increment(new Combat.Gun(type, Combat.ammoOf(type, build)), 0f, 1f);
-        damage += Combat.health(type, build.team) - build.health;
+        damage += Combat.health(type, build.team) - build.health * blockScale(build);
         refresh();
         return this;
     }
@@ -100,9 +113,14 @@ public final class Force{
     /** A building that takes hits and gives none (a core, a wall), with the health it has. */
     public Force addBuilding(Building b){
         kinds.increment(b.block, 0f, 1f);
-        damage += Combat.health(b.block, b.team) - b.health;
+        damage += Combat.health(b.block, b.team) - b.health * blockScale(b);
         refresh();
         return this;
+    }
+
+    /** What a building's health stands for (the game divides each hit by its team's block health multiplier). */
+    static float blockScale(Building b){
+        return b.team == null ? 1f : mindustry.Vars.state.rules.blockHealth(b.team);
     }
 
     public Force add(Force o){
@@ -193,6 +211,64 @@ public final class Force{
             sum += a.value * d;
         }
         return sum;
+    }
+
+    /**
+     * What a body's fire does over dt seconds to the parts of another it fights: each of its kinds' fire spread over the
+     * kinds of all the parts it can hurt, by their health as it stands, as dpsAgainst has it; what lands on each, by kind
+     * and part. Nothing is changed (see wearBy).
+     */
+    static ObjectFloatMap<Object>[] aim(Force a, java.util.List<Force> parts, float dt){
+        @SuppressWarnings("unchecked")
+        ObjectFloatMap<Object>[] hits = new ObjectFloatMap[parts.size()];
+        for(int i = 0; i < hits.length; i++) hits[i] = new ObjectFloatMap<>();
+        for(var ea : a.kinds){
+            if(ea.value <= 1e-6f || (ea.key instanceof Block && !(ea.key instanceof Turret))) continue;
+            Object fighter = ea.key;
+            float n = ea.value;
+            float hurtable = 0f;
+            for(Force p : parts){
+                float scale = p.standing();
+                for(var eb : p.kinds) if(eb.value > 1e-6f && Combat.dps(fighter, a.team, eb.key, p.team) > 0f) hurtable += eb.value * Combat.health(eb.key, p.team) * scale;
+            }
+            if(hurtable <= 0f) continue;
+            for(int i = 0; i < hits.length; i++){
+                Force p = parts.get(i);
+                float scale = p.standing();
+                for(var eb : p.kinds){
+                    if(eb.value <= 1e-6f) continue;
+                    float d = Combat.dps(fighter, a.team, eb.key, p.team);
+                    if(d <= 0f) continue;
+                    if(fighter instanceof UnitType && (eb.key instanceof Block || eb.key instanceof Combat.Gun)) d *= buildingUptime;
+                    float hp = eb.value * Combat.health(eb.key, p.team) * scale;
+                    hits[i].increment(eb.key, 0f, n * d * dt * hp / hurtable);
+                }
+            }
+        }
+        return hits;
+    }
+
+    /** The share of its full health it has as it stands (a body that lost some, or has shields over). */
+    float standing(){
+        float full = 0f;
+        for(var e : kinds) if(e.value > 1e-6f) full += e.value * Combat.health(e.key, team);
+        return full <= 0f ? 0f : Math.max(0f, health / full);
+    }
+
+    /** Wears it down by what landed on each of its kinds (from aim): each kind loses its share; what it had lost besides goes as they go. */
+    void wearBy(ObjectFloatMap<Object> hit){
+        float full = 0f, kept = 0f, scale = standing();
+        for(var e : kinds.entries()){
+            if(e.value <= 1e-6f) continue;
+            float whole = e.value * Combat.health(e.key, team);
+            float has = whole * scale;
+            float keep = has <= 0f ? 0f : Math.max(0f, 1f - hit.get(e.key, 0f) / has);
+            full += whole;
+            kept += whole * keep;
+            kinds.put(e.key, e.value * keep);
+        }
+        if(full > 0f) damage *= kept / full;
+        refresh();
     }
 
     /** Its strength against another: what it does to that one a second times what it can take. */

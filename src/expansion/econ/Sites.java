@@ -490,6 +490,18 @@ public final class Sites{
         return true;
     }
 
+    /**
+     * Whether a machine not making this moment is only between deliveries: powered, its output not backed up, and holding
+     * some of what it takes (something reaches it).
+     */
+    static boolean waitingFed(Building build){
+        if(build.block.consPower != null && build.power != null && build.power.status <= 0.01f) return false;
+        if(build.items != null && build.block.hasItems && build.block.itemCapacity > 0 && build.items.total() >= build.block.itemCapacity - 1) return false;
+        boolean holds = build.items != null && build.items.total() > 0;
+        if(!holds && build.liquids != null) holds = build.liquids.currentAmount() > 1e-3f;
+        return holds;
+    }
+
     static Recipe existing(Catalog cat, Building build){
         String name = build.block.name;
         if(build instanceof UnitFactory.UnitFactoryBuild f){

@@ -10,7 +10,8 @@ import java.util.*;
  * Shortages are shared out the way the game does it for power: everyone who wants a thing that is short gets the same
  * share of what they want. Lines are assumed to be laid so that every maker of the plan's reaches every user of what it
  * makes; an item the map's own machines (those standing, existing) make reaches only theirs and the core, as their lines
- * run: a new taker is fed by new makers (or by a tap the layout lays, which the plan's own model then counts). Power and
+ * run: a new taker is fed by new makers, or by a tap off those lines (Machine#taps: it draws on the map's own as their
+ * takers do). Power and
  * liquids are shared by all (grids join; the layout leads liquids from what stands).
  */
 public final class Plant{
@@ -114,7 +115,7 @@ public final class Plant{
                     if(k < power && split[k]){
                         //(the plan's takers get the plan's makers' share; the map's own get theirs, then what the plan's leave)
                         float aP = sP[k] * (share == null ? 1f : 1f - share[k]);
-                        if(standing[i]){
+                        if(standing[i] || machines.get(i).taps(k)){
                             float have = sE[k] + Math.max(0f, aP - uP[k]);
                             if(uE[k] > have + 1e-6f) limit = Math.min(limit, have / uE[k]);
                         }else if(uP[k] > aP + 1e-6f) limit = Math.min(limit, aP / uP[k]);
@@ -195,7 +196,7 @@ public final class Plant{
             for(int j = 0; j < in.length; j++){
                 float v = e * inAmt[i][j];
                 u[in[j]] += v;
-                if(uE != null && in[j] < power) (mc.existing ? uE : uP)[in[j]] += v;
+                if(uE != null && in[j] < power) (mc.existing || mc.taps(in[j]) ? uE : uP)[in[j]] += v;
             }
             if(countBoost && boostRes[i] >= 0) u[boostRes[i]] += e * mc.recipe.boostUse * boost[i];
         }

@@ -109,7 +109,9 @@ public final class Combat{
         if(b.splashDamage > 0f && b.splashDamageRadius > 0f && (building || (air ? b.collidesAir : b.collidesGround))) d += afterArmor(b.splashDamage, armor) * mult;
         //(of its fragments, the one that comes the target's way)
         if(b.fragBullet != null && b.fragBullets > 0) d += perShot(b.fragBullet, air, building, armor, depth + 1);
-        if(b.lightning > 0 && b.lightningDamage > 0f && !air) d += b.lightning * afterArmor(b.lightningDamage, armor) * mult;
+        //(a lightning damage under none is the bullet's own damage, as the game has it)
+        float lightning = b.lightningDamage < 0f ? b.damage : b.lightningDamage;
+        if(b.lightning > 0 && lightning > 0f && !air) d += b.lightning * afterArmor(lightning, armor) * mult;
         return d;
     }
 
@@ -138,7 +140,9 @@ public final class Combat{
         if(building ? !type.targetGround : air ? !type.targetAir : !type.targetGround) return 0f;
         float sum = 0f;
         for(Weapon w : type.weapons){
-            if(w.bullet == null || w.noAttack) continue;
+            //(what shoots down bullets, mends, builds or mines hurts nobody)
+            if(w.bullet == null || w.noAttack || w instanceof mindustry.type.weapons.PointDefenseWeapon || w instanceof mindustry.type.weapons.PointDefenseBulletWeapon
+                || w instanceof mindustry.type.weapons.RepairBeamWeapon || w instanceof mindustry.type.weapons.BuildWeapon || w instanceof mindustry.type.weapons.MineWeapon) continue;
             float beam = beamDps(w.bullet, air, building, armor);
             if(beam > 0f){
                 sum += beam;

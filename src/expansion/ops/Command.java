@@ -208,32 +208,67 @@ public final class Command{
     public Forecast forecast;
     public final StringBuilder log = new StringBuilder();
     long dpAt;
-    /** The other side's fighting units seen at the weighings so far, how many new ones came since the first, and how many its yards would have made at their pace meanwhile. */
-    float foeMade, foeExpected = 0f, lastWeighAt = -1f;
-    /** Fighting units the other side's yards made since the last weighing (counted as each is made). */
-    int foeCreated;
+    /** When the last weighing was. */
+    float lastWeighAt = -1f;
 
     /**
-     * The share of their own pace the other side's yards have been seen to work at: the units that came since the first
-     * weighing over those its yards would have made at their pace meanwhile, with one unit's worth of prior that they do
-     * (as fast as they could before anything is seen; Laplace's rule of succession for a rate).
+     * What is seen of one of the other side's yards: since when it is counted, the work it has done since (units turned
+     * out, and how far along the next is), and what it would have done at its own pace.
+     */
+    static final class YardSeen{
+        float lastAt, startFraction, made, expected;
+    }
+
+    /** The other side's yards by place, as seen at the weighings; when each was finished; units each turned out since last looked at. */
+    final IntMap<YardSeen> yards = new IntMap<>();
+    final IntFloatMap yardBuiltAt = new IntFloatMap();
+    final IntIntMap yardMade = new IntIntMap();
+    /** The share of its own pace each of the other side's yards has been seen to work at, by place (Forecast reads it). */
+    final IntFloatMap yardShare = new IntFloatMap();
+
+    /**
+     * The share of their own pace the other side's yards have been seen to work at, each yard on its own: the work it has
+     * done since it was finished (units turned out, and how far along the next is) over what it would have done at its own
+     * pace meanwhile, with one unit's worth of prior that it does (as fast as it could before anything is seen; Laplace's
+     * rule of succession for a rate). The share of all their pace, for the log. (Counted for all the yards at once and
+     * at the pace of the yards there are now, a yard finished a minute ago was taken to have stood idle since the last
+     * weighing: on gen-5 the Brain's three stells came at a forecast of 12%.)
      */
     float yardUse(){
         float now = (float)(Vars.state.tick / 60.0);
-        float pace = 0f;
+        float pace = 0f, used = 0f;
+        yardShare.clear();
         for(Building b : foe.data().buildings){
             if(b.cheating()) continue;
-            if(b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0) pace += 60f / Math.max(1f, ((mindustry.world.blocks.units.UnitFactory)b.block).plans.get(yard.currentPlan).time);
-            else if(b.block instanceof mindustry.world.blocks.units.Reconstructor re) pace += 60f / Math.max(1f, re.constructTime);
+            float rate, fraction;
+            if(b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0){
+                rate = 60f / Math.max(1f, ((mindustry.world.blocks.units.UnitFactory)b.block).plans.get(yard.currentPlan).time);
+                fraction = yard.fraction();
+            }else if(b instanceof mindustry.world.blocks.units.Reconstructor.ReconstructorBuild re){
+                rate = 60f / Math.max(1f, ((mindustry.world.blocks.units.Reconstructor)b.block).constructTime);
+                fraction = re.fraction();
+            }else continue;
+            YardSeen y = yards.get(b.pos());
+            if(y == null){
+                y = new YardSeen();
+                //(finished since it was last looked: counted from then, with nothing done; standing when first seen: from now, as it is)
+                float built = yardBuiltAt.get(b.pos(), -1f);
+                y.lastAt = built >= 0f && built <= now ? built : now;
+                y.startFraction = built >= 0f && built <= now ? 0f : fraction;
+                yards.put(b.pos(), y);
+            }
+            y.expected += Math.max(0f, now - y.lastAt) * rate;
+            y.lastAt = now;
+            y.made += yardMade.get(b.pos(), 0);
+            float done = Math.max(0f, y.made + fraction - y.startFraction);
+            float share = Math.min(1f, (done + 1f) / (y.expected + 1f));
+            yardShare.put(b.pos(), share);
+            pace += rate;
+            used += rate * share;
         }
-        //(the units its yards turned out, counted as they come: those our turrets kill before the next weighing count too)
-        if(lastWeighAt >= 0f){
-            foeMade += foeCreated;
-            foeExpected += Math.max(0f, now - lastWeighAt) * pace;
-        }
-        foeCreated = 0;
+        yardMade.clear();
         lastWeighAt = now;
-        return Math.min(1f, (foeMade + 1f) / (foeExpected + 1f));
+        return pace <= 0f ? 1f : used / pace;
     }
 
     /** When the other side was first weighed against, and what its buildings cost in all then. */
@@ -256,10 +291,17 @@ public final class Command{
     public Command(Team me, Team foe){
         this.me = me;
         this.foe = foe;
+        arc.Events.on(mindustry.game.EventType.BlockBuildEndEvent.class, e -> {
+            if(e.breaking || e.team != foe || e.tile == null || e.tile.build == null) return;
+            if(e.tile.build.block instanceof mindustry.world.blocks.units.UnitFactory || e.tile.build.block instanceof mindustry.world.blocks.units.Reconstructor){
+                yardBuiltAt.put(e.tile.build.pos(), (float)(Vars.state.tick / 60.0));
+                yards.remove(e.tile.build.pos());
+            }
+        });
         arc.Events.on(mindustry.game.EventType.UnitCreateEvent.class, e -> {
             if(e.unit == null || !e.unit.type.canAttack || e.unit.spawnedByCore) return;
             if(e.unit.team == foe){
-                foeCreated++;
+                if(e.spawner != null) yardMade.increment(e.spawner.pos());
                 if(foeFirstUnitAt < 0f) foeFirstUnitAt = (float)(Vars.state.tick / 60.0);
             }
             //(the first of the kind the stage chosen is to turn out: how long it took against the model)
@@ -294,7 +336,7 @@ public final class Command{
         long t0 = System.nanoTime();
         log.setLength(0);
         weighed.clear();
-        forecast = new Forecast(me, foe, horizon, step, yardUse());
+        forecast = new Forecast(me, foe, horizon, step, yardUse(), yardShare);
         lagsNow();
         reachCache.clear();
         reachUsCache.clear();
@@ -481,6 +523,10 @@ public final class Command{
             mirrors.put(lag, added);
         }
 
+        lastScenarios = scenarios;
+        lastMirrors = mirrors;
+        lastGuard = foeGuard;
+        lastTaskDefence = taskDefence;
         //the stages alone first; then, for each defence, the best few of them planned again on top of it (its machines
         //standing, what it leaves in the core to begin with), as the next stage would be once it is up; the rest are
         //counted as begun only once it is up, from nothing (too slow by what the defence's economy gives them)
@@ -620,6 +666,21 @@ public final class Command{
             }
         }
         return best;
+    }
+
+    /** What the last weighing played against, kept for weighing a way again on its plan as laid out. */
+    List<Scenario> lastScenarios;
+    Map<Float, Force[]> lastMirrors;
+    Force lastGuard;
+    boolean lastTaskDefence;
+
+    /**
+     * A way of units alone weighed again on its plan as laid out (what each job really costs, its lines and their build
+     * time, what the layout could not feed counting for nothing), in the last weighing's scenarios (null if there was none).
+     */
+    public Candidate reweigh(Candidate c, Plan laid){
+        if(lastScenarios == null || laid == null || laid.model == null || laid.unit < 0 || c.modules > 0) return null;
+        return weighOne(c.aim, laid, null, 0, 0, "", new HashMap<>(), lastScenarios, lastMirrors, lastGuard, lastTaskDefence);
     }
 
     /** One way to go weighed: its stage's units (after the defence, if any, is all up), played in every scenario. */
@@ -875,8 +936,9 @@ public final class Command{
         boolean fighting = false, besieging = false;
         float scale = posture.foeScale;
         Force lastCurve = new Force(me), lastArmy = new Force(foe), lastWaves = new Force(foe), lastMirror = new Force(foe);
-        //(their army once sent, on its way)
+        //(their army once sent, on its way; and what of it is out on our side already, on its way from where it is)
         List<Object[]> incoming = new ArrayList<>();
+        for(Object[] c : forecast.coming) incoming.add(new Object[]{c[0], ((Force)c[1]).copy().scl(scale)});
         for(int i = 0; i <= forecast.steps; i++){
             float t = i * step;
             Force now = curve[Math.min(i, curve.length - 1)];
@@ -963,10 +1025,12 @@ public final class Command{
             Force b = new Force(parts.get(0).team);
             for(Force p : parts) b.add(p);
             if(a.empty() || b.empty()) return;
-            float toB = a.dpsAgainst(b) * h, toA = b.dpsAgainst(a) * h;
-            float keepA = Math.max(0f, 1f - toA / Math.max(1e-6f, a.health)), keepB = Math.max(0f, 1f - toB / Math.max(1e-6f, b.health));
-            a.scl(keepA);
-            for(Force p : parts) p.scl(keepB);
+            //(each kind worn by what lands on it: fire that cannot hurt a kind, a tank's at a flyer, takes nothing off it;
+            //worn alike, by the share of the whole, what could not be hit lost health, and what was hit lost too little)
+            var onParts = Force.aim(a, parts, h);
+            var onA = Force.aim(b, List.of(a), h);
+            for(int i = 0; i < parts.size(); i++) parts.get(i).wearBy(onParts[i]);
+            a.wearBy(onA[0]);
         }
     }
 

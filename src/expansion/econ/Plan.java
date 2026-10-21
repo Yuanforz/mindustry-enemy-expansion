@@ -283,6 +283,9 @@ public final class Plan{
         long l1 = System.nanoTime();
         layoutNanos = l1 - l0;
         out.println(String.format("  laid out in %.1fs: %s", (l1 - l0) / 1e9, works.summary()));
+        //the takers the layout led a tap to off the map's own lines draw on what those make (Plant): the plan's makers do
+        //not feed them, and counted on those alone, a fabricator fed by a tap made nothing in the model
+        for(Object[] t : works.taps()) ((Machine)t[1]).tap((Integer)t[0]);
         //what it all really costs (and how long each job takes) goes back to the planner, which orders it again; who owns
         //which line depends on the order, so this goes round until the order holds still
         int modelSpent = 0, realSpent = 0;

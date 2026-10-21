@@ -71,6 +71,23 @@ public final class Planner{
         return balanceRest(plan);
     }
 
+    /**
+     * The plan's takers of a storable item not yet on a tap put on one, when what the map's own machines make of it beyond
+     * what their own takers want (spare) covers some of it; whether any was.
+     */
+    boolean tapFor(int k, List<Machine> plan, float spare){
+        Res r = cat.get(k);
+        if(r.kind != Res.Kind.item || !r.storable || spare <= 1e-4f) return false;
+        boolean any = false;
+        for(Machine m : plan){
+            if(m.recipe.in[k] <= 0f || m.taps(k)) continue;
+            m.tap(k);
+            any = true;
+        }
+        if(any) notes.append(String.format("%s off the map's own lines (%.2f/s to spare)\n", r.name, spare));
+        return any;
+    }
+
     /** What is wanted for the core besides what machines take, a second, by {@link Res#id}. */
     float[] demand;
     /** What each thing costs to make, the cheapest way: for choosing between recipes and modules. */
@@ -92,7 +109,7 @@ public final class Planner{
                 for(int k = 0; k < cat.size(); k++){
                     want[k] += m.recipe.in[k];
                     have[k] += m.out(k);
-                    (m.existing ? eWant : pWant)[k] += m.recipe.in[k];
+                    (m.existing || m.taps(k) ? eWant : pWant)[k] += m.recipe.in[k];
                     (m.existing ? eHave : pHave)[k] += m.out(k);
                 }
                 powerWant += m.recipe.powerUse;
@@ -125,6 +142,10 @@ public final class Planner{
             if(worst >= 0){
                 sofar = plan;
                 add = maker(worst, want[worst] - have[worst], powerWant > powerHave);
+                //(nothing more can make it: the plan's takers of it take it off the map's own lines, if those have it to
+                //spare, by a tap the layout lays; with makers kept apart, a fabricator where every beryllium wall was taken
+                //could never be fed, though three beryllium a second went past it to the core)
+                if(add == null && tapFor(worst, plan, eHave[worst] - eWant[worst])) continue;
                 if(add == null){
                     notes.append("no way to make enough ").append(cat.get(worst).name).append(" (").append(String.format("%.2f", want[worst] - have[worst])).append("/s short)\n");
                     stuck.add(worst);

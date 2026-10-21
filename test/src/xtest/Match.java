@@ -37,6 +37,12 @@ import java.util.*;
  *   -Dmatch.plain=true               the Brain at its default settings instead of its strongest
  */
 public class Match{
+    /** The way of the command layer's last weighing that a stage names (of units alone, no defence first). */
+    static expansion.ops.Command.Candidate weighedAs(expansion.ops.Command command, String way){
+        for(expansion.ops.Command.Candidate c : command.weighed) if(c.modules == 0 && !c.keep && c.stage().equals(way)) return c;
+        return null;
+    }
+
     static Team us, them;
     static final ObjectIntMap<String> made = new ObjectIntMap<>(), lostUnits = new ObjectIntMap<>();
     static int blocksLostUs, blocksLostThem;
@@ -410,9 +416,12 @@ public class Match{
                         //(the best, then the next ways the command layer weighed, by score: one that laid out never makes its
                         //unit is not built, the next is planned)
                         //(one a kind of unit: another number of makers of a kind that failed fails alike)
+                        //(and, of the ways of units alone, each in turn by its score as weighed, laid out and weighed again
+                        //on what it really costs, till none left to lay out was weighed above the best laid out so far: the
+                        //model alone has a plan cheaper and quicker than its laid out self, the bigger the more so, and a
+                        //plan of four makers weighed best had forty-three machines up by twenty-six minutes once laid out)
                         List<String> list = new ArrayList<>(List.of(best.stage()));
-                        Set<String> kindsTried = new HashSet<>(List.of(best.stage().split(":")[0]));
-                        for(expansion.ops.Command.Candidate c : command.weighed) if(c.modules == 0 && !c.keep && c.aim.item == null && kindsTried.add(c.aim.type.name)) list.add(c.stage());
+                        if(best.aim.item == null) for(expansion.ops.Command.Candidate c : command.weighed) if(c != best && c.modules == 0 && !c.keep && c.aim.item == null && !list.contains(c.stage())) list.add(c.stage());
                         ways = list.toArray(new String[0]);
                         currentSpec = best.aim.item == null ? best.stage() : null;
                     }
@@ -436,13 +445,21 @@ public class Match{
                     System.out.println("  stage " + (stage + 1) + ": climbing to " + goal + ", " + (aim == null ? "no way there here" : climbing ? "next " + aim : "now the goal") + (probe.climbed.isEmpty() ? "" : " (" + probe.climbed + ")"));
                     ways = aim == null ? new String[0] : new String[]{climbing ? aim : goal + ":1"};
                 }
+                //(the best laid out so far, weighed again on it; kinds whose layout never makes the unit)
+                Plan bestLaid = null;
+                String bestWay = null;
+                float bestReal = Float.NEGATIVE_INFINITY;
+                Set<String> kindsFailed = new HashSet<>();
                 for(int pass = 0; pass < 2 && plan == null; pass++){
                 homeGuard = pass == 1;
                 //(the command layer's ways are tried all at once: a second pass would only try them again)
                 if(homeGuard && (command != null || ways.length == 0 || ways[0].startsWith("defend"))) break;
                 if(homeGuard) System.out.println("  stage " + (stage + 1) + ": nothing that can be made gets to the Brain's base; units to hold our own");
-                for(String way : ways){
+                for(int wi = 0; wi < ways.length; wi++){
+                    String way = ways[wi];
                     st = way.split(":");
+                    //(another number of makers of a kind whose layout never made the unit fails alike)
+                    if(command != null && kindsFailed.contains(st[0])) continue;
                     //units that can't get to the Brain's base are not worth making (tanks, where deep water parts the bases)
                     mindustry.type.UnitType kind = Vars.content.unit(st[0]);
                     //(the command layer weighs reach itself: a kind that only holds home may be its choice)
@@ -483,14 +500,31 @@ public class Match{
                             if(plan != null && command != null && plan.model != null && plan.unit >= 0 && Float.isInfinite(plan.model.first[plan.unit])){
                                 System.out.println("  stage " + (stage + 1) + ": " + way + " laid out never makes its unit: the next way");
                                 plan = null;
+                                kindsFailed.add(st[0]);
                                 continue;
                             }
-                            if(plan != null && command != null){
-                                currentSpec = Vars.content.unit(st[0]) != null ? way : null;
-                                for(expansion.ops.Command.Candidate c : command.weighed) if(c.modules == 0 && c.stage().equals(way)){
-                                    command.expect(c);
-                                    break;
+                            if(plan != null && command != null && plan.model != null){
+                                expansion.ops.Command.Candidate c = weighedAs(command, way);
+                                expansion.ops.Command.Candidate real = c == null ? null : command.reweigh(c, plan);
+                                float score = real == null ? Float.NEGATIVE_INFINITY : real.score;
+                                if(real != null) System.out.println(String.format("  stage %d: %s laid out weighs %.1f (as weighed, %.1f); at worst: %s", stage + 1, way, score, c.score, real.outcome));
+                                if(bestLaid == null || score > bestReal){
+                                    bestLaid = plan;
+                                    bestWay = way;
+                                    bestReal = score;
                                 }
+                                //(the next way not yet laid out, if weighed above the best laid out: it may yet be better)
+                                float next = Float.NEGATIVE_INFINITY;
+                                for(int wj = wi + 1; wj < ways.length && Float.isInfinite(next); wj++){
+                                    if(kindsFailed.contains(ways[wj].split(":")[0])) continue;
+                                    expansion.ops.Command.Candidate n = weighedAs(command, ways[wj]);
+                                    if(n != null) next = n.score;
+                                }
+                                if(real != null && next > bestReal){
+                                    plan = null;
+                                    continue;
+                                }
+                                plan = bestLaid;
                             }
                         }
                     }catch(Throwable t){
@@ -499,8 +533,17 @@ public class Match{
                         plan = null;
                     }
                     if(plan != null) break;
-                    System.out.println("  stage " + (stage + 1) + ": " + way + " can't be done here");
+                    if(bestLaid == null || !way.equals(bestWay)) System.out.println("  stage " + (stage + 1) + ": " + way + " can't be done here");
                 }
+                }
+                //(the command layer's way taken: the best of those laid out)
+                if(plan == null && bestLaid != null) plan = bestLaid;
+                if(command != null && bestLaid != null && plan == bestLaid){
+                    st = bestWay.split(":");
+                    currentSpec = Vars.content.unit(st[0]) != null ? bestWay : null;
+                    expansion.ops.Command.Candidate c = weighedAs(command, bestWay);
+                    if(c != null) command.expect(c);
+                    System.out.println("  stage " + (stage + 1) + ": taken, " + bestWay + " (laid out, " + String.format("%.1f", bestReal) + ")");
                 }
                 planSeconds += (System.nanoTime() - p0) / 1e9f;
                 //(a step of a climb: the same stage again once this is up)

@@ -43,6 +43,20 @@ public final class Machine{
      * its corner and turn {x, y, o}. Null for the rest.
      */
     public int[] pinned;
+    /**
+     * The items it takes off the map's own lines (a tap the layout lays from a line running to the core), not from makers of
+     * the plan's: for those it draws on what the map's own machines make, as their takers do (see Plant). Null for none.
+     */
+    public arc.struct.IntSet taps;
+
+    public boolean taps(int res){
+        return taps != null && taps.contains(res);
+    }
+
+    public void tap(int res){
+        if(taps == null) taps = new arc.struct.IntSet();
+        taps.add(res);
+    }
 
     public Machine(Recipe recipe, int item, float factor, int x, int y, float distance, int[] cost, boolean boosted, boolean existing){
         this.recipe = recipe;

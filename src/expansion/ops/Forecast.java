@@ -31,6 +31,12 @@ public final class Forecast{
      * when the map sends them.
      */
     public final Force[] army, waves;
+    /**
+     * Of its units now, those already out on our side of the map (nearer our core than any of its own by the way there):
+     * each with when it gets to our core. They are on their way, not at its base waiting to be sent (counted at its base,
+     * an attack at our door had to walk the whole way again in the model first).
+     */
+    public final java.util.List<Object[]> coming = new java.util.ArrayList<>();
     /** Notes for the log: where the force comes from. */
     public final StringBuilder notes = new StringBuilder();
 
@@ -50,7 +56,20 @@ public final class Forecast{
      * own pace the Brain's starved yards made thirty-six stells in twelve minutes, and basin built walls all game).
      */
     public Forecast(Team me, Team foe, float horizon, float step, float use){
+        this(me, foe, horizon, step, use, null);
+    }
+
+    /** Each yard's own share, by place (one not in it at use). */
+    final arc.struct.IntFloatMap shares;
+
+    float useOf(Building b){
+        if(b.cheating()) return 1f;
+        return shares == null ? use : shares.get(b.pos(), use);
+    }
+
+    public Forecast(Team me, Team foe, float horizon, float step, float use, arc.struct.IntFloatMap shares){
         this.use = use;
+        this.shares = shares;
         this.me = me;
         this.foe = foe;
         this.step = step;
@@ -84,17 +103,22 @@ public final class Forecast{
     }
 
     void put(UnitType type, float n, float from, float x, float y, boolean wave){
+        put(type, n, from, x, y, wave, 0f);
+    }
+
+    /** The same, with health beyond the kind's own (shields), in all. */
+    void put(UnitType type, float n, float from, float x, float y, boolean wave, float more){
         int made = stepOf(from);
         if(made < 0) return;
-        for(int i = made; i <= steps; i++) all[i].add(type, n);
+        for(int i = made; i <= steps; i++) all[i].add(type, n).addHealth(more);
         boolean gets = reaches(type, x, y);
-        if(!wave && gets) for(int i = made; i <= steps; i++) army[i].add(type, n);
+        if(!wave && gets) for(int i = made; i <= steps; i++) army[i].add(type, n).addHealth(more);
         if(!gets) return;
         int there = stepOf(from + walk(type, x, y));
         if(there < 0) return;
         for(int i = there; i <= steps; i++){
-            at[i].add(type, n);
-            if(wave) waves[i].add(type, n);
+            at[i].add(type, n).addHealth(more);
+            if(wave) waves[i].add(type, n).addHealth(more);
         }
     }
 
@@ -129,17 +153,39 @@ public final class Forecast{
     }
 
     void units(){
-        int n = 0;
+        int n = 0, out = 0;
         for(Unit u : foe.data().units){
             if(u.spawnedByCore || !u.type.canAttack || u.dead()) continue;
-            int there = reaches(u.type, u.x, u.y) ? stepOf(walk(u.type, u.x, u.y)) : -1;
+            float walk = reaches(u.type, u.x, u.y) ? walk(u.type, u.x, u.y) : Float.POSITIVE_INFINITY;
+            int there = Float.isInfinite(walk) ? -1 : stepOf(walk);
             for(int i = 0; i <= steps; i++) all[i].add(u);
-            if(there >= 0) for(int i = 0; i <= steps; i++) army[i].add(u);
             if(there >= 0) for(int i = there; i <= steps; i++) at[i].add(u);
             n++;
+            if(there < 0) continue;
+            if(way(u.type, u.x, u.y) < wayHome(u)){
+                coming.add(new Object[]{walk, new Force(foe).add(u)});
+                out++;
+            }else for(int i = 0; i <= steps; i++) army[i].add(u);
         }
-        if(n > 0) notes.append(n).append(" units now; ");
+        if(n > 0) notes.append(n).append(" units now").append(out > 0 ? " (" + out + " out on our side)" : "").append("; ");
     }
+
+    /** Tiles along the way from a unit to the nearest of its side's cores (infinite if none it can get to). */
+    float wayHome(Unit u){
+        float best = Float.POSITIVE_INFINITY;
+        int tx = u.tileX(), ty = u.tileY(), w = Vars.world.width();
+        for(var c : foe.cores()){
+            float[] d = homeWays.get(c.pos() * 31L + u.type.id);
+            if(d == null){
+                d = Reach.distance(u.type, foe, c.tileX(), c.tileY());
+                homeWays.put(c.pos() * 31L + u.type.id, d == null ? new float[0] : d);
+            }
+            if(d != null && d.length > tx + ty * w && tx >= 0 && ty >= 0 && tx < w) best = Math.min(best, d[tx + ty * w]);
+        }
+        return best;
+    }
+
+    final LongMap<float[]> homeWays = new LongMap<>();
 
     /**
      * What its factories and refabricators make: a factory turns out its unit at its own pace (one that is not working
@@ -157,8 +203,8 @@ public final class Forecast{
             if(b instanceof UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0){
                 UnitFactory block = (UnitFactory)b.block;
                 var plan = block.plans.get(yard.currentPlan);
-                //at the share of its pace the side's yards are seen to work at (one that cheats, at its pace)
-                float eff = b.cheating() ? 1f : use;
+                //at the share of its pace the yard is seen to work at (one that cheats, at its pace)
+                float eff = useOf(b);
                 if(eff <= 1e-3f) continue;
                 float time = plan.time / eff / 60f;
                 float left = (1f - yard.fraction()) * time;
@@ -168,7 +214,7 @@ public final class Forecast{
                 }
                 kinds.increment(plan.unit.name);
             }else if(b instanceof Reconstructor.ReconstructorBuild re && b.block instanceof Reconstructor block && block.upgrades.size > 0){
-                float eff = b.cheating() ? 1f : use;
+                float eff = useOf(b);
                 if(eff <= 1e-3f) continue;
                 UnitType[] up = block.upgrades.first();
                 float time = block.constructTime / eff / 60f;
@@ -199,6 +245,14 @@ public final class Forecast{
                 if(g.type == null) continue;
                 int n = g.getSpawned(w - 1);
                 if(n <= 0) continue;
+                //(in the campaign, so many times as many as the difficulty has it, as the game's spawner sends them: on hard
+                //half as many again)
+                if(Vars.state.isCampaign()){
+                    float times = Vars.state.getPlanet().campaignRules.difficulty.enemySpawnMultiplier;
+                    n = Math.max(1, g.effect == StatusEffects.boss ? (int)(n * times) : Math.round(n * times));
+                }
+                //(each with the shield its wave gives it, under the side's rules and a guardian's own multiplier)
+                float shield = g.getShield(w - 1) * rules.unitHealth(foe) * (g.effect == StatusEffects.boss ? StatusEffects.boss.healthMultiplier : 1f);
                 //a guardian has more health and hits harder (the boss effect: health and damage times its multipliers):
                 //counted by what that makes of its strength, damage times health
                 float worth = g.effect == StatusEffects.boss ? (float)Math.sqrt(StatusEffects.boss.healthMultiplier * StatusEffects.boss.damageMultiplier) : 1f;
@@ -212,7 +266,7 @@ public final class Forecast{
                         sx = Mathf.clamp(Vars.world.unitWidth() / 2f + Angles.trnsx(angle, far), 0, Vars.world.unitWidth());
                         sy = Mathf.clamp(Vars.world.unitHeight() / 2f + Angles.trnsy(angle, far), 0, Vars.world.unitHeight());
                     }
-                    put(g.type, n * worth, t, sx, sy, true);
+                    put(g.type, n * worth, t, sx, sy, true, n * shield);
                     sent += n;
                 }
             }
