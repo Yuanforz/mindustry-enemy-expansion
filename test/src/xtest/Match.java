@@ -321,18 +321,19 @@ public class Match{
             //(a stage is not left for want of time while what makes its units is not up yet, unless three times over: on lake,
             //raided from the second minute, the ship fabricator never went up and no unit came all game)
             //(a stage is over once its own order is up, whatever it is mending meanwhile: under raids that never ends)
-            //(with the command layer: weighed again once the stage is behind its own model, the job it is on begun later than
-            //the model has it by half again and a minute; a stage that goes as planned is let finish)
-            boolean behind = command != null && stageModel != null && hand != null && f % 60 == 0 && behindModel(hand, stageModel, (f - stageFrom) / 60f);
+            //(with the command layer: a stage of units is weighed again at each decision, going on with it one of the ways; a
+            //receding horizon, re-planned at its own pace)
+            boolean periodic = command != null && hand != null && currentSpec != null && paused == null && f % 60 == 0 && f - lastDecisionAt >= 60 * 60;
             //(and, with it, a stage whose every job is begun or put off: what is put off, if it is still worth it, is planned again)
-            boolean settled = command != null && hand != null && hand.next >= hand.order.size() && hand.job == null;
-            boolean over = paused == null && hand != null && (hand.orderDone() || behind || settled || command == null && f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
+            boolean settled = hand != null && hand.next >= hand.order.size() && hand.job == null;
+            boolean over = paused == null && hand != null && (hand.orderDone() || periodic || settled || command == null && f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
             //what the map's tasks ask for, before the next of our own stages (in the campaign, once a stage of ours is up): a
             //stage the same task asked for is not asked again for four minutes
             expansion.econ.Asks.Ask task = null;
             //(with the command layer, what the tasks ask is weighed among its ways, not put first)
             List<String> taskWays = new ArrayList<>();
             boolean weighs = command != null && (hand == null || over) && f - lastDecisionAt >= 60 * 60;
+            //(a stage going on with is only weighed, not left: its tasks are asked for the weighing too)
             if((hand == null || over) && campaign && hand != null && us.core() != null && (weighs || command == null && f % 60 == 0)){
                 expansion.econ.Asks.Ask a = asks(hand, allowed, f);
                 if(command != null){
@@ -345,7 +346,20 @@ public class Match{
             //(the command layer weighs again no sooner than a minute after the last time, as a receding horizon re-plans at
             //its own pace: a stage with nothing left to build is over at once, and onset was weighed four thousand times)
             boolean commandWaits = command != null && f - lastDecisionAt < 60 * 60;
+            stageBlock:
             if((hand == null || over) && !commandWaits && (again || task != null || command != null || stage + 1 < stages.length) && us.core() != null){
+                //(the command layer's choice, going on with this stage among the ways)
+                expansion.ops.Command.Candidate decided = null;
+                if(command != null && task == null){
+                    Plan going = goingOn(hand, currentSpec, blocks, allowed, library);
+                    decided = command.decide(blocks, allowed, library, defencesNow(f, sector), income(us, f), taskWays, going, going == null ? null : currentSpec);
+                    System.out.print(command.log);
+                    if(decided != null && decided.keep){
+                        lastDecisionAt = f;
+                        System.out.println("  " + Plan.time(f / 60f) + ": going on with stage " + (stage + 1) + " (" + currentSpec + ")");
+                        break stageBlock;
+                    }
+                }
                 if(command != null) lastDecisionAt = f;
                 if(hand != null && !hand.orderDone()) System.out.println("  stage " + (stage + 1) + " left at " + hand.next + " of " + hand.order.size() + " after its time: " + hand.doing);
                 //(the audit: what the model said of the stage against what came of it)
@@ -375,30 +389,17 @@ public class Match{
                 String[] ways;
                 if(task != null) ways = new String[]{task.stage};
                 else if(command != null){
-                    int fNow = f;
-                    expansion.ops.Command.Candidate best = command.decide(blocks, allowed, library, new expansion.ops.Command.Defences(){
-                        public expansion.defense.Planner.Plan plan(int modules, int rank){
-                            fixedModules = modules;
-                            fixedRank = rank;
-                            try{
-                                return defence(us, them, sector, fNow / 60f, "weighing a defence of " + modules + (rank > 0 ? " of the kind ranked " + (rank + 1) : "") + ": ");
-                            }finally{
-                                fixedModules = 0;
-                                fixedRank = 0;
-                            }
-                        }
-
-                        public Collection<String> feedable(){
-                            return feedable;
-                        }
-                    }, income(us, f), taskWays);
-                    System.out.print(command.log);
+                    expansion.ops.Command.Candidate best = decided;
+                    currentSpec = null;
                     if(best == null) ways = new String[0];
                     else if(best.modules > 0){
                         ways = new String[]{"defend"};
                         defendModules = best.modules;
                         defendRank = best.rank;
-                    }else ways = new String[]{best.stage()};
+                    }else{
+                        ways = new String[]{best.stage()};
+                        currentSpec = best.aim.item == null ? best.stage() : null;
+                    }
                 }else ways = stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
                 //"climb:conquer": a step at a time towards the goal, each step the nearest of what its maker needs that nothing
                 //of ours makes yet (Plan.next), the goal itself last; the stage is taken again till then (at most 10 steps)
@@ -1038,12 +1039,44 @@ public class Match{
     static Timeline stageModel;
 
     /** Whether a stage is behind its model: the job it is on (or saving up for) begun later than the model has it, by half again and a minute. */
-    static boolean behindModel(expansion.econ.Hand hand, Timeline model, float seconds){
-        int i = Math.min(hand.next, model.begun.length - 1);
-        if(i < 0 || hand.orderDone()) return false;
-        float planned = model.begun[i];
-        if(Float.isNaN(planned)) planned = model.t;
-        return seconds > planned * 1.5f + 60f;
+    /** What the command layer chose for the stage being built, when it is one of units ("stell:2"); null otherwise. */
+    static String currentSpec;
+
+    /** What is left of the stage being built, as the model has it from the game as it stands (see Plan#continuing). */
+    static Plan goingOn(expansion.econ.Hand hand, String spec, List<String> blocks, Set<String> allowed, List<Design> library){
+        if(hand == null || spec == null || hand.orderDone()) return null;
+        List<Machine> rest = new ArrayList<>();
+        if(hand.job != null && hand.machine != null) rest.add(hand.machine);
+        for(int i = 0; i < hand.skipped.size; i++) rest.add(hand.order.get(hand.skipped.get(i)));
+        for(int i = hand.next; i < hand.order.size(); i++) rest.add(hand.order.get(i));
+        Plan p = new Plan(new java.io.PrintStream(java.io.OutputStream.nullOutputStream()));
+        p.gate = true;
+        try{
+            return p.continuing(us, blocks, allowed, library, rest, hand.works.cat, spec.split(":")[0]);
+        }catch(Throwable t){
+            System.out.println("  going on with the stage could not be weighed: " + t);
+            return null;
+        }
+    }
+
+    /** The defence planner for the command layer, as the game stands. */
+    static expansion.ops.Command.Defences defencesNow(int f, String sector){
+        return new expansion.ops.Command.Defences(){
+            public expansion.defense.Planner.Plan plan(int modules, int rank){
+                fixedModules = modules;
+                fixedRank = rank;
+                try{
+                    return defence(us, them, sector, f / 60f, "weighing a defence of " + modules + (rank > 0 ? " of the kind ranked " + (rank + 1) : "") + ": ");
+                }finally{
+                    fixedModules = 0;
+                    fixedRank = 0;
+                }
+            }
+
+            public Collection<String> feedable(){
+                return feedable;
+            }
+        };
     }
 
     /** So many modules at each place for the defence planned now (0: as many as hold what comes). */

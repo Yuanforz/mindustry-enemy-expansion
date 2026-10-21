@@ -91,6 +91,8 @@ public final class Command{
         public String kind = "";
         /** Whether its stage was planned on top of the defence (else from the game as it stands, begun once that is up). */
         public boolean atop;
+        /** Whether it is going on with the stage being built. */
+        public boolean keep;
         public float score, firstUnit = Float.POSITIVE_INFINITY, defenceDone;
         /** Whether it does what the map's tasks ask. */
         public boolean task;
@@ -113,7 +115,7 @@ public final class Command{
         @Override
         public String toString(){
             String d = modules == 0 ? "" : String.format(" after a defence of %d module(s) %sa place (%d turrets, all up by %s%s)", modules, kind.isEmpty() ? "" : "of " + kind + " ", turrets, Float.isInfinite(defenceDone) ? "never" : Plan.time(defenceDone), atop ? "; the stage planned on it" : "");
-            return String.format("%s%s%s: score %.1f, first unit %s; at worst: %s", stage(), d, task ? " (a task)" : "", score, Float.isInfinite(firstUnit) ? "never" : Plan.time(firstUnit), outcome);
+            return String.format("%s%s%s%s: score %.1f, first unit %s; at worst: %s", keep ? "going on with " : "", stage(), d, task ? " (a task)" : "", score, Float.isInfinite(firstUnit) ? "never" : Plan.time(firstUnit), outcome);
         }
     }
 
@@ -193,6 +195,16 @@ public final class Command{
      * cores to be taken with it), the sooner the more.
      */
     public Candidate decide(List<String> blocks, Set<String> allowed, List<Design> library, Defences defences, Map<String, Float> income, List<String> tasks){
+        return decide(blocks, allowed, library, defences, income, tasks, null, null);
+    }
+
+    /**
+     * The same, with going on with the stage being built as a way of its own: what is left of it (going, its model played
+     * from the game as it stands; spec, what it makes, "stell:2"), weighed like the rest. The receding horizon: weighed again
+     * at each decision, a stage that has stuck (waiting on what nothing brings in) loses to a way planned from what stands,
+     * and one going as it should is gone on with.
+     */
+    public Candidate decide(List<String> blocks, Set<String> allowed, List<Design> library, Defences defences, Map<String, Float> income, List<String> tasks, Plan going, String spec){
         long t0 = System.nanoTime();
         log.setLength(0);
         weighed.clear();
@@ -363,6 +375,17 @@ public final class Command{
             Plan stage = (Plan)c[1];
             weighed.add(weighOne(aim, stage, null, 0, 0, "", none, scenarios, mirrors, foeGuard, taskDefence));
         }
+        //(going on with the stage being built)
+        if(going != null && going.model != null && spec != null){
+            String[] sp = spec.split(":");
+            UnitType ut = Vars.content.unit(sp[0]);
+            if(ut != null && sp.length > 1){
+                Muster.Aim aim = new Muster.Aim(ut, Math.max(1, (int)Float.parseFloat(sp[1])), ut.dpsEstimate * ut.health, reachesFoe(ut), 1f, 1);
+                Candidate c = weighOne(aim, going, null, 0, 0, "", none, scenarios, mirrors, foeGuard, taskDefence);
+                c.keep = true;
+                weighed.add(c);
+            }
+        }
         List<Candidate> plain = new ArrayList<>(weighed);
         plain.sort((a, b) -> Float.compare(b.score, a.score));
         List<Object[]> tops = new ArrayList<>();
@@ -447,7 +470,22 @@ public final class Command{
         }
         log.append(String.format("  command: weighed %d ways in %d scenarios in %.1f s\n", weighed.size(), scenarios.size(), (System.nanoTime() - t0) / 1e9f));
         if(Boolean.getBoolean("ops.time")) log.append(Took.report());
-        return weighed.isEmpty() ? null : weighed.get(0);
+        if(weighed.isEmpty()) return null;
+        //(going on with the stage being built is left only for a way no worse in any scenario: of many ways weighed, the
+        //best looks better than it is by the model's errors alone (the optimizer's curse), and a stage left for one that
+        //only looked better was begun again every minute and none finished; one that has stuck is beaten in every one)
+        Candidate keep = null;
+        for(Candidate c : weighed) if(c.keep) keep = c;
+        Candidate best = weighed.get(0);
+        if(keep != null && best != keep){
+            boolean dominates = true;
+            for(int i = 0; i < best.scores.length; i++) if(best.scores[i] < keep.scores[i]) dominates = false;
+            if(!dominates){
+                log.append("  command: going on with the stage: ").append(best.stage()).append(" is better on the whole but worse in some scenario\n");
+                return keep;
+            }
+        }
+        return best;
     }
 
     /** One way to go weighed: its stage's units (after the defence, if any, is all up), played in every scenario. */

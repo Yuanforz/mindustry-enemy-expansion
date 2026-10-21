@@ -401,17 +401,7 @@ public final class Planner{
      */
     public Machine machine(Recipe r, Field.Site site){
         float d = site == null ? baseDistance : site.distance;
-        int[] cost = r.cost.clone();
-        int be = cat.id("beryllium");
-        boolean items = false, liquids = false;
-        for(int k = 0; k < cat.size(); k++){
-            Res res = cat.get(k);
-            if((r.in[k] > 0f || r.out[k] > 0f || r.perFactor[k] > 0f && site != null && site.item == k) && res.kind == Res.Kind.item) items = true;
-            if((r.in[k] > 0f || r.out[k] > 0f) && res.kind == Res.Kind.liquid) liquids = true;
-        }
-        if(items) cost[be] += Math.round(d);
-        if(liquids) cost[be] += Math.round(d);
-        if(r.powerUse > 0f || r.powerOut > 0f) cost[be] += (int)Math.ceil(d / 10f) * 8;
+        int[] cost = estimate(r, site == null ? -1 : site.item, site != null, d);
         int x = site == null ? field.coreX + (int)baseDistance : site.x, y = site == null ? field.coreY : site.y;
         Machine m = new Machine(r, site == null ? -1 : site.item, site == null ? 1f : site.factor, x, y, d, cost, false, false);
         if(site != null){
@@ -419,6 +409,22 @@ public final class Planner{
             m.unseen = !site.seen;
         }
         return m;
+    }
+
+    /** What the model counts a machine to cost before it is laid out: its own cost and its lines to the core over the distance. */
+    public int[] estimate(Recipe r, int siteItem, boolean onSite, float d){
+        int[] cost = r.cost.clone();
+        int be = cat.id("beryllium");
+        boolean items = false, liquids = false;
+        for(int k = 0; k < cat.size(); k++){
+            Res res = cat.get(k);
+            if((r.in[k] > 0f || r.out[k] > 0f || r.perFactor[k] > 0f && onSite && siteItem == k) && res.kind == Res.Kind.item) items = true;
+            if((r.in[k] > 0f || r.out[k] > 0f) && res.kind == Res.Kind.liquid) liquids = true;
+        }
+        if(items) cost[be] += Math.round(d);
+        if(liquids) cost[be] += Math.round(d);
+        if(r.powerUse > 0f || r.powerOut > 0f) cost[be] += (int)Math.ceil(d / 10f) * 8;
+        return cost;
     }
 
     // ---------------------------------------------------------------- the order

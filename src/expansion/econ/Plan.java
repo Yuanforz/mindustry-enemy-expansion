@@ -445,6 +445,36 @@ public final class Plan{
     public Timeline after;
     public Set<Machine> afterSkip = Set.of();
 
+    /**
+     * The rest of a stage being built, as the model has it from the game as it stands: these machines (what is left of a
+     * hand's order, at their places and what the layout really costs), in this order, played forward from what stands and
+     * what the core holds now. For weighing going on with it against the other ways (the command layer's receding horizon).
+     * Null if the unit is not in the catalog now.
+     */
+    public Plan continuing(Team me, List<String> blocks, Set<String> allowed, List<Design> library, List<Machine> rest, Catalog from, String unitName){
+        dry = true;
+        allowedNow = read(me, blocks, allowed, Integer.MAX_VALUE);
+        Recipes.modules(cat, library, allowedNow);
+        if(!cat.byName.containsKey(unitName)) return null;
+        unit = cat.id(unitName);
+        Planner estimator = new Planner(cat, field);
+        List<Machine> order = new ArrayList<>();
+        for(Machine m : rest){
+            Recipe r = cat.recipe(m.recipe.name);
+            if(r == null) continue;
+            int item = m.item < 0 ? -1 : cat.byName.containsKey(from.get(m.item).name) ? cat.id(from.get(m.item).name) : -1;
+            //(counted as the model counts the ways it is weighed against, before they are laid out: the layout's real cost of
+            //this against the model's guess of theirs would have the guess always look the better, and every minute a new stage
+            //was begun and none finished)
+            int[] cost = estimator.estimate(r, item, item >= 0, m.distance);
+            Machine c = new Machine(r, item, m.factor, m.x, m.y, m.distance, cost, m.boosted, false);
+            c.rotation = m.rotation;
+            order.add(c);
+        }
+        model = new Timeline(cat, field, order);
+        return this;
+    }
+
     /** Puts what a plan before this one built and left on the map as read (see {@link #after}). */
     void atop(Timeline before, Set<Machine> skip){
         for(int k = 0; k < cat.size(); k++){
@@ -865,15 +895,29 @@ public final class Plan{
      * not stored). Null if the goal can't be made with what can be paid for here.
      */
     public String next(Team me, List<String> blocks, Set<String> allowed, List<Design> library, String goal){
-        Set<String> now = read(me, blocks, allowed, Integer.MAX_VALUE);
-        Recipes.modules(cat, library, now);
-        Res g = cat.byName.get(goal);
-        if(g == null) return null;
-        Chains chains = new Chains(cat, field);
-        //what a thing costs to get: nothing once something of ours makes it (the map's places for it may all be taken by
-        //then: the bores on the thorium walls stand where the next bore would), else what its cheapest chain costs
-        float[] cost = chains.cost.clone();
-        for(Machine m : field.existing) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) cost[k] = 0f;
+        //(looked for further out while the goal can't be had this near, as a stage's plan is: the thorium of a map can lie
+        //past 110 tiles, and every climb to a fourth tier was given up on)
+        float[] cost = null;
+        Res g = null;
+        for(int pass = 0; ; pass++){
+            Set<String> now = read(me, blocks, allowed, Integer.MAX_VALUE);
+            Recipes.modules(cat, library, now);
+            g = cat.byName.get(goal);
+            if(g == null){
+                radius = baseRadius;
+                return null;
+            }
+            //what a thing costs to get: nothing once something of ours makes it (the map's places for it may all be taken by
+            //then: the bores on the thorium walls stand where the next bore would), else what its cheapest chain costs,
+            //counted from what stands
+            Chains chains = new Chains(cat, field, true);
+            cost = chains.cost.clone();
+            for(Machine m : field.existing) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) cost[k] = 0f;
+            for(Machine m : field.revivable) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) cost[k] = 0f;
+            if(climbMaker(g.id, cost) != null || pass >= 2 || radius >= maxRadius()) break;
+            radius = Math.min(maxRadius(), (int)(radius * 1.5f));
+        }
+        radius = baseRadius;
         StringBuilder why = new StringBuilder(goal);
         climbed = "";
         if(climbMaker(g.id, cost) == null){

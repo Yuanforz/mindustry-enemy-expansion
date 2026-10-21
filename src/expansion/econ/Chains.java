@@ -20,14 +20,35 @@ public final class Chains{
     public final Recipe[] by;
     /** What can be had without a maker: dug by hand, or made by the map's own machines. */
     final boolean[] given;
+    /** Whether our standing machines make power (a powered maker can be had where no new one can be put down). */
+    boolean givenPower;
 
     public Chains(Catalog cat, Field field){
+        this(cat, field, false);
+    }
+
+    /**
+     * With seeded on, what our standing machines already make (power among it) counts as had for nothing, and the rest is
+     * worked out from there: for whether a thing can be had at all, as climbing the tech asks. Without it, a thing is had
+     * only by new machines on free places (what more of it costs): late in a game every vent has its turbine, power came to
+     * nothing new, and every powered maker with it, so a climb found silicon out of reach with a furnace standing.
+     */
+    public Chains(Catalog cat, Field field, boolean seeded){
         this.cat = cat;
         this.field = field;
         int n = cat.size();
         cost = new float[n];
         by = new Recipe[n];
         Arrays.fill(cost, Float.POSITIVE_INFINITY);
+        if(seeded){
+            //(the map's machines standing idle too: taken up, they cost only their lines)
+            List<Machine> standing = new ArrayList<>(field.existing);
+            standing.addAll(field.revivable);
+            for(Machine m : standing){
+                for(int k = 0; k < n; k++) if(m.out(k) > 1e-4f) cost[k] = 0f;
+                if(m.powerOut() > 0f) power = 0f;
+            }
+        }
         //best yield of each thing on each kind of ground, from the places the map has
         float[][] best = new float[Recipe.Ground.values().length][n];
         boolean[] vents = new boolean[1];
@@ -38,7 +59,10 @@ public final class Chains{
         //what can be had without a maker: in the core now, dug by hand, or made by the map's own machines
         given = new boolean[n];
         for(int k = 0; k < n; k++) given[k] = field.handRate(cat, k) > 0f;
-        for(Machine m : field.existing) for(int k = 0; k < n; k++) if(m.out(k) > 1e-4f) given[k] = true;
+        for(Machine m : field.existing){
+            for(int k = 0; k < n; k++) if(m.out(k) > 1e-4f) given[k] = true;
+            if(m.powerOut() > 0f) givenPower = true;
+        }
         for(int round = 0; round < 40; round++){
             boolean changed = false;
             for(Recipe r : cat.recipes){
@@ -84,7 +108,7 @@ public final class Chains{
     public boolean feasible(Recipe r){
         if(!buildable(r, given)) return false;
         for(int k = 0; k < cost.length; k++) if(r.in[k] > 0f && !given[k] && Float.isInfinite(cost[k])) return false;
-        return !(r.powerUse > 0f && Float.isInfinite(power));
+        return !(r.powerUse > 0f && Float.isInfinite(power) && !givenPower);
     }
 
     /** What making this a second with this recipe costs, inputs and power included; infinite if some input can't be made. */
