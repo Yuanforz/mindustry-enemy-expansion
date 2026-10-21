@@ -14,6 +14,8 @@ public final class Timeline{
     public final Catalog cat;
     public final Field field;
     public float t;
+    /** Since when there is power (infinite: none yet). */
+    float powerSince = Float.POSITIVE_INFINITY;
     public final float[] stock;
     public final List<Machine> built;
     /** What is to be built, in order, and how far along the order it has got. */
@@ -60,6 +62,7 @@ public final class Timeline{
         this.field = field;
         stock = field.stock.clone();
         built = new ArrayList<>(field.existing);
+        for(Machine b : built) if(b.powerOut() > 0f) powerSince = 0f;
         this.order = order;
         bx = field.coreX;
         by = field.coreY;
@@ -79,6 +82,7 @@ public final class Timeline{
         cat = o.cat;
         field = o.field;
         t = o.t;
+        powerSince = o.powerSince;
         stock = o.stock.clone();
         built = new ArrayList<>(o.built);
         order = o.order;
@@ -294,6 +298,7 @@ public final class Timeline{
             if(buildLeft <= 1e-6f){
                 Machine m = order.get(building);
                 built.add(m);
+                if(m.powerOut() > 0f) powerSince = Math.min(powerSince, t);
                 finished[building] = t;
                 building = -1;
                 grow();
@@ -474,7 +479,16 @@ public final class Timeline{
      */
     float seenAt(Machine m){
         if(!m.unseen) return 0f;
-        float best = cat.radarAt;
+        //(or by a radar near it, put up once there is power, with the beam nodes that bring it there: a radar of no power
+        //sees nothing, and at a fixed three quarters of a minute the model had ravine's far bores seen, where the game
+        //waited on radars with no power for nine minutes)
+        float best = Float.POSITIVE_INFINITY;
+        if(cat.radar && m.radarable && !Float.isInfinite(powerSince)){
+            mindustry.world.Block radar = mindustry.content.Blocks.radar, node = mindustry.content.Blocks.beamNode;
+            float rate = cat.buildSpeed * cat.buildRule * 60f;
+            float nodes = (float)Math.ceil(Math.max(0f, m.distance - radar.fogRadius) / 10f);
+            best = powerSince + m.distance / cat.flySpeed + (radar.buildTime + nodes * node.buildTime) / rate;
+        }
         for(var e : cat.unitSpeed.entrySet()){
             float at = first[e.getKey()];
             if(!Float.isInfinite(at) && e.getValue() > 0f) best = Math.min(best, at + m.distance / e.getValue());

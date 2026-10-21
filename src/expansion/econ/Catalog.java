@@ -39,10 +39,10 @@ public final class Catalog{
     /** The rule that scales building speed for this side. */
     public float buildRule = 1f;
     /**
-     * Seconds from the start of a plan by which ground not seen can be seen without a unit: a radar put down on ground
-     * seen within its reach and powered (Hand.radar), where radars may be built; infinite where not.
+     * Whether ground not seen can be seen without a unit, by a radar put down on ground seen within its reach (Hand.radar),
+     * where radars may be built: once there is power, as the radar runs on it.
      */
-    public float radarAt = Float.POSITIVE_INFINITY;
+    public boolean radar;
     /** How fast each kind of unit goes over the ground, tiles a second, by {@link Res#id} (0 for what is not a unit). */
     public final Map<Integer, Float> unitSpeed = new HashMap<>();
 
@@ -67,7 +67,7 @@ public final class Catalog{
         c.mineRange = mineRange;
         c.buildRange = buildRange;
         c.buildRule = buildRule;
-        c.radarAt = radarAt;
+        c.radar = radar;
         c.unitSpeed.putAll(unitSpeed);
         return c;
     }

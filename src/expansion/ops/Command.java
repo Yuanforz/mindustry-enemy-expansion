@@ -277,6 +277,17 @@ public final class Command{
     float fastestAtStart = -1f, foeFirstUnitAt = -1f;
     /** How fast the other side comes to fight before anything is seen of it, as a share of our fastest (-Dops.mirrorprior). */
     public static float mirrorPrior = Float.parseFloat(System.getProperty("ops.mirrorprior", "0.8"));
+    /**
+     * Whether the mirror is planned from the other side's base (-Dops.mirrortheirs=true; else our own fastest in its place).
+     * Off: the prior pace was measured against our own fastest plan, and against what the Brain could do from its base it
+     * came out far too fast (on marsh its plan had a tank at 3:06, the Brain's first came after eleven minutes): planned so,
+     * the stages turned to defences first and gen-3 and gen-6, won both ways before, were lost both ways. Wants the prior
+     * measured against the other side's own plan.
+     */
+    public static boolean mirrorTheirs = Boolean.getBoolean("ops.mirrortheirs");
+    /** Whose plan the mirror is; the pace the other side was last seen to build at (-1: not yet weighed). */
+    Team mirrorSide;
+    float lastPace = -1f;
     /** Their base's guard when first weighed against, and since when; how fast it grows (a second). */
     Force foeGuardFirst, guardGrowth = new Force();
     float foeGuardSince;
@@ -384,16 +395,27 @@ public final class Command{
             return null;
         }
 
-        //the other side building as fast as we could: our fastest way to units, walked here (for the mirror scenarios)
+        //the other side building as fast as it could: the same model planning its fastest way to units from where it stands
+        //(its core, the ground about it, what it has up), walked here (for the mirror scenarios). (Our own fastest in its
+        //place, a side whose base had graphite and a vent near was taken to come as late as one that had to lay a line of
+        //130 tiles to each: on gen-4 its tanks were at our core two minutes before the model had them)
         Plan fastest = null;
         float soonest = Float.POSITIVE_INFINITY;
-        for(Object[] c : stages){
+        List<Object[]> theirStages = new ArrayList<>();
+        //(not while it is seen to build at no pace: the mirror is not played then)
+        if(foe.core() != null && mirrorTheirs && lastPace != 0f){
+            List<Muster.Aim> theirOnes = new ArrayList<>();
+            for(Muster.Aim aim : Muster.aims(foe, me, blocks, true)) if(aim.reaches) theirOnes.add(aim.withMakers(1));
+            weigh(foe, theirOnes, theirStages, blocks, allowed, library, null);
+        }
+        for(Object[] c : theirStages.isEmpty() ? stages : theirStages){
             Plan p = (Plan)c[1];
             if(p.model.first[p.unit] < soonest){
                 soonest = p.model.first[p.unit];
                 fastest = p;
             }
         }
+        mirrorSide = theirStages.isEmpty() ? me : foe;
 
         long d0 = System.nanoTime();
         //defences of so many modules (a choice point: one, two, four), each with the economy that pays for and feeds it,
@@ -479,12 +501,13 @@ public final class Command{
             else if(seen - foeFirstSeen > fastestAtStart) militaryPace = Math.min(militaryPace, fastestAtStart / (seen - foeFirstSeen));
         }
         float pace = Math.min(spendPace, militaryPace);
+        lastPace = pace;
         boolean builds = fastest != null && pace > 0f;
         List<Scenario> scenarios = new ArrayList<>();
         //(what is chance: how slow our economy runs, whether the other side builds; when it sends its army is its own choice,
         //and each of these is played at every sendAt and counted at the worst of them)
         for(Forecast fc : List.of(forecast)) for(float lag : lags) for(boolean m : builds ? new boolean[]{false, true} : new boolean[]{false}) scenarios.add(new Scenario(lag, m, 0f, fc));
-        log.append(String.format("  command: the other side builds at %.0f%% of our fastest pace (spending %.1f items a second since %s against ours %.1f: %.0f%%; its first fighting unit %s against our fastest's %s: %.0f%%)%s\n", pace * 100f, seen - foeFirstSeen <= 0f ? 0f : Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen), Plan.time(foeFirstSeen), ours, spendPace * 100f, foeFirstUnitAt < 0f ? "not yet" : Plan.time(foeFirstUnitAt), Plan.time(fastestAtStart), militaryPace * 100f, builds ? "" : ": no mirror"));
+        log.append(String.format("  command: the other side builds at %.0f%% of %s fastest pace (spending %.1f items a second since %s against that %.1f: %.0f%%; its first fighting unit %s against that fastest's %s: %.0f%%)%s\n", pace * 100f, mirrorSide == foe ? "its own" : "our", seen - foeFirstSeen <= 0f ? 0f : Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen), Plan.time(foeFirstSeen), ours, spendPace * 100f, foeFirstUnitAt < 0f ? "not yet" : Plan.time(foeFirstUnitAt), Plan.time(fastestAtStart), militaryPace * 100f, builds ? "" : ": no mirror"));
         Force foeGuard = foeGuard();
         //(and how fast it has grown: what its loaded turrets about its cores gained a second since it was first weighed
         //against; a base seen with no turrets at the landing grew three breaches by the time the push the model counted on
@@ -511,7 +534,7 @@ public final class Command{
             }
             //(at the pace it is seen to build at: a slower economy is a later curve)
             float slow = lag / Math.max(1e-3f, pace);
-            Force[] with = unitCurve(fastest, slow), without = unitCurve(fastest, slow, List.of());
+            Force[] with = unitCurve(fastest, slow, fastest.model.order, mirrorSide), without = unitCurve(fastest, slow, List.of(), mirrorSide);
             Force[] added = new Force[with.length];
             for(int i = 0; i < with.length; i++){
                 //(theirs, under their rules, and only of the kinds that can get from their base to ours)
@@ -775,6 +798,11 @@ public final class Command{
 
     /** Works out by the model alone each aim's stage, at once on the pool; those that can be had go in the list, with their plans. */
     void weigh(List<Muster.Aim> aims, List<Object[]> stages, List<String> blocks, Set<String> allowed, List<Design> library, Map<String, Float> income){
+        weigh(me, aims, stages, blocks, allowed, library, income);
+    }
+
+    /** The same for a side (the other's: what it could do from where it stands, by the same model). */
+    void weigh(Team side, List<Muster.Aim> aims, List<Object[]> stages, List<String> blocks, Set<String> allowed, List<Design> library, Map<String, Float> income){
         List<java.util.concurrent.Future<Object[]>> jobs = new ArrayList<>();
         for(Muster.Aim aim : aims){
             jobs.add(pool().submit(() -> {
@@ -787,8 +815,8 @@ public final class Command{
                 Plan dry;
                 try{
                     //(with what the core really gets: the model counts what the map's own machines take on the way, as the drain)
-                    dry = aim.item != null ? p.make(me, blocks, allowed, library, aim.item.name, aim.rate, income == null || income.isEmpty() ? null : income)
-                        : p.make(me, blocks, allowed, library, aim.type.name, aim.makers, income == null || income.isEmpty() ? null : income);
+                    dry = aim.item != null ? p.make(side, blocks, allowed, library, aim.item.name, aim.rate, income == null || income.isEmpty() ? null : income)
+                        : p.make(side, blocks, allowed, library, aim.type.name, aim.makers, income == null || income.isEmpty() ? null : income);
                 }catch(Throwable t){
                     StringWriter w = new StringWriter();
                     t.printStackTrace(new PrintWriter(w));
@@ -820,12 +848,17 @@ public final class Command{
 
     /** The same with another order (an empty one: what stands alone turns out). */
     Force[] unitCurve(Plan plan, float lag, List<Machine> order){
+        return unitCurve(plan, lag, order, me);
+    }
+
+    /** The same for the side whose plan it is (its unit cap, the units it has). */
+    Force[] unitCurve(Plan plan, float lag, List<Machine> order, Team side){
         Timeline run = new Timeline(plan.cat, plan.field, order);
         int n = (int)Math.ceil(horizon / step) + 1;
         Force[] out = new Force[n];
-        int cap = mindustry.entities.Units.getCap(me);
+        int cap = mindustry.entities.Units.getCap(side);
         int have = 0;
-        for(Unit u : me.data().units) if(!u.spawnedByCore && u.type.canAttack) have++;
+        for(Unit u : side.data().units) if(!u.spawnedByCore && u.type.canAttack) have++;
         for(int i = 0; i < n; i++){
             run.runUntil(i * step / lag);
             Force f = new Force(me);

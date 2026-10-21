@@ -86,6 +86,14 @@ public final class Force{
         return add((Object)type, n);
     }
 
+    /** The same kinds with their health whole (what was lost of it given back, shields gone). */
+    public Force whole(){
+        Force f = copy();
+        f.damage = 0f;
+        f.refresh();
+        return f;
+    }
+
     /** Health beyond what its kinds have at full (shields), in all. */
     public Force addHealth(float hp){
         if(hp == 0f) return this;

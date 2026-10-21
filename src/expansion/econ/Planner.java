@@ -228,6 +228,7 @@ public final class Planner{
                             back = new Field.Site(add.recipe.ground, add.x, add.y, add.rotation, add.item, add.factor, add.distance, new int[0]);
                             back.block = add.recipe.block;
                             back.seen = !add.unseen;
+                            back.radarable = add.radarable;
                         }
                         if(!free.contains(back)) free.add(back);
                         break;
@@ -472,6 +473,7 @@ public final class Planner{
         if(site != null){
             m.rotation = site.rotation;
             m.unseen = !site.seen;
+            m.radarable = site.radarable;
             placeOf.put(m, site);
         }
         return m;
@@ -996,6 +998,7 @@ public final class Planner{
         Machine b = new Machine(m.recipe, m.item, m.factor, m.x, m.y, m.distance, cost, true, false);
         b.rotation = m.rotation;
         b.unseen = m.unseen;
+        b.radarable = m.radarable;
         //(its lines take their time as the plain one's do)
         b.buildSeconds = m.buildSeconds;
         return b;

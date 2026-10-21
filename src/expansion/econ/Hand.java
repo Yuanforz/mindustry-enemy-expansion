@@ -40,7 +40,7 @@ public final class Hand extends mindustry.entities.units.AIController{
         this.works = works;
         this.order = order;
         watch = new Watch(works, order);
-        watch.notBuilt = i -> skipped.contains(i) || i == retrying;
+        watch.notBuilt = i -> skipped.contains(i) || i == retrying || dropped.contains(i);
         watch.busy = p -> job != null && job.contains(p, true);
         begun = new float[order.size()];
         finished = new float[order.size()];
@@ -138,7 +138,8 @@ public final class Hand extends mindustry.entities.units.AIController{
             if(b.power.graph.getBatteryStored() > 0.01f) continue;
             int pos = b.pos();
             now.add(pos);
-            if(!cutOff.contains(pos) || mendedOne) continue;
+            //(a radar of ours is joined at once: it was put down only to see by, and sees nothing till it has power)
+            if(!cutOff.contains(pos) && !radars.contains(self, true) || mendedOne) continue;
             Seq<Part> nodes = Wiring.mend(works.cat, unit.team, b);
             if(nodes == null || nodes.isEmpty()){
                 if(!unmendable.contains(pos)){
@@ -170,6 +171,113 @@ public final class Hand extends mindustry.entities.units.AIController{
         cutOff.addAll(now);
     }
 
+    /** The building being mended with the core unit's beam (null: none), and when that was last weighed. */
+    Building mending;
+    float beamAt = -1f, beamSince;
+    public int mendings;
+
+    /**
+     * Mends what of ours is hurt with the core unit's repair beam (as a player's core unit does), while that is worth more
+     * than what it would do else, both in items a second: a building's health given back is so much of what it cost (the
+     * beam's rate, a tenth of it on what was hit lately, as the game has it; the way there counted), against what building
+     * the job in hand puts up a second, or what digging brings in. Not at once with building, as a player can't. Whether
+     * it is mending now.
+     */
+    boolean beam(){
+        mindustry.type.weapons.RepairBeamWeapon beam = null;
+        for(Weapon w : unit.type.weapons) if(w instanceof mindustry.type.weapons.RepairBeamWeapon r && r.targetBuildings) beam = r;
+        if(beam == null) return false;
+        if(now() - beamAt >= 0.5f){
+            beamAt = now();
+            Building was = mending;
+            mending = null;
+            float range = beamRange(beam), speed = Math.max(0.01f, unit.speed()) * 60f, best = otherWork();
+            //(what is under fire is mended at a tenth of the rate, and what is given back is shot away again: mended then
+            //only where it keeps the game, our core where the tactics find it falls; the rest once the fire is over)
+            boolean falls = expansion.army.Tactics.homeFalls(unit.team);
+            for(Building b : unit.team.data().buildings){
+                if(!b.damaged() || b instanceof ConstructBuild) continue;
+                if(b.wasRecentlyDamaged() && !(falls && b == unit.team.core())) continue;
+                float missing = b.maxHealth() - b.health;
+                float rate = beamRate(beam, b);
+                if(rate <= 0f || missing <= 0f) continue;
+                float way = Math.max(0f, unit.dst(b) - range * 0.7f) / speed;
+                float worth = worth(b.block) * missing / b.maxHealth() / (way + missing / rate);
+                if(worth > best){
+                    best = worth;
+                    mending = b;
+                }
+            }
+            if(mending != null && was != mending) mendings++;
+            if(mending == null && was != null){
+                //(what a job got done is not counted as stalled for the time spent mending)
+                stallSince += now() - beamSince;
+                unit.isShooting = false;
+            }
+            if(mending != null && was == null) beamSince = now();
+        }
+        if(mending == null || !mending.isValid() || !mending.damaged()){
+            if(mending != null){
+                stallSince += now() - beamSince;
+                mending = null;
+                unit.isShooting = false;
+            }
+            unit.updateBuilding = true;
+            return false;
+        }
+        unit.updateBuilding = false;
+        unit.mineTile = null;
+        doing = String.format("mending %s at %d,%d (%.0f%%)", mending.block.name, mending.tileX(), mending.tileY(), mending.healthf() * 100f);
+        float range = beamRange(beam);
+        if(!unit.within(mending, range * 0.7f)){
+            unit.isShooting = false;
+            moveTo(mending, range * 0.6f);
+            return true;
+        }
+        unit.lookAt(mending);
+        unit.aim(mending.x, mending.y);
+        unit.controlWeapons(true, true);
+        return true;
+    }
+
+    static float beamRange(mindustry.type.weapons.RepairBeamWeapon beam){
+        return Math.max(Vars.tilesize, Math.max(beam.range(), beam.bullet.maxRange));
+    }
+
+    /** What the beam gives back a second to a building (the game's rule: so much a tick and a share of its health, a tenth while it was hit lately). */
+    static float beamRate(mindustry.type.weapons.RepairBeamWeapon beam, Building b){
+        float tick = beam.repairSpeed + beam.fractionRepairSpeed * b.maxHealth() / 100f;
+        return tick * 60f * (b.wasRecentlyDamaged() ? beam.recentDamageMultiplier : 1f);
+    }
+
+    /** What a block cost, all its items together. */
+    static float worth(Block block){
+        float n = 0f;
+        for(ItemStack s : block.requirements) n += s.amount;
+        return n;
+    }
+
+    /**
+     * What the core unit's time is worth else, in items a second: what it puts up a second building the job in hand (its
+     * parts' cost against the time the game takes to build them at its speed), or, with none, what it digs.
+     */
+    float otherWork(){
+        float speed = unit.type.buildSpeed * Vars.state.rules.buildSpeed(unit.team);
+        if(job != null && speed > 0f){
+            float items = 0f, seconds = 0f;
+            for(Part p : job){
+                Tile tile = Vars.world.tile(p.x, p.y);
+                if(tile != null && tile.block() == p.block && !(tile.build instanceof ConstructBuild)) continue;
+                items += worth(p.block);
+                seconds += p.block.buildTime / 60f / speed;
+            }
+            if(seconds > 0f) return items / seconds;
+        }
+        float dig = 0f;
+        for(int k = 0; k < works.cat.size(); k++) dig = Math.max(dig, works.field.handRate(works.cat, k));
+        return dig;
+    }
+
     /** Whether it has nothing at all to do: all built, nothing to put back or to cut. */
     public boolean idle(){
         return done() && watch.repairs.isEmpty() && deferred.isEmpty() && cuts.isEmpty();
@@ -196,6 +304,7 @@ public final class Hand extends mindustry.entities.units.AIController{
         String what;
         if(d.startsWith("building")) what = "building";
         else if(d.startsWith("putting back")) what = "putting back";
+        else if(d.startsWith("mending")) what = "mending";
         else if(d.startsWith("a unit is sent to see")) what = "waiting to see ground";
         else if(d.startsWith("a radar goes up")) what = "a radar going up";
         else if(d.startsWith("saving up")){
@@ -224,6 +333,8 @@ public final class Hand extends mindustry.entities.units.AIController{
         tell();
         watch.update(next);
         mendPower();
+        //what of ours is hurt mended by the core unit's beam, while that gives back more a second than its work would
+        if(beam()) return;
         //parts left for want of anyone to see their ground: once seen, they go up; until then a unit goes to look
         if(job == null && !deferred.isEmpty()){
             Seq<Part> now = new Seq<>();
@@ -247,7 +358,10 @@ public final class Hand extends mindustry.entities.units.AIController{
         //something built that went missing is put back before anything new (unless what is new is urgent: a defence going
         //up while raiders break lines faster than they can be put back; what they broke waits till it is up)
         //(and only while it can be begun: saving up for it, what was broken is put back meanwhile)
-        boolean first = urgent && job == null && next < order.size() && affordable(order.get(next).cost);
+        //(only if it can be begun: on ground not seen it waits for the radar, and the radar for its node put back here; on
+        //ravine the defence's next bore and the radar's node waited on each other all game)
+        boolean first = urgent && job == null && next < order.size() && affordable(order.get(next).cost)
+            && (works.at.get(order.get(next)) == null || unseen(works.at.get(order.get(next))) == null);
         //(what is under fire, or lost again and again lately, waits: put back into the fire it is lost again at once)
         Seq<Part> mend = new Seq<>(), held = new Seq<>();
         if(job == null && !first) for(Part p : watch.repairs) (watch.hot(p) ? held : mend).add(p);
@@ -289,6 +403,14 @@ public final class Hand extends mindustry.entities.units.AIController{
                 fogSince[1] = now();
             }
             if(dark != null && radarGoing){
+                if(Boolean.getBoolean("xp.radarlog") && now() - radarLogAt > 10f){
+                    radarLogAt = now();
+                    for(Part rp : radars){
+                        Building rb = Vars.world.build(rp.x, rp.y);
+                        System.out.println(String.format("    radar at %d,%d: %s; power %s; to see %d,%d discovered %b", rp.x, rp.y, rb == null ? "none" : rb.block.name + (rb instanceof ConstructBuild ? " (site)" : ""),
+                            rb == null || rb.power == null ? "-" : "producers " + rb.power.graph.producers.size + " status " + rb.power.status + " eff " + rb.efficiency + " fog " + rb.fogRadius(), dark.x, dark.y, Vars.fogControl.isDiscovered(unit.team, dark.x, dark.y)));
+                    }
+                }
                 doing = String.format("a radar goes up to see %d,%d for #%d %s (ground not seen can't be built on); digging meanwhile", where.x, where.y, next + 1, m.recipe.name);
                 dig(m.cost);
                 return;
@@ -451,6 +573,8 @@ public final class Hand extends mindustry.entities.units.AIController{
 
     /** Jobs put off because nobody could get to see their ground, by place in the order; the one being built again. */
     public final IntSeq skipped = new IntSeq();
+    /** Steps put off for getting no further (tried again only once the rest of the order is up), and those given up. */
+    final IntSet stalled = new IntSet(), dropped = new IntSet();
     int retrying = -1;
     /** For seeing a job get no further: the job, how many of its parts were left, since when. */
     Seq<Part> stallJob;
@@ -475,22 +599,32 @@ public final class Hand extends mindustry.entities.units.AIController{
      * A radar for seeing this tile: one of ours already within its reach of it (standing or going up), else a new one on
      * the free ground seen that is nearest the tile within that reach. Whether there is one.
      */
+    float radarLogAt = -100f;
+
     boolean radar(Tile dark){
         Block r = Vars.content.block("radar");
         if(r == null || !works.allowed.contains("radar")) return false;
         float reach = r.fogRadius - 2f;
         for(Part p : radars) if(Mathf.dst(p.x, p.y, dark.x, dark.y) <= reach) return true;
         for(Building b : unit.team.data().buildings) if(b.block == r && Mathf.dst(b.tileX(), b.tileY(), dark.x, dark.y) <= reach) return true;
+        //(where it sees the place from, the nearest to what has power: a radar runs on power, and one put down nearest the
+        //place, four nodes from the grid, found no way of nodes to it and saw nothing for the rest of the game on lake)
+        Seq<Building> powered = new Seq<>();
+        for(Building b : unit.team.data().buildings) if(b.power != null && b.power.graph != null && !b.power.graph.producers.isEmpty()) powered.add(b);
         Tile best = null;
         float bestD = Float.MAX_VALUE;
         int rr = (int)reach;
         for(int dx = -rr; dx <= rr; dx++) for(int dy = -rr; dy <= rr; dy++){
             int x = dark.x + dx, y = dark.y + dy;
             float d = Mathf.dst(0, 0, dx, dy);
-            if(d > reach || d >= bestD) continue;
+            if(d > reach) continue;
+            float grid = Float.MAX_VALUE;
+            for(Building b : powered) grid = Math.min(grid, Mathf.dst(b.tileX(), b.tileY(), x, y));
+            float score = (grid == Float.MAX_VALUE ? 1e6f : grid) + d * 1e-3f;
+            if(score >= bestD) continue;
             if(!Vars.fogControl.isDiscovered(unit.team, x, y) || !mindustry.world.Build.validPlace(r, unit.team, x, y, 0)) continue;
             if(works.grid != null && works.grid.block(x, y) != null) continue;
-            bestD = d;
+            bestD = score;
             best = Vars.world.tile(x, y);
         }
         if(best == null) return false;
@@ -673,12 +807,22 @@ public final class Hand extends mindustry.entities.units.AIController{
                 trouble.add(String.format("putting back %d parts given up after %.0f s with no progress", left, stallTime));
                 repairing = false;
             }else if(retrying >= 0){
-                trouble.add(String.format("#%d %s given up again after %.0f s with no progress", retrying + 1, machine == null ? "" : machine.recipe.name, stallTime));
-                //(put off again, not dropped: dropped, its parts never built were taken for lost and put back for ever)
-                skipped.add(retrying);
+                //(one that got no further before, tried again once the rest was up, and no further now: given up, what of
+                //it never went up kept from the watch, that would take it for lost and put it back for ever; put off again
+                //and tried again at once, a bore whose place a node had taken held the rest of a stage back for eight
+                //minutes on marsh)
+                if(stalled.contains(retrying)){
+                    trouble.add(String.format("#%d %s given up: no further again after %.0f s", retrying + 1, machine == null ? "" : machine.recipe.name, stallTime));
+                    dropped.add(retrying);
+                }else{
+                    trouble.add(String.format("#%d %s given up again after %.0f s with no progress", retrying + 1, machine == null ? "" : machine.recipe.name, stallTime));
+                    stalled.add(retrying);
+                    skipped.add(retrying);
+                }
                 retrying = -1;
             }else{
                 trouble.add(String.format("#%d %s put off after %.0f s with no progress (%d parts left)", next + 1, machine == null ? "" : machine.recipe.name, stallTime, left));
+                stalled.add(next);
                 skipped.add(next);
                 next++;
             }
@@ -860,7 +1004,8 @@ public final class Hand extends mindustry.entities.units.AIController{
         for(int i = 0; i < skipped.size; i++){
             int idx = skipped.get(i);
             Machine m = order.get(idx);
-            if(!affordable(m.cost)) continue;
+            //(what got no further waits for the rest: tried again at once, nothing has changed)
+            if(stalled.contains(idx) || !affordable(m.cost)) continue;
             Part where = works.at.get(m);
             if(where != null && unseen(where) != null) continue;
             Seq<Part> parts = works.job(m);

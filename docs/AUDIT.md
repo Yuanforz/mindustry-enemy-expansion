@@ -432,3 +432,63 @@ negotiation's unpriced starts and quiet tiles; the rules' build-time and unit mu
 chosen where its sites rank first though surge alloy can't be had (the site value by ground's first recipe hides it:
 valued by the site's own block, gen maps planned nothing); walls before a turret take our units' fire in the game but not
 in the tactics model (a single breach behind walls took twenty stells on gen-1).
+
+## 9. Why the generated maps were lost to the Brain (2026-10-22, after c19)
+
+c18 and c19 got back to c16's 18 of 38 against the Brain, but every game on gen-3 to gen-6 was lost, at seven to ten
+minutes, to three or four stells at our core. Read off the logs, game by game:
+
+- **The tactics' leaf counted a base race as both ends at once.** The home leaf took off what we stand to lose if our
+  core falls and the attack leaf added what we stand to win if theirs does, both discounted alike; the game ends at the
+  first last core to fall. With more of theirs at stake (turrets, yards) the sum favoured attacking while our own core went
+  first. Now a race: each attack's time is worked out (walk and fight), the earlier of our home falling and their last core
+  taken ends the game, and only what is decided before that counts; a last core falling within the playout ends it there.
+- **The core unit never mended.** The core units' repair beams give a building back about 350 health a second (a tenth of
+  that for five seconds after a hit); the Brain's core unit mends whatever is hurt and quiet, so a core our tanks took to a
+  fifth was whole again before the next attack, while ours sat at 39% between attacks. Now the hand mends with the beam
+  whenever that gives back more a second (a building's cost times the share of health given back, the way there counted)
+  than its work would (what the job in hand puts up a second, or digging). Under fire only our core, and only while the
+  tactics find our home falling: mended at the tenth under fire whenever it outweighed building, the core unit spent half
+  the game mending and the second stage of gen-5 took all of it.
+- **Their core unit in the tactics model.** In the playout each side's core units mend what is hurt and quiet; at an
+  attack's leaf the target has what it is mended to by the time the first squad gets there, and their core unit puts up
+  turrets meanwhile (of the kinds it has built, as many as the time and what it is taken to have pay for: our stock, the
+  sides starting alike, and what it is seen to spend a second); at their core, what their yards turn out meanwhile joins
+  the guard, as ours joins what holds our home.
+- **Their ground units fire on our core alone.** The game's ground AI walks for the nearest core of the other side's and,
+  once in reach, fires on it whatever stands about it; the Brain's tanks are led so. In the playout a group fires first on
+  the building it is told to attack (ours on their target, theirs on our core); a group led by the ground AI has no choice
+  of scripts (the worst reply had it go home, which it never does); and at the home leaf, when all that comes fires on the
+  core alone, the core takes d·H/2D in all while ours wear them down (falling at the root of the quadratic if that is more
+  than it has), not the square law that spread their fire over our units.
+- **Execution: a step that got no further was tried again at once.** Put off after a minute without progress (a bore whose
+  place a node had taken), it was affordable and so first again, a minute more, and so on: the rest of the stage waited
+  eight minutes on marsh. Now it waits for the rest of the order, and one that gets no further again is given up (kept
+  from the watch, that would put its parts back for ever).
+- **Tried and left off: the mirror planned from their base** (-Dops.mirrortheirs=true). Our fastest plan in their place
+  missed a side whose base had graphite and a vent near (gen-4: the model had their tanks two minutes late); planned from
+  their base it saw them, but the prior pace (the faster quarter of the Brain's first unit against our own fastest plan) is
+  far too fast against the Brain's own potential (marsh: a tank at 3:06 in its plan, the first after eleven minutes in the
+  game), and the stages turned to defences first: gen-3 and gen-6 went from won to lost both ways. Needs the prior measured
+  against the other side's own plan.
+
+After c20 (not yet in a batch):
+- **Fire on the way** at an attack's leaf: each squad loses what the turrets that do not guard the target fire on it over
+  the stretch of its way within their reach (lone ships sent past two breaches at a core were lost one by one).
+- **No stock taken for theirs**: their core unit's turrets are paid for at the pace they are seen to spend, not out of a
+  stock taken to be ours (on siege, both starting with three thousand, eight breaches were counted by our arrival and
+  sixteen units stood at home all game).
+- **With no units of ours**, the tactics still play out the home fight, so the core unit mends the core under fire when
+  it falls (ravine: one locus took a core with no unit of ours about).
+- **The fog in the campaign** (ravine 636 of 646 seconds, crevice 416 of 446, lake and karst some 300, waiting on radars
+  or on ground to be seen): a radar was taken to see in a fixed 45 s; now only once there is power (one of no power sees
+  nothing), and only where ground seen lies within its reach of the place; the hand puts a radar nearest what has power
+  and joins it at once; the urgent stage's next step on ground not seen no longer holds back the radar's node (they waited
+  on each other all game); what has been seen is read off the side's own record, not through the rule other planning
+  threads may have off.
+
+Still open from these maps: gen-4 makes no unit by ten minutes (the nearest graphite and vent are 130 tiles off: lines of
+300 to 450 beryllium each); split bans tank and ship yards and its only floor tungsten lies past a gap no line crosses (the
+map's own base carried it by payload drivers, which cost tungsten): no side builds anything; on peaks only flyers reach the
+Brain and avert wants tungsten flowing to its refabricator (the core holds 650, but Erekir's duct unloader can't unload a
+core); intersect wants legged units (mech yard: 10 tungsten) and the layout could not feed sand to its furnace.

@@ -18,6 +18,8 @@ public final class Field{
          * (its fog radius is 0): it is seen once a unit has been there. (A side the game runs as an AI has no fog.)
          */
         public boolean seen = true;
+        /** For one not seen: whether ground seen lies within a radar's reach of it, where one can be put down to see it. */
+        public boolean radarable = true;
         /** For drills that reach across the ground to a wall: the open tiles their beams cross, on which nothing solid may stand. */
         public int[] lane = new int[0];
         /** Tiles other such machines must leave free: the row behind it for its duct, or the ring round a floor drill. */

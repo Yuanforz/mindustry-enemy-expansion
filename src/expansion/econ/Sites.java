@@ -183,13 +183,29 @@ public final class Sites{
         }
         fogBack();
         //what the side has seen so far: the game works its fog out on a thread of its own, which this makes it do now
-        if(fog && Vars.state.rules.staticFog){
+        if(fog && Vars.state.rules.staticFog && !team.isAI()){
             try{
                 Vars.fogControl.update();
             }catch(Throwable ignored){
             }
+            //(read off what the side has found, not through the rule: other planning threads may have it off just now, and
+            //with it off all of the map reads as seen)
+            arc.struct.Bits found = Vars.fogControl.getDiscovered(team);
+            //(and, for what is not, whether a radar could be put down on ground seen within its reach: far out in the dark
+            //nothing can be put down to see it, and only a unit can)
+            int ww = Vars.world.width(), wh = Vars.world.height();
+            Block radar = Vars.content.block("radar");
+            int sight = radar == null ? 0 : (int)(radar.fogRadius - 2f);
             for(Field.Site s : all){
-                for(int t : s.tiles) if(!Vars.fogControl.isDiscovered(team, t % Vars.world.width(), t / Vars.world.width())){ s.seen = false; break; }
+                for(int t : s.tiles) if(found == null || !found.get(t)){ s.seen = false; break; }
+                if(s.seen) continue;
+                boolean near = false;
+                for(int dx = -sight; dx <= sight && !near; dx++) for(int dy = -sight; dy <= sight && !near; dy++){
+                    int x = s.x + dx, y = s.y + dy;
+                    if(x < 0 || y < 0 || x >= ww || y >= wh || dx * dx + dy * dy > sight * sight) continue;
+                    if(found != null && found.get(x + y * ww) && Vars.world.tile(x, y).block() == mindustry.content.Blocks.air) near = true;
+                }
+                s.radarable = near;
             }
         }
         //what the map's own drills reach across stays clear

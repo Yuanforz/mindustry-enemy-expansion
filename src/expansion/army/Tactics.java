@@ -72,6 +72,11 @@ public final class Tactics{
         int script;
         Group foeGroup;
         Site foeSite;
+        /** For theirs: the building of ours most of its units are told to attack now (null: none). */
+        Site aimed;
+        /** For theirs: led by the game's ground AI, that only walks for our core and fires on it alone once in reach (no
+         * choice of scripts, and no fire on ours by the core). */
+        boolean coreOnly;
         //playout state
         float px, py, ph, hx, hy;
 
@@ -116,6 +121,10 @@ public final class Tactics{
         float worth;
         final boolean hitsAir, hitsGround;
         float ph;
+        /** Its place in the list of sites. */
+        int index;
+        /** Its health whole (what its side's core units can mend it back to); seconds since it was last hit, in the playout. */
+        float full, quiet, quiet0;
         /** Whether the map's tasks ask for it to be destroyed (worth more: the map opens up when it is). */
         boolean asked;
         /** It as a body (Force): a turret with its ammunition, or a building that takes hits. */
@@ -129,6 +138,10 @@ public final class Tactics{
             this.y = y;
             //(what it can take as the game has it: its health under its team's multiplier, as the fire on it is counted)
             this.health = force != null ? force.health : health;
+            //(its health whole, under its side's rules, and how long since it was hit: the game mends at a tenth for five
+            //seconds after a hit; hit lately, taken as just hit)
+            full = build == null ? this.health : Math.max(this.health, expansion.ops.Combat.health(build.block, build.team));
+            quiet0 = build == null || build.wasRecentlyDamaged() ? 0f : 5f;
             this.dps = dps;
             this.range = range;
             this.worth = worth;
@@ -137,7 +150,27 @@ public final class Tactics{
         }
     }
 
+    /** Seconds till our home falls in the last playout (infinite: it holds, or their core falls first). */
+    float lastLostAt = Float.POSITIVE_INFINITY;
+    /** By team: when the tactics last found, as chosen, that its home falls (-1: it holds), in game ticks. */
+    static final IntFloatMap homeFalls = new IntFloatMap();
+
+    /** Whether the last weighing (they are a couple of seconds apart) found the team's home falling as things stand. */
+    public static boolean homeFalls(Team team){
+        float at = homeFalls.get(team.id, -1f);
+        return at >= 0f && Vars.state.tick - at < 60f * 5f;
+    }
+
     final Seq<Group> ours = new Seq<>(), theirs = new Seq<>();
+    /** Our home core among the sites. */
+    Site homeSite;
+
+    /** The building a group's script has it fire on first, once in reach (a unit told to attack it does), or null. */
+    Site focus(Group g){
+        if(g.ours) return g.script == 2 ? g.foeSite : null;
+        if(g.script == 1) return homeSite;
+        return g.script == 0 ? g.aimed : null;
+    }
     final Seq<Site> sites = new Seq<>();
     Building home;
 
@@ -161,10 +194,6 @@ public final class Tactics{
             if(ai.command == mindustry.ai.UnitCommand.enterPayloadCommand && ai.targetPos != null) continue;
             mine.add(u);
         }
-        if(mine.isEmpty()){
-            state = "no units";
-            return;
-        }
         Seq<Unit> foes = new Seq<>();
         for(var data : Vars.state.teams.active){
             if(data.team == team || data.team == Team.derelict) continue;
@@ -173,10 +202,63 @@ public final class Tactics{
         squads(mine, ours, true);
         squads(foes, theirs, false);
         sitesOf(team);
+        homeSite = null;
+        for(int i = 0; i < sites.size; i++){
+            Site t = sites.get(i);
+            t.index = i;
+            if(t.build == home) homeSite = t;
+        }
+        //(what each group of theirs is told to attack: as the game has it, a unit told to attack a building fires on it once
+        //in reach, past whatever else is near; the Brain's tanks took our core down with ours about them)
+        for(Group g : theirs){
+            ObjectIntMap<Building> told = new ObjectIntMap<>();
+            for(Unit u : g.units){
+                if(u.controller() instanceof CommandAI ai && ai.attackTarget instanceof Building b && b.team == team) told.increment(b);
+                //(the game's ground AI walks for the nearest core of the other side's and, once in reach of it, fires on it
+                //alone: the Brain's tanks so took our core down past ours standing by it)
+                else if(u.controller() instanceof GroundAI){
+                    Building c = u.closestEnemyCore();
+                    if(c != null && c.team == team) told.increment(c);
+                }
+            }
+            Building most = null;
+            for(var e : told) if(most == null || e.value > told.get(most, 0)) most = e.key;
+            int ground = 0;
+            for(Unit u : g.units) if(u.controller() instanceof GroundAI) ground++;
+            g.coreOnly = ground * 2 > g.units.size;
+            if(most != null) for(Site t : sites) if(t.build == most) g.aimed = t;
+        }
+        healersOf();
+        reinforcementsOf(team);
+        yardsOf();
         //what the map's tasks ask to have destroyed (set on the push by whoever reads the tasks)
         for(Site t : sites) if(!t.ours && t.build != null && army.push.asked.contains(t.build, true)){
             t.asked = true;
             t.worth *= askedWorth;
+        }
+        //(no units of ours: only whether our home falls, for the core unit's mending under fire, with their best reply)
+        if(ours.isEmpty()){
+            for(Group g : theirs) g.script = 0;
+            for(Group g : theirs){
+                if(g.coreOnly) continue;
+                int best = 0;
+                float worst = playout();
+                for(int k = 1; k < 3; k++){
+                    if(k == 1 && !theyReach(g)) continue;
+                    g.script = k;
+                    float v = playout();
+                    if(v < worst - 1e-3f){
+                        worst = v;
+                        best = k;
+                    }
+                }
+                g.script = best;
+            }
+            if(theirs.isEmpty()) lastLostAt = Float.POSITIVE_INFINITY;
+            else playout();
+            homeFalls.put(team.id, Float.isInfinite(lastLostAt) ? -1f : (float)Vars.state.tick);
+            state = "no units" + (Float.isInfinite(lastLostAt) ? "" : String.format(", home falls in %.0f s", lastLostAt));
+            return;
         }
         //the other side's groups that are near anything of ours (the ones worth meeting)
         Seq<Group> near = new Seq<>();
@@ -238,6 +320,8 @@ public final class Tactics{
             }
             for(int i = 0; i < ours.size; i++) set(ours.get(i), was.get(i));
             for(Group g : theirs){
+                //(what the game's ground AI leads goes on as it does: it has no other way)
+                if(g.coreOnly) continue;
                 int best = g.script;
                 float worst = playout();
                 for(int k = 0; k < 3; k++){
@@ -254,6 +338,8 @@ public final class Tactics{
             }
         }
         float end = playout();
+        //(whether, as chosen, our home falls: the core unit mends it under fire only then)
+        homeFalls.put(team.id, Float.isInfinite(lastLostAt) ? -1f : (float)Vars.state.tick);
         decisions++;
         //(-Darmy.tactics.debug: each squad's options as they score with the rest as chosen)
         StringBuilder why = new StringBuilder();
@@ -270,6 +356,15 @@ public final class Tactics{
                 }
                 set(s, chosen);
             }
+        }
+        if(Boolean.getBoolean("army.tactics.debug")){
+            for(Group g : theirs){
+                Unit u = g.units.first();
+                String told = u.controller() instanceof CommandAI ai ? (ai.attackTarget == null ? "none" : ai.attackTarget.toString()) : u.controller().getClass().getSimpleName();
+                why.append(String.format("\n      theirs %d at %d,%d: script %d, aimed %s, told %s, reaches us %b, %.0f tiles from home", g.units.size, (int)(g.x / 8), (int)(g.y / 8), g.script, g.aimed == null ? "-" : g.aimed.build == null ? "site" : g.aimed.build.block.name, told, theyReach(g), Mathf.dst(g.x, g.y, home.x, home.y) / 8f));
+            }
+            playout();
+            why.append(String.format("\n      as chosen: home falls at %s", Float.isInfinite(lastLostAt) ? "never" : String.valueOf((int)lastLostAt)));
         }
         //the orders
         int holding = 0, meeting = 0, attacking = 0;
@@ -488,11 +583,16 @@ public final class Tactics{
             g.hx = c == null ? g.x : c.x;
             g.hy = c == null ? g.y : c.y;
         }
-        for(Site s : sites) s.ph = s.health;
+        for(Site s : sites){
+            s.ph = s.health;
+            s.quiet = s.quiet0;
+        }
         int steps = Math.max(1, Math.round(horizon / dt));
         float[] hitG = new float[ours.size + theirs.size];
         float[] hitS = new float[sites.size];
-        for(int step = 0; step < steps; step++){
+        //(the game is over once a side's last core falls: what comes after counts for nothing)
+        int over = 0;
+        for(int step = 0; step < steps && over == 0; step++){
             java.util.Arrays.fill(hitG, 0f);
             java.util.Arrays.fill(hitS, 0f);
             //groups: fire at the nearest enemy in reach, else move on to where their script sends them
@@ -503,7 +603,12 @@ public final class Tactics{
                 float left = g.ph / g.health * dt;
                 int tg = -1, ts = -1;
                 float best = Float.MAX_VALUE, reach2 = g.range * g.range;
-                for(int j = 0; j < ours.size + theirs.size; j++){
+                Site aim = focus(g);
+                if(aim != null && aim.ph > 0f && g.force.dpsAgainst(aim.force) > 0f){
+                    float r = g.range + (aim.build == null ? 0f : aim.build.block.size * Vars.tilesize / 2f);
+                    if(Mathf.dst2(g.px, g.py, aim.x, aim.y) < r * r) ts = aim.index;
+                }
+                if(ts < 0) for(int j = 0; j < ours.size + theirs.size; j++){
                     Group e = j < ours.size ? ours.get(j) : theirs.get(j - ours.size);
                     if(e.ours == g.ours || e.ph <= 0f) continue;
                     if(g.force.dpsAgainst(e.force) <= 0f) continue;
@@ -513,7 +618,7 @@ public final class Tactics{
                         tg = j;
                     }
                 }
-                if(tg < 0) for(int k = 0; k < sites.size; k++){
+                if(tg < 0 && ts < 0) for(int k = 0; k < sites.size; k++){
                     Site s = sites.get(k);
                     if(s.ours == g.ours || s.ph <= 0f) continue;
                     float d = Mathf.dst2(g.px, g.py, s.x, s.y);
@@ -561,7 +666,16 @@ public final class Tactics{
                 Group e = j < ours.size ? ours.get(j) : theirs.get(j - ours.size);
                 e.ph = Math.max(0f, e.ph - hitG[j]);
             }
-            for(int k = 0; k < sites.size; k++) sites.get(k).ph = Math.max(0f, sites.get(k).ph - hitS[k]);
+            for(int k = 0; k < sites.size; k++){
+                Site s = sites.get(k);
+                s.ph = Math.max(0f, s.ph - hitS[k]);
+                s.quiet = hitS[k] > 0f ? 0f : s.quiet + dt;
+            }
+            mend(dt);
+            for(Site s : sites) if(s.ph <= 0f && lastCore(s)){
+                over = s.ours ? -1 : 1;
+                break;
+            }
         }
         float score = 0f;
         for(Group g : ours) score -= (g.health - g.ph) * g.worth();
@@ -585,24 +699,61 @@ public final class Tactics{
         }
         for(Group g : ours) ourStake += g.ph * g.worth();
         for(Group g : theirs) theirStake += g.ph * g.worth();
+        //(a side's last core fallen within the playout: the game over there, all the other side has gone with it)
+        lastLostAt = over < 0 ? 0f : Float.POSITIVE_INFINITY;
+        if(over != 0) return score + (over > 0 ? theirStake : -ourStake);
         //the fight at our home at the leaf, as at theirs: what of theirs makes for our core, against what of ours holds it
         //(the squads holding, our turrets about the core, the core); if it falls, so does all we have
+        float lostAt = Float.POSITIVE_INFINITY;
         {
             expansion.ops.Force coming = new expansion.ops.Force(), holding = new expansion.ops.Force(army.team);
             float walk = 0f;
-            for(Group g : theirs) if(g.ph > 0f && g.script == 1){
+            //(going for it, or told to attack it and going on so)
+            for(Group g : theirs) if(g.ph > 0f && (g.script == 1 || g.script == 0 && homeSite != null && g.aimed == homeSite)){
                 coming.team = g.force.team;
                 coming.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
                 walk = Math.max(walk, Math.max(0f, Mathf.dst(g.px, g.py, home.x, home.y) - g.range) / Math.max(1f, g.speed * 60f));
             }
             if(!coming.empty()){
-                for(Group g : ours) if(g.ph > 0f && (g.script == 0 || g.script == 1 && g.foeGroup != null && g.foeGroup.script == 1)) holding.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
-                for(Site t : sites) if(t.ours && t.ph > 0f && (t.build == home || t.dps > 0f && Mathf.dst(t.x, t.y, home.x, home.y) < t.range + nearOurs * Vars.tilesize / 2f)) holding.add(t.force.copy().scl(t.ph / Math.max(1f, t.health)));
-                float[] fight = coming.fight(holding);
-                float d = (float)Math.exp(-(walk + (Float.isInfinite(fight[2]) ? 0f : fight[2])) / expansion.ops.Command.discount);
-                if(fight[0] > 0f) score -= d * ourStake;
+                expansion.ops.Force guns = new expansion.ops.Force(army.team);
+                float coreHp = 0f;
+                for(Group g : ours) if(g.ph > 0f && (g.script == 0 || g.script == 1 && g.foeGroup != null && g.foeGroup.script == 1)) guns.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
+                for(Site t : sites) if(t.ours && t.ph > 0f && (t.build == home || t.dps > 0f && Mathf.dst(t.x, t.y, home.x, home.y) < t.range + nearOurs * Vars.tilesize / 2f)){
+                    //(our core mended till what comes for it gets there, as theirs is)
+                    float hp = t.build == home ? mendedBy(t, walk) : t.ph;
+                    expansion.ops.Force f = hp > t.ph ? t.force.whole().scl(hp / Math.max(1f, t.full)) : t.force.copy().scl(t.ph / Math.max(1f, t.health));
+                    if(t.build == home) coreHp = f.health;
+                    else guns.add(f);
+                    holding.add(f);
+                }
+                //(and what our yards turn out by the time they are here)
+                expansion.ops.Force made = madeBy(army.team, horizon + walk);
+                guns.add(made);
+                holding.add(made);
+                boolean coreOnly = true;
+                for(Group g : theirs) if(g.ph > 0f && (g.script == 1 || g.script == 0 && g.aimed == homeSite) && !g.coreOnly) coreOnly = false;
+                if(coreOnly && homeSite != null){
+                    //all of it fires on the core alone, and ours on it, unanswered: the core takes what they fire while they
+                    //last, their fire falling as ours wears them down (d * H / 2D in all, if nothing of theirs is left first)
+                    float onCore = coming.dpsAgainst(home.block, army.team), ours = guns.dpsAgainst(coming), h0 = Math.max(1f, coming.health);
+                    if(onCore > 0f){
+                        if(ours <= 0f) lostAt = walk + coreHp / onCore;
+                        else if(onCore * h0 / (2f * ours) >= coreHp){
+                            //(the time it falls: onCore (t - ours t^2 / 2h0) = coreHp)
+                            float a = ours / (2f * h0), disc = 1f - 4f * a * coreHp / onCore;
+                            lostAt = walk + (disc <= 0f ? h0 / ours : (1f - (float)Math.sqrt(disc)) / (2f * a));
+                        }
+                    }
+                }else{
+                    float[] fight = coming.fight(holding);
+                    //(our last core: one of several fallen is a loss of what it is worth, not the game)
+                    if(fight[0] > 0f) lostAt = walk + (Float.isInfinite(fight[2]) ? 0f : fight[2]);
+                }
             }
         }
+        boolean lastHome = army.team.cores().size <= 1;
+        //each attack's worth at its leaf and when it is decided ({seconds, worth, whether it takes their last core})
+        Seq<float[]> attacks = new Seq<>();
         for(var e : going){
             Site target = e.key;
             float walk = 0f, myWorth = 0f, total = 0f;
@@ -615,6 +766,15 @@ public final class Tactics{
                 expansion.ops.Force f = g.force.copy().scl(g.ph / Math.max(1f, g.health));
                 float dist = Math.max(0f, Mathf.dst(g.px, g.py, target.x, target.y) - g.range);
                 float at = dist / Math.max(1f, g.speed * 60f);
+                //(what fires on it on the way, from turrets that do not guard the target: the stretch of the way within
+                //each one's reach, at its speed; lone ships sent past two breaches at a core were lost one by one)
+                float hurt = 0f;
+                for(Site t : sites){
+                    if(t.ours || t.ph <= 0f || t.dps <= 0f || Mathf.dst(t.x, t.y, target.x, target.y) < t.range) continue;
+                    float len = chord(g.px, g.py, target.x, target.y, t.x, t.y, t.range);
+                    if(len > 0f) hurt += t.force.dpsAgainst(f) * (t.ph / Math.max(1f, t.health)) * len / Math.max(1f, g.speed * 60f);
+                }
+                if(hurt > 0f) f.scl(Math.max(0f, 1f - hurt / Math.max(1f, f.health)));
                 arrivals.add(new float[]{at, bodies.size});
                 bodies.add(f);
                 walk = Math.max(walk, at);
@@ -622,9 +782,12 @@ public final class Tactics{
                 total += f.health;
             }
             arrivals.sort(a -> a[0]);
-            expansion.ops.Force guard = target.force.copy().scl(target.ph / Math.max(1f, target.health));
+            //(what it has when the first squad gets there: mended meanwhile, if nothing fires on it for long enough; the
+            //Brain's core unit had a core taken down to a fifth whole again between one attack and the next)
+            float hp = mendedBy(target, arrivals.isEmpty() ? 0f : arrivals.first()[0]);
+            expansion.ops.Force guard = hp > target.ph ? target.force.whole().scl(hp / Math.max(1f, target.full)) : target.force.copy().scl(target.ph / Math.max(1f, target.health));
             //(their core taken is the game won: all they have)
-            float guardWorth = target.build instanceof CoreBlock.CoreBuild && target.build == foeCore(target) ? theirStake : target.ph * target.worth;
+            float guardWorth = target.build instanceof CoreBlock.CoreBuild && target.build == foeCore(target) ? theirStake : hp * target.worth;
             for(Site t : sites) if(t != target && !t.ours && t.ph > 0f && t.dps > 0f && Mathf.dst(t.x, t.y, target.x, target.y) < t.range){
                 guard.add(t.force.copy().scl(t.ph / Math.max(1f, t.health)));
                 guardWorth += t.ph * t.worth;
@@ -633,6 +796,16 @@ public final class Tactics{
                 guard.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
                 guardWorth += g.ph * g.worth();
             }
+            //(and what their core unit can put up there by the time ours arrive: the Brain laid two breaches by its core in
+            //a minute as two tanks made for it, and the attack the model had taking an open core met them)
+            float window = horizon + (arrivals.isEmpty() ? 0f : arrivals.first()[0]);
+            Object[] r = target.build == null ? null : reinforce.get(target.build.team);
+            if(r != null){
+                int n = reinforcements(r, window);
+                if(n > 0) guard.add(((expansion.ops.Force)r[0]).copy().scl(n));
+            }
+            //(and, at their core, what their yards turn out meanwhile: their tanks came out one by one while ours walked)
+            if(target.build instanceof CoreBlock.CoreBuild) guard.add(madeBy(target.build.team, window));
             //(those there fight what guards it till the next comes, worn down as Command.wear has it; then all that is
             //there fights it out)
             float guardTotal = Math.max(1f, guard.health);
@@ -647,11 +820,196 @@ public final class Tactics{
             float[] fight = guard.empty() ? new float[]{1f, 1f, 0f} : mine.fight(guard);
             float ourLeft = fight[0] > 0f ? fight[1] * mine.health / Math.max(1f, total) : 0f;
             float theirLeft = fight[0] < 0f ? fight[1] * guard.health / guardTotal : fight[0] > 0f ? 0f : guard.health / guardTotal;
-            float d = (float)Math.exp(-(walk + (Float.isInfinite(fight[2]) ? 0f : fight[2])) / expansion.ops.Command.discount);
-            if(fight[0] > 0f) score += d * (guardWorth - myWorth * (1f - ourLeft));
-            else if(fight[0] < 0f) score += d * (guardWorth * (1f - theirLeft) - myWorth);
+            float at = walk + (Float.isInfinite(fight[2]) ? 0f : fight[2]);
+            float d = (float)Math.exp(-at / expansion.ops.Command.discount);
+            if(fight[0] > 0f) attacks.add(new float[]{at, d * (guardWorth - myWorth * (1f - ourLeft)), foeCore(target) != null ? 1f : 0f});
+            else if(fight[0] < 0f) attacks.add(new float[]{at, d * (guardWorth * (1f - theirLeft) - myWorth), 0f});
+        }
+        //the game ends with the first last core to fall, ours at home or theirs taken: a race, not both (counted as both, an
+        //attack on a core guarded by more than ours was worth its while with our own core falling first: units at the
+        //other side's turrets while its tanks took our core down)
+        float wonAt = Float.POSITIVE_INFINITY;
+        for(float[] a : attacks) if(a[2] > 0f) wonAt = Math.min(wonAt, a[0]);
+        float end = lastHome ? Math.min(lostAt, wonAt) : wonAt;
+        for(float[] a : attacks) if(a[0] <= end) score += a[1];
+        lastLostAt = lostAt < wonAt ? lostAt : Float.POSITIVE_INFINITY;
+        if(lostAt < wonAt){
+            float d = (float)Math.exp(-lostAt / expansion.ops.Command.discount);
+            //(the game, or of several cores the one at home)
+            if(lastHome) score -= d * ourStake;
+            else for(Site t : sites) if(t.build == home) score -= d * t.ph * t.worth;
         }
         return score;
+    }
+
+    /** How much of the straight way from (ax, ay) to (bx, by) lies within r of (cx, cy). */
+    static float chord(float ax, float ay, float bx, float by, float cx, float cy, float r){
+        float dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+        if(len2 <= 1e-6f) return 0f;
+        //(where the line meets the circle, as shares of the way: t^2 len2 + 2 t (d.f) + |f|^2 - r^2 = 0, f = a - c)
+        float fx = ax - cx, fy = ay - cy;
+        float b = 2f * (fx * dx + fy * dy), c = fx * fx + fy * fy - r * r;
+        float disc = b * b - 4f * len2 * c;
+        if(disc <= 0f) return 0f;
+        float sq = (float)Math.sqrt(disc);
+        float t0 = Math.max(0f, (-b - sq) / (2f * len2)), t1 = Math.min(1f, (-b + sq) / (2f * len2));
+        return t1 <= t0 ? 0f : (t1 - t0) * (float)Math.sqrt(len2);
+    }
+
+    /** Whether a site is a side's last core (taken, the game is over). */
+    static boolean lastCore(Site s){
+        return s.build instanceof CoreBlock.CoreBuild c && c.team.cores().size <= 1;
+    }
+
+    /**
+     * By team: what its core unit could put up about a place of its own that is attacked ({the turret as a body, seconds
+     * one takes to build at its speed, its cost, -, items a second it is seen to spend}): of the kinds of turret it has
+     * put up so far (else any that can be built here), the strongest against our units for what it costs.
+     */
+    final ObjectMap<Team, Object[]> reinforce = new ObjectMap<>();
+
+    void reinforcementsOf(Team team){
+        reinforce.clear();
+        Building core = team.core();
+        if(core == null) return;
+        expansion.ops.Force mineAll = new expansion.ops.Force(team);
+        for(Group g : ours) mineAll.add(g.force);
+        if(mineAll.empty()) return;
+        for(var data : Vars.state.teams.active){
+            if(data.team == team || data.team == Team.derelict || data.cores.isEmpty()) continue;
+            Unit builder = null;
+            for(Unit u : data.units) if(Bait.coreUnit(u) && !u.dead() && u.type.buildSpeed > 0f) builder = u;
+            if(builder == null) continue;
+            ObjectSet<Turret> kinds = new ObjectSet<>();
+            for(Building b : data.buildings) if(b.block instanceof Turret t) kinds.add(t);
+            if(kinds.isEmpty()) for(mindustry.world.Block b : Vars.content.blocks()){
+                if(b instanceof Turret t && b.isVisible() && b.isOnPlanet(Vars.state.rules.planet) && !Vars.state.rules.isBanned(b) && b.environmentBuildable()) kinds.add(t);
+            }
+            float speed = builder.type.buildSpeed * Vars.state.rules.buildSpeed(data.team);
+            if(speed <= 0f) continue;
+            //(what comes in to it as it is seen to spend)
+            float stock = 0f, pace = spendPace(data);
+            Object[] best = null;
+            float bestValue = 0f;
+            for(Turret t : kinds){
+                float cost = 0f;
+                for(ItemStack st : t.requirements) cost += st.amount;
+                if(cost <= 0f) continue;
+                expansion.ops.Force f = new expansion.ops.Force(data.team).addTurret(t, 1f);
+                //(the strongest against our units for what it costs)
+                float value = f.dpsAgainst(mineAll) * f.health / cost;
+                if(value > bestValue){
+                    bestValue = value;
+                    best = new Object[]{f, t.buildTime / 60f / speed, cost, stock, pace};
+                }
+            }
+            if(best != null) reinforce.put(data.team, best);
+        }
+    }
+
+    /**
+     * How many turrets a side's core unit can have up within so many seconds: as many as it has time to build and items
+     * for, the items as fast as it is seen to spend them. (What it holds is not seen: taken to hold what we do, on siege,
+     * where both start with three thousand, it was counted eight breaches by the time our tanks got there, and sixteen
+     * units stood at home all game where six had taken the core at five minutes.)
+     */
+    static int reinforcements(Object[] r, float seconds){
+        float build = (Float)r[1], cost = (Float)r[2], pace = (Float)r[4];
+        return (int)Math.min(seconds / Math.max(0.1f, build), pace * seconds / cost);
+    }
+
+    /** By team: when it was first weighed and what its buildings had cost then. */
+    final ObjectMap<Team, float[]> spentFirst = new ObjectMap<>();
+
+    /** Items a second a side has put into buildings since it was first weighed (what comes in to it, as it spends it). */
+    float spendPace(mindustry.game.Teams.TeamData data){
+        float spent = 0f;
+        for(Building b : data.buildings) for(ItemStack st : b.block.requirements) spent += st.amount;
+        float now = (float)(Vars.state.tick / 60.0);
+        float[] first = spentFirst.get(data.team);
+        if(first == null){
+            spentFirst.put(data.team, new float[]{now, spent});
+            return 0f;
+        }
+        return now - first[0] <= 0f ? 0f : Math.max(0f, spent - first[1]) / (now - first[0]);
+    }
+
+    /** A yard at work: what it makes, seconds a unit, the share of the next done, and its side. */
+    record Yard(UnitType type, float seconds, float done, Team team){
+    }
+
+    final Seq<Yard> yards = new Seq<>();
+
+    void yardsOf(){
+        yards.clear();
+        for(var data : Vars.state.teams.active) for(Building b : data.buildings){
+            if(!(b instanceof mindustry.world.blocks.units.UnitFactory.UnitFactoryBuild f) || f.currentPlan < 0 || f.efficiency <= 0f) continue;
+            var plans = ((mindustry.world.blocks.units.UnitFactory)b.block).plans;
+            if(f.currentPlan >= plans.size) continue;
+            var plan = plans.get(f.currentPlan);
+            if(plan.unit == null || !plan.unit.canAttack) continue;
+            float speed = Vars.state.rules.unitBuildSpeed(data.team);
+            yards.add(new Yard(plan.unit, plan.time / 60f / Math.max(0.01f, speed), f.fraction(), data.team));
+        }
+    }
+
+    /** What a side's yards at work turn out within so many seconds (they come out at home: they join what holds it). */
+    expansion.ops.Force madeBy(Team team, float seconds){
+        expansion.ops.Force f = new expansion.ops.Force(team);
+        for(Yard y : yards){
+            if(y.team != team) continue;
+            int n = (int)(y.done + seconds / Math.max(1f, y.seconds));
+            if(n > 0 && mindustry.entities.Units.canCreate(team, y.type)) f.add(y.type, n);
+        }
+        return f;
+    }
+
+    /** By team: what its core units' repair beams give back, together ({a tick's health, a tick's share of the whole in percent}). */
+    final ObjectMap<Team, float[]> healers = new ObjectMap<>();
+
+    void healersOf(){
+        healers.clear();
+        for(var data : Vars.state.teams.active) for(Unit u : data.units){
+            if(!Bait.coreUnit(u) || u.dead()) continue;
+            for(Weapon w : u.type.weapons) if(w instanceof mindustry.type.weapons.RepairBeamWeapon r && r.targetBuildings){
+                float[] h = healers.get(data.team);
+                if(h == null) healers.put(data.team, h = new float[2]);
+                h[0] += r.repairSpeed;
+                h[1] += r.fractionRepairSpeed;
+            }
+        }
+    }
+
+    /**
+     * A step of mending in the playout: each side's core units on what of its own is hurt and has not been hit for the
+     * game's five seconds (at a tenth of the rate before that, and the Brain's not at all), the most worth first, at the
+     * rate their beams give it.
+     */
+    void mend(float dt){
+        for(var e : healers){
+            Site best = null;
+            float most = 0f;
+            for(Site s : sites){
+                if(s.build == null || s.build.team != e.key || s.ph <= 0f || s.ph >= s.full || s.quiet < 5f) continue;
+                float w = (s.full - s.ph) * s.worth;
+                if(w > most){
+                    most = w;
+                    best = s;
+                }
+            }
+            if(best == null) continue;
+            float scale = Vars.state.rules.blockHealth(e.key);
+            best.ph = Math.min(best.full, best.ph + (e.value[0] * scale + e.value[1] * best.full / 100f) * 60f * dt);
+        }
+    }
+
+    /** A site's health once so many seconds more have passed with nothing firing on it: its side's core units mend it from the game's five seconds after the last hit. */
+    float mendedBy(Site s, float seconds){
+        float[] h = s.build == null ? null : healers.get(s.build.team);
+        float t = s.quiet + seconds - 5f;
+        if(h == null || t <= 0f || s.ph <= 0f) return s.ph;
+        float scale = Vars.state.rules.blockHealth(s.build.team);
+        return Math.min(s.full, s.ph + (h[0] * scale + h[1] * s.full / 100f) * 60f * t);
     }
 
     static boolean hits(Group g, boolean air){

@@ -20,6 +20,8 @@ public final class Machine{
     public int rotation;
     /** Whether its place is on ground not yet seen: it can only be begun once a unit has been there. */
     public boolean unseen;
+    /** For one not seen: whether a radar can be put down on ground seen within its reach. */
+    public boolean radarable = true;
     /** How long its job takes to build once laid out (the machine, its lines and nodes), in seconds; NaN until then. */
     public float buildSeconds = Float.NaN;
     /**
