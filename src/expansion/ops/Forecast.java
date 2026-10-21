@@ -36,7 +36,6 @@ public final class Forecast{
 
     final Team me, foe;
     final Building home;
-    final ObjectMap<UnitType, boolean[]> reach = new ObjectMap<>();
     /** The share of their own pace the other side's yards are counted at (see the constructor). */
     public final float use;
 
@@ -61,10 +60,10 @@ public final class Forecast{
         army = new Force[steps + 1];
         waves = new Force[steps + 1];
         for(int i = 0; i <= steps; i++){
-            at[i] = new Force();
-            all[i] = new Force();
-            army[i] = new Force();
-            waves[i] = new Force();
+            at[i] = new Force(foe);
+            all[i] = new Force(foe);
+            army[i] = new Force(foe);
+            waves[i] = new Force(foe);
         }
         home = me.core();
         if(home == null) return;
@@ -99,23 +98,34 @@ public final class Forecast{
         }
     }
 
-    /** Seconds a unit of a kind takes to walk from (x, y) to the core: the way as the crow flies, a third again for the bends. */
+    /** Seconds a unit of a kind takes to walk from (x, y) to the core: the way's length (Reach.distance) at its speed. */
     float walk(UnitType type, float x, float y){
         float tilesPerSecond = Math.max(0.1f, type.speed * 60f / Vars.tilesize);
-        float bend = type.flying ? 1f : 1.35f;
-        return Mathf.dst(x, y, home.x, home.y) / Vars.tilesize * bend / tilesPerSecond;
+        return way(type, x, y) / tilesPerSecond;
     }
+
+    /** Tiles along the way from (x, y) to our core for a kind (the least within three tiles of it); infinite if none. */
+    float way(UnitType type, float x, float y){
+        float[] d = ways.get(type);
+        if(d == null){
+            d = Reach.distance(type, foe, home.tileX(), home.tileY());
+            ways.put(type, d == null ? new float[0] : d);
+        }
+        if(d == null || d.length == 0) return Float.POSITIVE_INFINITY;
+        int tx = mindustry.core.World.toTile(x), ty = mindustry.core.World.toTile(y), w = Vars.world.width(), h = Vars.world.height();
+        float best = Float.POSITIVE_INFINITY;
+        for(int dx = -3; dx <= 3; dx++) for(int dy = -3; dy <= 3; dy++){
+            int nx = tx + dx, ny = ty + dy;
+            if(nx >= 0 && ny >= 0 && nx < w && ny < h) best = Math.min(best, d[nx + ny * w] + (float)Math.hypot(dx, dy));
+        }
+        return best;
+    }
+
+    final ObjectMap<UnitType, float[]> ways = new ObjectMap<>();
 
     /** Whether a unit of a kind standing at (x, y) can get to the core. */
     boolean reaches(UnitType type, float x, float y){
-        if(type.flying) return true;
-        boolean[] r = reach.get(type);
-        if(r == null){
-            r = Reach.region(type, foe, home.tileX(), home.tileY());
-            reach.put(type, r == null ? new boolean[0] : r);
-        }
-        if(r == null || r.length == 0) return false;
-        return Reach.near(r, mindustry.core.World.toTile(x), mindustry.core.World.toTile(y), 3);
+        return !Float.isInfinite(way(type, x, y));
     }
 
     void units(){
@@ -189,8 +199,9 @@ public final class Forecast{
                 if(g.type == null) continue;
                 int n = g.getSpawned(w - 1);
                 if(n <= 0) continue;
-                //a guardian has more health and hits harder: counted as two
-                float worth = g.effect == StatusEffects.boss ? 2f : 1f;
+                //a guardian has more health and hits harder (the boss effect: health and damage times its multipliers):
+                //counted by what that makes of its strength, damage times health
+                float worth = g.effect == StatusEffects.boss ? (float)Math.sqrt(StatusEffects.boss.healthMultiplier * StatusEffects.boss.damageMultiplier) : 1f;
                 for(Tile s : spawns){
                     if(g.spawn != -1 && g.spawn != s.pos()) continue;
                     float sx = s.worldx(), sy = s.worldy();

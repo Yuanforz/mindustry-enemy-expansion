@@ -39,7 +39,7 @@ public final class Tactics{
     /** Seconds the fights are played forward, and the step. */
     public static float horizon = Float.parseFloat(System.getProperty("army.tactics.horizon", "60")), dt = 2f;
     /** What a squad turning to another script costs, as a part of its health (-Darmy.tactics.switch). */
-    public static float switchCost = Float.parseFloat(System.getProperty("army.tactics.switch", "0.15"));
+    public static float switchCost = 0f;
     /** Tiles within which units are one squad; tiles from anything of ours within which a group of theirs is one to meet. */
     public static float squadRadius = 10f, nearOurs = 50f;
     /** How many of the other side's buildings a squad weighs attacking, the nearest it can get to. */
@@ -80,10 +80,15 @@ public final class Tactics{
             this.air = air;
         }
 
+        /** The group as a body (Force): its kinds and what it has left of their health, for the one combat model. */
+        final expansion.ops.Force force = new expansion.ops.Force();
+
         void add(Unit u){
             units.add(u);
-            dps += u.type.dpsEstimate;
-            health += u.health + u.shield;
+            force.team = u.team;
+            force.add(u);
+            dps = force.dps;
+            health = force.health;
             range = Math.max(range, u.range());
             speed = speed == 0f ? u.speed() : Math.min(speed, u.speed());
         }
@@ -113,8 +118,11 @@ public final class Tactics{
         float ph;
         /** Whether the map's tasks ask for it to be destroyed (worth more: the map opens up when it is). */
         boolean asked;
+        /** It as a body (Force): a turret with its ammunition, or a building that takes hits. */
+        final expansion.ops.Force force;
 
-        Site(Building build, boolean ours, float x, float y, float health, float dps, float range, float worth, boolean air, boolean ground){
+        Site(Building build, boolean ours, float x, float y, float health, float dps, float range, float worth, boolean air, boolean ground, expansion.ops.Force force){
+            this.force = force;
             this.build = build;
             this.ours = ours;
             this.x = x;
@@ -194,13 +202,14 @@ public final class Tactics{
         for(Group g : theirs) g.script = 0;
         float base = playout();
         for(int round = 0; round < 2; round++){
+            //(no price for turning a squad: the playout walks it from where it is, which is what turning costs)
             for(int i = 0; i < ours.size; i++){
                 Group s = ours.get(i);
                 Object best = target(s);
-                float bestScore = playout() - switchPenalty(s, best);
+                float bestScore = playout();
                 for(Object o : options.get(i)){
                     set(s, o);
-                    float v = playout() - switchPenalty(s, o);
+                    float v = playout();
                     if(v > bestScore + 1e-3f){
                         bestScore = v;
                         best = o;
@@ -208,10 +217,29 @@ public final class Tactics{
                 }
                 set(s, best);
             }
+            //together: every squad that can get to a target going for it at once (the square law makes a body of all of them
+            //far stronger than its parts one after another)
+            float now = playout();
+            Seq<Object> was = new Seq<>();
+            for(Group s : ours) was.add(target(s));
+            Seq<Site> together = new Seq<>();
+            for(Seq<Object> o : options) for(Object t : o) if(t instanceof Site site && !together.contains(site, true)) together.add(site);
+            for(Site site : together){
+                for(int i = 0; i < ours.size; i++) set(ours.get(i), options.get(i).contains(site, true) ? site : was.get(i));
+                float v = playout();
+                if(v > now + 1e-3f){
+                    now = v;
+                    was.clear();
+                    for(Group s : ours) was.add(target(s));
+                }
+            }
+            for(int i = 0; i < ours.size; i++) set(ours.get(i), was.get(i));
             for(Group g : theirs){
                 int best = g.script;
                 float worst = playout();
                 for(int k = 0; k < 3; k++){
+                    //(their going for our core only if they can get there)
+                    if(k == 1 && !theyReach(g)) continue;
                     g.script = k;
                     float v = playout();
                     if(v < worst - 1e-3f){
@@ -233,7 +261,7 @@ public final class Tactics{
                 why.append(String.format("\n      squad %d (%d units, %.0f dps, %.0f hp) at %d,%d:", i, s.units.size, s.dps, s.health, (int)(s.x / 8), (int)(s.y / 8)));
                 for(Object o : options.get(i)){
                     set(s, o);
-                    float v = playout() - switchPenalty(s, o);
+                    float v = playout();
                     String name = o instanceof Building b ? "hold" : o instanceof Group g ? "meet " + g.units.size + "@" + (int)(g.x / 8) + "," + (int)(g.y / 8) : o instanceof Site t ? (t.build == null ? "site" : t.build.block.name) + "@" + (int)(t.x / 8) + "," + (int)(t.y / 8) : String.valueOf(o);
                     why.append(String.format(" %s %.0f%s;", name, v, o == chosen ? "*" : ""));
                 }
@@ -291,12 +319,13 @@ public final class Tactics{
             for(Building b : data.buildings){
                 if(b instanceof Turret.TurretBuild t){
                     Turret type = (Turret)b.block;
-                    float dps = t.hasAmmo() ? Threat.gun(t, type).dps : 0f;
-                    sites.add(new Site(b, mine, b.x, b.y, b.health, dps, t.range(), worthTurret, type.targetAir, type.targetGround));
+                    //(a turret without ammunition fires nothing: a body that only takes hits)
+                    expansion.ops.Force f = t.hasAmmo() ? new expansion.ops.Force(data.team).addTurret(t) : new expansion.ops.Force(data.team).addBuilding(b);
+                    sites.add(new Site(b, mine, b.x, b.y, b.health, f.dps, t.range(), worthTurret, type.targetAir, type.targetGround, f));
                 }else if(b instanceof CoreBlock.CoreBuild){
-                    sites.add(new Site(b, mine, b.x, b.y, b.health, 0f, 0f, worthCore, false, false));
+                    sites.add(new Site(b, mine, b.x, b.y, b.health, 0f, 0f, worthCore, false, false, new expansion.ops.Force(data.team).addBuilding(b)));
                 }else if(b.block instanceof UnitFactory || b.block instanceof Reconstructor){
-                    sites.add(new Site(b, mine, b.x, b.y, b.health, 0f, 0f, worthYard, false, false));
+                    sites.add(new Site(b, mine, b.x, b.y, b.health, 0f, 0f, worthYard, false, false, new expansion.ops.Force(data.team).addBuilding(b)));
                 }else if(mine){
                     //(the rest of ours, in stretches of 12 tiles: what raiders take down)
                     int key = (b.tileX() / 12) + (b.tileY() / 12) * 1000;
@@ -313,7 +342,8 @@ public final class Tactics{
                 float x = s[0] / s[3], y = s[1] / s[3];
                 boolean threatened = false;
                 for(Group g : theirs) if(Mathf.dst(g.x, g.y, x, y) < nearOurs * Vars.tilesize) threatened = true;
-                if(threatened) sites.add(new Site(null, true, x, y, s[2], 0f, 0f, worthOther, false, false));
+                if(threatened) sites.add(new Site(null, true, x, y, s[2], 0f, 0f, worthOther, false, false,
+                    new expansion.ops.Force(data.team).add(mindustry.content.Blocks.berylliumWall, s[2] / Math.max(1f, mindustry.content.Blocks.berylliumWall.health))));
             }
         }
     }
@@ -345,7 +375,8 @@ public final class Tactics{
             reach.put(type, r == null ? new boolean[0] : r);
         }
         if(r == null || r.length == 0) return false;
-        return Reach.near(r, mindustry.core.World.toTile(x), mindustry.core.World.toTile(y), 4);
+        //(near enough to fire on it: ground it can stand on within its range of the place, as units fire across a gap)
+        return Reach.near(r, mindustry.core.World.toTile(x), mindustry.core.World.toTile(y), Math.max(2, (int)(s.range / Vars.tilesize) - 1));
     }
 
     void set(Group s, Object o){
@@ -403,6 +434,20 @@ public final class Tactics{
         return best;
     }
 
+    /** Whether a group of theirs can walk to our core (flyers anywhere). */
+    boolean theyReach(Group g){
+        if(g.air) return true;
+        UnitType type = g.units.first().type;
+        float[] d = Reach.distance(type, g.units.first().team, home.tileX(), home.tileY());
+        if(d == null || d.length == 0) return false;
+        int w = Vars.world.width(), h = Vars.world.height(), tx = mindustry.core.World.toTile(g.x), ty = mindustry.core.World.toTile(g.y);
+        for(int dx = -3; dx <= 3; dx++) for(int dy = -3; dy <= 3; dy++){
+            int x = tx + dx, y = ty + dy;
+            if(x >= 0 && y >= 0 && x < w && y < h && !Float.isInfinite(d[x + y * w])) return true;
+        }
+        return false;
+    }
+
     /** What turning a squad to this option costs: a part of the health of each unit that was on another script. */
     float switchPenalty(Group s, Object o){
         String k = key(o);
@@ -444,13 +489,14 @@ public final class Tactics{
             for(int i = 0; i < ours.size + theirs.size; i++){
                 Group g = i < ours.size ? ours.get(i) : theirs.get(i - ours.size);
                 if(g.ph <= 0f) continue;
-                float fire = g.dps * (g.ph / g.health) * dt;
+                //(what it has left fires: its fire falls as it loses members)
+                float left = g.ph / g.health * dt;
                 int tg = -1, ts = -1;
-                float best = Float.MAX_VALUE, reach2 = (g.range + 2f * Vars.tilesize) * (g.range + 2f * Vars.tilesize);
+                float best = Float.MAX_VALUE, reach2 = g.range * g.range;
                 for(int j = 0; j < ours.size + theirs.size; j++){
                     Group e = j < ours.size ? ours.get(j) : theirs.get(j - ours.size);
                     if(e.ours == g.ours || e.ph <= 0f) continue;
-                    if(e.air ? !hits(g, true) : !hits(g, false)) continue;
+                    if(g.force.dpsAgainst(e.force) <= 0f) continue;
                     float d = Mathf.dst2(g.px, g.py, e.px, e.py);
                     if(d < reach2 && d < best){
                         best = d;
@@ -466,8 +512,11 @@ public final class Tactics{
                         ts = k;
                     }
                 }
-                if(tg >= 0) hitG[tg] += fire;
-                else if(ts >= 0) hitS[ts] += fire * 0.25f; //(units hit buildings at a quarter of their estimate: measured on cores)
+                //(by the one combat model: armour against each hit, a unit on a building firing the share of the time measured)
+                if(tg >= 0){
+                    Group e = tg < ours.size ? ours.get(tg) : theirs.get(tg - ours.size);
+                    hitG[tg] += g.force.dpsAgainst(e.force) * left;
+                }else if(ts >= 0) hitS[ts] += g.force.dpsAgainst(sites.get(ts).force) * left;
                 else{
                     float[] to = goalOf(g);
                     float d = Mathf.dst(g.px, g.py, to[0], to[1]);
@@ -479,21 +528,24 @@ public final class Tactics{
                     }
                 }
             }
-            //turrets fire at the nearest enemy group in reach
+            //turrets fire at the nearest enemy group in reach, at full till they fall
             for(Site s : sites){
                 if(s.dps <= 0f || s.ph <= 0f) continue;
                 int tg = -1;
                 float best = Float.MAX_VALUE, r2 = s.range * s.range;
                 for(int j = 0; j < ours.size + theirs.size; j++){
                     Group e = j < ours.size ? ours.get(j) : theirs.get(j - ours.size);
-                    if(e.ours == s.ours || e.ph <= 0f || (e.air ? !s.hitsAir : !s.hitsGround)) continue;
+                    if(e.ours == s.ours || e.ph <= 0f || s.force.dpsAgainst(e.force) <= 0f) continue;
                     float d = Mathf.dst2(s.x, s.y, e.px, e.py);
                     if(d < r2 && d < best){
                         best = d;
                         tg = j;
                     }
                 }
-                if(tg >= 0) hitG[tg] += s.dps * (s.ph / s.health) * dt;
+                if(tg >= 0){
+                    Group e = tg < ours.size ? ours.get(tg) : theirs.get(tg - ours.size);
+                    hitG[tg] += s.force.dpsAgainst(e.force) * dt;
+                }
             }
             for(int j = 0; j < ours.size + theirs.size; j++){
                 Group e = j < ours.size ? ours.get(j) : theirs.get(j - ours.size);
@@ -505,36 +557,40 @@ public final class Tactics{
         for(Group g : ours) score -= (g.health - g.ph) * g.worth();
         for(Group g : theirs) score += (g.health - g.ph) * g.worth();
         for(Site s : sites) score += (s.ours ? -1f : 1f) * (s.health - s.ph) * s.worth;
-        //an attack still on its way at the end is valued at its leaf, as a search does past its horizon: the fight at its
-        //target by Lanchester's square law (its target's turrets and the groups of theirs about it), what it stands to win
-        //less what it stands to lose, discounted by the walk still left
+        //every attack not yet decided at the end (on its way, or begun) is valued at its leaf, as a search does past its
+        //horizon: the squads making for one target together, against its guard (the turrets that reach it and the groups of
+        //theirs about it) and itself, by the one combat model's square law; what it stands to win less what it stands to
+        //lose, discounted by the walk still left and the fight's own time, at the command layer's time preference
+        ObjectMap<Site, Seq<Group>> going = new ObjectMap<>();
         for(Group g : ours){
             if(g.script != 2 || g.ph <= 0f || g.foeSite.ph <= 0f) continue;
-            float dist = Mathf.dst(g.px, g.py, g.foeSite.x, g.foeSite.y);
-            if(dist < g.range + 2f * Vars.tilesize) continue;
-            float gDps = 0f, gHp = 0f, gWorth = 0f;
-            for(Site t : sites) if(!t.ours && t.ph > 0f && t.dps > 0f && Mathf.dst(t.x, t.y, g.foeSite.x, g.foeSite.y) < t.range + 4f * Vars.tilesize){
-                gDps += t.dps * t.ph / t.health;
-                gHp += t.ph;
-                gWorth += t.ph * t.worth;
+            if(!going.containsKey(g.foeSite)) going.put(g.foeSite, new Seq<>());
+            going.get(g.foeSite).add(g);
+        }
+        for(var e : going){
+            Site target = e.key;
+            expansion.ops.Force mine = new expansion.ops.Force(army.team);
+            float walk = 0f, myWorth = 0f;
+            for(Group g : e.value){
+                mine.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
+                float dist = Math.max(0f, Mathf.dst(g.px, g.py, target.x, target.y) - g.range);
+                walk = Math.max(walk, dist / Math.max(1f, g.speed * 60f));
+                myWorth += g.ph * g.worth();
             }
-            for(Group e : theirs) if(e.ph > 0f && Mathf.dst(e.px, e.py, g.foeSite.x, g.foeSite.y) < 20f * Vars.tilesize){
-                gDps += e.dps * e.ph / e.health;
-                gHp += e.ph;
-                gWorth += e.ph * e.worth();
+            expansion.ops.Force guard = target.force.copy().scl(target.ph / Math.max(1f, target.health));
+            float guardWorth = target.ph * target.worth;
+            for(Site t : sites) if(t != target && !t.ours && t.ph > 0f && t.dps > 0f && Mathf.dst(t.x, t.y, target.x, target.y) < t.range){
+                guard.add(t.force.copy().scl(t.ph / Math.max(1f, t.health)));
+                guardWorth += t.ph * t.worth;
             }
-            float ours = g.dps * (g.ph / g.health) * g.ph, guard = gDps * gHp;
-            float arrive = dist / Math.max(1f, g.speed * 60f);
-            float d = (float)Math.exp(-arrive / leafDiscount);
-            if(ours > guard){
-                //won: the guard and the target taken, ours left with the root of the difference
-                float lost = g.ph * (1f - (float)Math.sqrt(1f - guard / ours));
-                score += d * (gWorth + g.foeSite.ph * g.foeSite.worth - lost * g.worth());
-            }else{
-                //lost: all of it, and what it takes with it
-                float took = guard <= 0f ? 0f : gWorth * (1f - (float)Math.sqrt(1f - ours / guard));
-                score += d * (took - g.ph * g.worth());
+            for(Group g : theirs) if(g.ph > 0f && Mathf.dst(g.px, g.py, target.x, target.y) < g.range + target.range + 8f * Vars.tilesize){
+                guard.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
+                guardWorth += g.ph * g.worth();
             }
+            float[] fight = mine.fight(guard);
+            float d = (float)Math.exp(-(walk + (Float.isInfinite(fight[2]) ? 0f : fight[2])) / expansion.ops.Command.discount);
+            if(fight[0] > 0f) score += d * (guardWorth - myWorth * (1f - fight[1]));
+            else if(fight[0] < 0f) score += d * (guardWorth * (1f - fight[1]) - myWorth);
         }
         return score;
     }

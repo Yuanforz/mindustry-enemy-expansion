@@ -79,6 +79,73 @@ public final class Reach{
         return seen;
     }
 
+    /**
+     * How far, in tiles along the way, units of this kind of this team have to walk from (fx, fy) to every tile they can get
+     * to (the region's tiles, eight ways round, a diagonal step its length); infinite where they cannot; flying, as the crow
+     * flies. Null for a place off the map. (Dijkstra over the region.)
+     */
+    public static @Nullable float[] distance(UnitType type, Team team, int fx, int fy){
+        int w = Vars.world.width(), h = Vars.world.height();
+        if(fx < 0 || fy < 0 || fx >= w || fy >= h) return null;
+        //(the ground does not change in a game: worked out once a kind, a team and a start)
+        String key = type.name + "|" + team.id + "|" + fx + "," + fy;
+        synchronized(distances){
+            if(distancesWorld != Vars.world.tiles){
+                distances.clear();
+                distancesWorld = Vars.world.tiles;
+            }
+            float[] had = distances.get(key);
+            if(had != null) return had;
+        }
+        float[] out = distanceNow(type, team, fx, fy);
+        synchronized(distances){
+            distances.put(key, out);
+        }
+        return out;
+    }
+
+    static final java.util.HashMap<String, float[]> distances = new java.util.HashMap<>();
+    static Object distancesWorld;
+
+    static float[] distanceNow(UnitType type, Team team, int fx, int fy){
+        int w = Vars.world.width(), h = Vars.world.height();
+        float[] dist = new float[w * h];
+        if(type.flying){
+            for(int y = 0; y < h; y++) for(int x = 0; x < w; x++) dist[x + y * w] = (float)Math.hypot(x - fx, y - fy);
+            return dist;
+        }
+        boolean[] region = region(type, team, fx, fy);
+        java.util.Arrays.fill(dist, Float.POSITIVE_INFINITY);
+        if(region == null) return dist;
+        int start = fx + fy * w;
+        dist[start] = 0f;
+        java.util.PriorityQueue<long[]> queue = new java.util.PriorityQueue<>((a, b) -> Long.compare(a[0], b[0]));
+        queue.add(new long[]{0L, start});
+        float diag = (float)Math.sqrt(2);
+        while(!queue.isEmpty()){
+            long[] top = queue.poll();
+            int c = (int)top[1];
+            float dc = top[0] / 1000f;
+            if(dc > dist[c] + 1e-3f) continue;
+            int x = c % w, y = c / w;
+            for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++){
+                if(dx == 0 && dy == 0) continue;
+                int nx = x + dx, ny = y + dy;
+                if(nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                int n = nx + ny * w;
+                if(!region[n]) continue;
+                //(a diagonal step only where both tiles beside it can be walked: no cutting a corner of rock)
+                if(dx != 0 && dy != 0 && (!region[nx + y * w] || !region[x + ny * w])) continue;
+                float nd = dc + (dx != 0 && dy != 0 ? diag : 1f);
+                if(nd < dist[n] - 1e-4f){
+                    dist[n] = nd;
+                    queue.add(new long[]{(long)(nd * 1000f), n});
+                }
+            }
+        }
+        return dist;
+    }
+
     /** Whether units of this kind of ours can get to any core of the other side's. */
     public static boolean toFoe(UnitType type, Team team, Team foe){
         var home = team.core();
