@@ -434,6 +434,12 @@ public final class Tactics{
         return best;
     }
 
+    /** The target if it is the last core of its side (taking it ends the game), else null. */
+    Building foeCore(Site t){
+        if(!(t.build instanceof CoreBlock.CoreBuild c)) return null;
+        return c.team.cores().size <= 1 ? c : null;
+    }
+
     /** Whether a group of theirs can walk to our core (flyers anywhere). */
     boolean theyReach(Group g){
         if(g.air) return true;
@@ -567,6 +573,32 @@ public final class Tactics{
             if(!going.containsKey(g.foeSite)) going.put(g.foeSite, new Seq<>());
             going.get(g.foeSite).add(g);
         }
+        //(what a side has in all, by worth: what it loses with its core, the game)
+        float ourStake = 0f, theirStake = 0f;
+        for(Site t : sites) if(t.ph > 0f){
+            if(t.ours) ourStake += t.ph * t.worth;
+            else theirStake += t.ph * t.worth;
+        }
+        for(Group g : ours) ourStake += g.ph * g.worth();
+        for(Group g : theirs) theirStake += g.ph * g.worth();
+        //the fight at our home at the leaf, as at theirs: what of theirs makes for our core, against what of ours holds it
+        //(the squads holding, our turrets about the core, the core); if it falls, so does all we have
+        {
+            expansion.ops.Force coming = new expansion.ops.Force(), holding = new expansion.ops.Force(army.team);
+            float walk = 0f;
+            for(Group g : theirs) if(g.ph > 0f && g.script == 1){
+                coming.team = g.force.team;
+                coming.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
+                walk = Math.max(walk, Math.max(0f, Mathf.dst(g.px, g.py, home.x, home.y) - g.range) / Math.max(1f, g.speed * 60f));
+            }
+            if(!coming.empty()){
+                for(Group g : ours) if(g.ph > 0f && (g.script == 0 || g.script == 1 && g.foeGroup != null && g.foeGroup.script == 1)) holding.add(g.force.copy().scl(g.ph / Math.max(1f, g.health)));
+                for(Site t : sites) if(t.ours && t.ph > 0f && (t.build == home || t.dps > 0f && Mathf.dst(t.x, t.y, home.x, home.y) < t.range + nearOurs * Vars.tilesize / 2f)) holding.add(t.force.copy().scl(t.ph / Math.max(1f, t.health)));
+                float[] fight = coming.fight(holding);
+                float d = (float)Math.exp(-(walk + (Float.isInfinite(fight[2]) ? 0f : fight[2])) / expansion.ops.Command.discount);
+                if(fight[0] > 0f) score -= d * ourStake;
+            }
+        }
         for(var e : going){
             Site target = e.key;
             expansion.ops.Force mine = new expansion.ops.Force(army.team);
@@ -578,7 +610,8 @@ public final class Tactics{
                 myWorth += g.ph * g.worth();
             }
             expansion.ops.Force guard = target.force.copy().scl(target.ph / Math.max(1f, target.health));
-            float guardWorth = target.ph * target.worth;
+            //(their core taken is the game won: all they have)
+            float guardWorth = target.build instanceof CoreBlock.CoreBuild && target.build == foeCore(target) ? theirStake : target.ph * target.worth;
             for(Site t : sites) if(t != target && !t.ours && t.ph > 0f && t.dps > 0f && Mathf.dst(t.x, t.y, target.x, target.y) < t.range){
                 guard.add(t.force.copy().scl(t.ph / Math.max(1f, t.health)));
                 guardWorth += t.ph * t.worth;
