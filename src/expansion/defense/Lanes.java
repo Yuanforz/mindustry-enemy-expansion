@@ -14,7 +14,7 @@ public final class Lanes{
         public final int source;
         public final Foe.Move move;
         public final int[] tiles;
-        /** Path length from each tile to the target, in tiles. */
+        /** Path length from each tile to the target, in tiles (along the way the game's path costs choose). */
         public final float[] toTarget;
 
         Lane(int source, Foe.Move move, int[] tiles, float[] toTarget){
@@ -55,7 +55,9 @@ public final class Lanes{
     /** Steps on what is already built (ours) cost more, as the game's own path costs make units go round where they can. */
     float stepCost(Foe.Move move, int i){
         if(move == Foe.Move.air || move == Foe.Move.legs) return 0f;
-        return ((t.flags[i] & Terrain.built) != 0 ? 6f : 0f) + (extra != null ? extra[i] : 0f);
+        //(the game's own charge for the tile where read: by rock and liquid, through what stands, on what hurts)
+        float own = t.groundCost != null ? t.groundCost[i] : ((t.flags[i] & Terrain.built) != 0 ? 6f : 0f);
+        return own + (extra != null ? extra[i] : 0f);
     }
 
     /** Path cost the game gives one tile of a wall of this much health. */
@@ -150,9 +152,11 @@ public final class Lanes{
         for(int at = start; at != -1 && path.size() < t.w * t.h; at = parent[at]) path.add(at);
         int[] tiles = new int[path.size()];
         float[] to = new float[path.size()];
-        for(int i = 0; i < tiles.length; i++){
-            tiles[i] = path.get(i);
-            to[i] = d[tiles[i]];
+        for(int i = 0; i < tiles.length; i++) tiles[i] = path.get(i);
+        //(the way chosen by the game's costs; how far along it, in tiles, for where things stand on it and how long it takes)
+        for(int i = tiles.length - 2; i >= 0; i--){
+            int a = tiles[i], b = tiles[i + 1];
+            to[i] = to[i + 1] + (float)Math.hypot(a % t.w - b % t.w, a / t.w - b / t.w);
         }
         return new Lane(source, move, tiles, to);
     }

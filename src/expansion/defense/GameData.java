@@ -51,6 +51,15 @@ public final class GameData{
             if(tile.build != null && tile.build.team != us) t.set(x, y, Terrain.enemy);
             if(!Vars.world.isInMapArea(x, y)) t.set(x, y, Terrain.noBuild);
         }
+        //(the game's own costs for a ground unit of the side that attacks: the way it walks, not the shortest)
+        Team attacker = null;
+        for(Teams.TeamData data : Vars.state.teams.active) if(data.team != us && data.team != Team.derelict && (attacker == null || data.cores.size > 0)) attacker = data.team;
+        if(attacker == null) attacker = Vars.state.rules.waveTeam;
+        t.groundCost = new float[w * h];
+        for(int x = 0; x < w; x++) for(int y = 0; y < h; y++){
+            int c = mindustry.ai.ControlPathfinder.costGround.getCost(attacker.id, Vars.pathfinder.get(x, y));
+            t.groundCost[x + y * w] = c < 0 ? 0f : Math.max(0f, c - 1f);
+        }
         for(Building core : otherCores){
             int r = (int)Math.ceil(radius / Vars.tilesize);
             for(int x = core.tileX() - r; x <= core.tileX() + r; x++) for(int y = core.tileY() - r; y <= core.tileY() + r; y++){

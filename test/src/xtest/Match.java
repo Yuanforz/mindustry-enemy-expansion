@@ -334,7 +334,7 @@ public class Match{
             //worse: 5 games won of 30 against 10 of 30 weighing again only once a stage is up or every job of it begun)
             boolean periodic = command != null && hand != null && currentSpec != null && paused == null && f % 60 == 0 && f - lastDecisionAt >= 60 * 60 && "periodic".equals(System.getProperty("match.replan"));
             //(and, with it, a stage whose every job is begun or put off: what is put off, if it is still worth it, is planned again)
-            boolean settled = hand != null && hand.next >= hand.order.size() && hand.job == null;
+            boolean settled = hand != null && hand.stuck();
             boolean over = paused == null && hand != null && (hand.orderDone() || periodic || settled || command == null && f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));
             //what the map's tasks ask for, before the next of our own stages (in the campaign, once a stage of ours is up): a
             //stage the same task asked for is not asked again for four minutes

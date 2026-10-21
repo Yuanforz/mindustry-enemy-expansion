@@ -604,19 +604,21 @@ public final class Planner{
             Gun gun = o.module.gun();
             if(!fits || gun == null) continue;
             mindustry.world.Block b = mindustry.Vars.content.block(gun.name);
-            //(its damage a second with the best of its ammunition: the gun's own is that of what it fires, kept by ammunition)
+            //(its damage a second with the ammunition this configuration feeds it, as it fires here, wet or dry)
             float gunDps = gun.dps;
-            for(Gun.Ammo a : gun.ammo) gunDps = Math.max(gunDps, a.dps);
+            for(Gun.Ammo a : gun.ammo) if(a.what.equals(o.config.ammo)) gunDps = gun.dps(a, o.config.wet);
             float hp = (b == null ? 0f : b.health) * o.module.guns(), dps = gunDps * o.module.guns();
             float value = dps * hp / Math.max(1f, o.cost * o.cost);
             ranked.add(new Object[]{o, value});
         }
         ranked.sort((a, b) -> Float.compare((Float)b[1], (Float)a[1]));
+        //(kinds by the turret: two modules of one gun are one kind)
         Set<String> kinds = new HashSet<>();
         int rank = 0;
         for(Object[] r : ranked){
             Choice o = (Choice)r[0];
-            if(!kinds.add(o.module.name)) continue;
+            Gun g0 = o.module.gun();
+            if(!kinds.add(g0 == null ? o.module.name : g0.name)) continue;
             if(rank++ == ask.fixedRank){
                 best = o;
                 bestValue = (Float)r[1];
@@ -656,6 +658,8 @@ public final class Planner{
         Gun gun = o.module.gun();
         Foe foe = Foe.get(unit);
         if(gun == null || foe == null) return false;
+        //(a gun that cannot hit the way it moves suits it not at all: an air-only disperse against tanks)
+        if(!gun.hits(foe.move)) return false;
         if(sizingAir && !gun.roles.contains(Gun.Role.antiAir)) return false;
         boolean heavyOnly = gun.roles.contains(Gun.Role.heavy) && !gun.roles.contains(Gun.Role.line) && !gun.roles.contains(Gun.Role.antiAir);
         return !heavyOnly || foe.tier >= 3;

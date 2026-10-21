@@ -803,10 +803,11 @@ public final class Plan{
         boolean paying = false;
         for(Machine m : payers) if(rest.contains(m)) paying = true;
         if(paying) order.addAll(planner.plainOrder(rest));
-        //the first module before the wall lines when the defence is one that pays for itself (wanted now: the walls only hold
-        //the other side where turrets fire, and with nothing firing they are one more thing to wait for; on marsh both
-        //modules came last, after the makers and the walls, and nothing fired by the fifth minute)
-        if(paying){
+        //the first module before the wall lines (the walls only hold the other side where turrets fire, and with nothing
+        //firing they are one more thing to wait for; on marsh both modules came last, after the makers and the walls, and
+        //nothing fired by the fifth minute; and any defence, not only one that pays for itself: the first turret waited on
+        //every site's walls)
+        {
             List<Machine> first = new ArrayList<>(), walls = new ArrayList<>(), others = new ArrayList<>();
             for(Machine g : guard){
                 if(g.recipe.name.startsWith("defence:walls")) walls.add(g);

@@ -20,6 +20,11 @@ public final class Terrain{
 
     public final int w, h;
     public final byte[] flags;
+    /**
+     * What the game's own path finder charges the side that attacks for a step on each tile, over the step itself, on the
+     * ground (near rock, near liquid, on damaging floor, through what stands): the way it really walks. Null where not read.
+     */
+    public float[] groundCost;
 
     public Terrain(int w, int h){
         this.w = w;

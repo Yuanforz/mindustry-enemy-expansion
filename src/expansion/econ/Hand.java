@@ -60,6 +60,19 @@ public final class Hand extends mindustry.entities.units.AIController{
         return next >= order.size() && skipped.isEmpty() && pending == null && (job == null || repairing);
     }
 
+    /**
+     * Whether nothing more can come of the order: every step begun or put off, and every one put off short of something
+     * nothing that stands brings in (a stage that waits on what is coming is not over).
+     */
+    public boolean stuck(){
+        if(next < order.size() || job != null) return false;
+        for(int i = 0; i < skipped.size; i++){
+            Machine m = order.get(skipped.get(i));
+            if(affordable(m.cost) || notComing(m.cost) == null) return false;
+        }
+        return true;
+    }
+
     /** Whether everything of the order is up (nothing begun and nothing put off is left). */
     public boolean done(){
         return next >= order.size() && job == null && skipped.isEmpty() && pending == null;
@@ -694,20 +707,8 @@ public final class Hand extends mindustry.entities.units.AIController{
                 if(r == null) continue;
                 for(int k = 0; k < works.cat.size(); k++) if(r.out[k] > 1e-4f || r.perFactor[k] > 0f && madeBy(b, k)) coming.add(k);
             }
-            //(and what the order's own machines will make once what they take comes: those not put off, built or to be,
-            //whose every item taken comes in, over and over till nothing more is added; a furnace being built, its crusher
-            //at work, brings silicon in)
-            for(boolean more = true; more; ){
-                more = false;
-                for(int i = 0; i < order.size(); i++){
-                    if(skipped.contains(i)) continue;
-                    Recipe r = order.get(i).recipe;
-                    boolean fed = true;
-                    for(int k = 0; k < works.cat.size() && fed; k++) if(r.in[k] > 0f && works.cat.get(k).kind == Res.Kind.item && !coming.contains(k)) fed = false;
-                    if(!fed) continue;
-                    for(int k = 0; k < works.cat.size(); k++) if(order.get(i).out(k) > 1e-4f && coming.add(k)) more = true;
-                }
-            }
+            //(only what is at work: a maker of the order's yet to be built, behind the step waiting on it, never comes; one put
+            //off now is begun again once it can be paid for, and the stage is over only when nothing comes for any of them)
         }
         for(int k = 0; k < need.length; k++){
             if(need[k] <= 0) continue;
