@@ -224,6 +224,22 @@ public final class Tactics{
         }
         float end = playout();
         decisions++;
+        //(-Darmy.tactics.debug: each squad's options as they score with the rest as chosen)
+        StringBuilder why = new StringBuilder();
+        if(Boolean.getBoolean("army.tactics.debug")){
+            for(int i = 0; i < ours.size; i++){
+                Group s = ours.get(i);
+                Object chosen = target(s);
+                why.append(String.format("\n      squad %d (%d units, %.0f dps, %.0f hp) at %d,%d:", i, s.units.size, s.dps, s.health, (int)(s.x / 8), (int)(s.y / 8)));
+                for(Object o : options.get(i)){
+                    set(s, o);
+                    float v = playout() - switchPenalty(s, o);
+                    String name = o instanceof Building b ? "hold" : o instanceof Group g ? "meet " + g.units.size + "@" + (int)(g.x / 8) + "," + (int)(g.y / 8) : o instanceof Site t ? (t.build == null ? "site" : t.build.block.name) + "@" + (int)(t.x / 8) + "," + (int)(t.y / 8) : String.valueOf(o);
+                    why.append(String.format(" %s %.0f%s;", name, v, o == chosen ? "*" : ""));
+                }
+                set(s, chosen);
+            }
+        }
         //the orders
         int holding = 0, meeting = 0, attacking = 0;
         for(Group s : ours){
@@ -233,7 +249,7 @@ public final class Tactics{
             else attacking++;
             order(s, t);
         }
-        state = String.format("%d squads (%d hold, %d meet, %d attack) against %d groups (%d near ours); playout %.0f -> %.0f; turned %d", ours.size, holding, meeting, attacking, theirs.size, near.size, base, end, turned);
+        state = String.format("%d squads (%d hold, %d meet, %d attack) against %d groups (%d near ours); playout %.0f -> %.0f; turned %d", ours.size, holding, meeting, attacking, theirs.size, near.size, base, end, turned) + why;
     }
 
     /** Units into squads: those within the radius of one another and moving alike. */

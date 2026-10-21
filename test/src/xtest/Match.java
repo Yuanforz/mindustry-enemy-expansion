@@ -329,8 +329,9 @@ public class Match{
             //(a stage is over once its own order is up, whatever it is mending meanwhile: under raids that never ends)
             //(with the command layer: a stage of units is weighed again at each decision, going on with it one of the ways; a
             //receding horizon, re-planned at its own pace)
-            //(-Dmatch.replan=settled: weighed again only once a stage is up or all begun, for comparing)
-            boolean periodic = command != null && hand != null && currentSpec != null && paused == null && f % 60 == 0 && f - lastDecisionAt >= 60 * 60 && !"settled".equals(System.getProperty("match.replan"));
+            //(-Dmatch.replan=periodic: weighed again every minute besides, going on with the stage one of the ways; measured
+            //worse: 5 games won of 30 against 10 of 30 weighing again only once a stage is up or every job of it begun)
+            boolean periodic = command != null && hand != null && currentSpec != null && paused == null && f % 60 == 0 && f - lastDecisionAt >= 60 * 60 && "periodic".equals(System.getProperty("match.replan"));
             //(and, with it, a stage whose every job is begun or put off: what is put off, if it is still worth it, is planned again)
             boolean settled = hand != null && hand.next >= hand.order.size() && hand.job == null;
             boolean over = paused == null && hand != null && (hand.orderDone() || periodic || settled || command == null && f - stageFrom > limitNow && (makerUp(hand) || f - stageFrom > limitNow * 3));

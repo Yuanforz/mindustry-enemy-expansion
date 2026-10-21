@@ -201,6 +201,9 @@ public final class Command{
 
     /** When the other side was first weighed against, and what its buildings cost in all then. */
     float foeFirstSeen = -1f, foeFirstSpend;
+    /** Their base's guard when first weighed against, and since when; how fast it grows (a second). */
+    Force foeGuardFirst, guardGrowth = new Force();
+    float foeGuardSince;
 
     /** What a side's buildings cost in all (items of every kind). */
     static float spent(Team team){
@@ -370,6 +373,16 @@ public final class Command{
         for(Forecast fc : List.of(forecast)) for(float lag : lags) for(boolean m : builds ? new boolean[]{false, true} : new boolean[]{false}) for(float s : sendAts) scenarios.add(new Scenario(lag, m, s, fc));
         log.append(String.format("  command: the other side builds at %.0f%% of our fastest pace (%.1f items a second since %s, ours %.1f)%s\n", pace * 100f, seen - foeFirstSeen <= 0f ? 0f : Math.max(0f, spent - foeFirstSpend) / (seen - foeFirstSeen), Plan.time(foeFirstSeen), ours, builds ? "" : ": no mirror"));
         Force foeGuard = foeGuard();
+        //(and how fast it has grown: what its loaded turrets about its cores gained a second since it was first weighed
+        //against; a base seen with no turrets at the landing grew three breaches by the time the push the model counted on
+        //got there, and the army that was to take it stood at home all game)
+        if(foeGuardFirst == null){
+            foeGuardFirst = foeGuard.copy();
+            foeGuardSince = seen;
+        }
+        float span = seen - foeGuardSince;
+        guardGrowth = span <= 0f ? new Force() : new Force(Math.max(0f, foeGuard.dps - foeGuardFirst.dps) / span, Math.max(0f, foeGuard.health - foeGuardFirst.health) / span, 0);
+        if(guardGrowth.dps > 0f) log.append(String.format("  command: their base's guard grows %.1f dps and %.0f health a minute\n", guardGrowth.dps * 60f, guardGrowth.health * 60f));
         //(the mirror, the defences and each stage's units under each lag: worked out once)
         //(what our fastest stage adds over what our standing makers turn out anyway: what the other side could add, as fast;
         //its own standing yards are in the forecast already)
@@ -758,7 +771,7 @@ public final class Command{
         boolean[] up = new boolean[times.size()];
         Force theirs = new Force(), siege = null, away = null, guard = foeGuard.copy();
         float awayAt = 0f, walk = walkTime(), foeCoreHp = 0f;
-        boolean engaged = false;
+        boolean engaged = false, guardTaken = false;
         //(only the cores our units can get to: on a sector whose map opens as its tasks are done, those beyond the edge are
         //not taken, and taking the rest is a part won, not the whole)
         int cores = 0, reachable = 0;
@@ -808,6 +821,12 @@ public final class Command{
                     }
                 }
             }
+            //(the guard of their base as it grows, at the pace it has been seen to: what a push meets once it gets there)
+            if(!guardTaken){
+                guard = foeGuard.copy();
+                guard.dps += guardGrowth.dps * (t + walk);
+                guard.health += guardGrowth.health * (t + walk);
+            }
             //ours out, with nothing at our door
             if(away == null && siege == null && reaches && units.count > 0 && units.strength() >= posture.pushEdge * Math.max(1f, theirs.copy().add(guard).strength())){
                 away = units;
@@ -825,7 +844,10 @@ public final class Command{
                     }else{
                         away.scl((float)Math.sqrt(1f - against.strength() / Math.max(1f, away.strength())));
                         theirs = new Force();
-                        if(!engaged) guard = new Force();
+                        if(!engaged){
+                            guard = new Force();
+                            guardTaken = true;
+                        }
                     }
                     engaged = true;
                 }
