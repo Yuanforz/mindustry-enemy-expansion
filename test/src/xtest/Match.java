@@ -927,6 +927,17 @@ public class Match{
             }
             ask.sources.add(ground);
         }
+        //(nothing can get here now: what will once the map opens, from the cores beyond its open area; a sector whose map
+        //opens on a turret built, as onset's, otherwise had no defence to plan, the turret never went up, and the map never
+        //opened in ninety minutes)
+        if(ask.sources.isEmpty()) for(CoreBlock.CoreBuild c : foe.cores()){
+            expansion.defense.Planner.Source ground = new expansion.defense.Planner.Source(c.tileX(), c.tileY(), "Brain core " + c.tileX() + "," + c.tileY() + " (once the map opens)");
+            for(var e : units.entrySet()){
+                ground.units.put(e.getKey(), e.getValue());
+                ground.moves.add(expansion.defense.Foe.get(e.getKey()).move);
+            }
+            ask.sources.add(ground);
+        }
         if(ask.sources.isEmpty()) return null;
         long t0 = System.nanoTime();
         expansion.defense.Planner.Plan plan = new expansion.defense.Planner(ask).plan();

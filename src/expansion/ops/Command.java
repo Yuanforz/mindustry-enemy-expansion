@@ -478,10 +478,13 @@ public final class Command{
         for(Candidate c : weighed) if(c.keep) keep = c;
         Candidate best = weighed.get(0);
         if(keep != null && best != keep){
-            boolean dominates = true;
-            for(int i = 0; i < best.scores.length; i++) if(best.scores[i] < keep.scores[i]) dominates = false;
-            if(!dominates){
-                log.append("  command: going on with the stage: ").append(best.stage()).append(" is better on the whole but worse in some scenario\n");
+            boolean dominates = true, better = false;
+            for(int i = 0; i < best.scores.length; i++){
+                if(best.scores[i] < keep.scores[i]) dominates = false;
+                if(best.scores[i] > keep.scores[i]) better = true;
+            }
+            if(!dominates || !better){
+                log.append("  command: going on with the stage: ").append(best.stage()).append(!better ? " is no better in any scenario\n" : " is better on the whole but worse in some scenario\n");
                 return keep;
             }
         }
