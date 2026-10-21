@@ -202,6 +202,8 @@ public final class Layout{
         }
         //3. the nets
         Router router = new Router(g, cat, a.at, allowed, log);
+        router.buildOrder = new HashMap<>();
+        for(int i = 0; i < order.size(); i++) router.buildOrder.put(order.get(i), i);
         router.order = order;
         router.ports.putAll(a.ports);
         //each port's lane is for its own thing's line only

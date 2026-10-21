@@ -249,9 +249,13 @@ final class Router{
         }
         if(!clean) log.append("router: some tiles still wanted by two nets after ").append(iterations).append(" rounds; those nets are laid again one by one\n");
         //on to the grid, in turn; a net that would now overlap or break a rule against what is there is laid again on its own
+        //(in the order they go up: the lines of what is built first are on the ground when the later are laid, as in the
+        //game; by resource the beryllium lines, the longest and first wanted, came after graphite, sand and silicon and lost)
         for(int i = 0; i < use.length; i++) use[i] = 0;
         int failed = 0;
-        for(Net n : nets){
+        List<Net> inOrder = new ArrayList<>(nets);
+        if(buildOrder != null) inOrder.sort(Comparator.comparingInt(this::firstBuilt));
+        for(Net n : inOrder){
             if(!commit(n)){
                 log.append("router: ").append(cat.get(n.res).name).append(" laid again on its own: ").append(refusal).append('\n');
                 n.tiles.clear();
@@ -271,6 +275,15 @@ final class Router{
     }
 
     String refusal = "";
+    /** Where each machine stands in the order it is built (set by the layout), for the order nets are put down in. */
+    Map<Machine, Integer> buildOrder;
+
+    int firstBuilt(Net n){
+        int first = Integer.MAX_VALUE;
+        for(Machine m : n.from) first = Math.min(first, buildOrder.getOrDefault(m, Integer.MAX_VALUE));
+        for(Machine m : n.to) first = Math.min(first, buildOrder.getOrDefault(m, Integer.MAX_VALUE));
+        return first;
+    }
 
     boolean contested(Net n){
         for(var it = n.tiles.iterator(); it.hasNext;) if(use[it.next()] > 1) return true;
