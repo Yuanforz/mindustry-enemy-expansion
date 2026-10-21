@@ -1,0 +1,34 @@
+# The same furnace, its graphite line led along its top edge: the furnace is expected to push silicon into that line.
+map
+................
+................
+................
+................
+................
+................
+................
+................
+................
+end
+place
+item-source 1 6 0 graphite
+duct 2 6 0
+duct 3 6 0
+duct 4 6 0
+duct 5 6 0
+duct 6 6 0
+duct 7 6 0
+duct 8 6 3
+duct 8 5 2
+item-source 1 3 0 sand
+duct 2 3 0
+duct 3 3 0
+duct 4 3 0
+silicon-arc-furnace 6 4 0
+power-source 6 2 0
+duct 8 4 0
+duct 9 4 0
+duct 10 4 0
+core-bastion 12 4 0
+end
+seconds 60

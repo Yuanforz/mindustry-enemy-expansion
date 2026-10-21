@@ -1,0 +1,24 @@
+# How many items a second one duct line carries: a source, ten ducts, the core.
+map
+................
+................
+................
+................
+................
+................
+end
+place
+item-source 0 2 0 beryllium
+duct 1 2 0
+duct 2 2 0
+duct 3 2 0
+duct 4 2 0
+duct 5 2 0
+duct 6 2 0
+duct 7 2 0
+duct 8 2 0
+duct 9 2 0
+duct 10 2 0
+core-bastion 12 2 0
+end
+seconds 30
