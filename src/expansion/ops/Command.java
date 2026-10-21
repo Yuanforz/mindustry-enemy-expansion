@@ -164,6 +164,8 @@ public final class Command{
     public Forecast forecast;
     public final StringBuilder log = new StringBuilder();
     long dpAt;
+    /** What was seen of the other side's yards at earlier weighings (see Forecast#idle). */
+    final IntMap<float[]> yardsSeen = new IntMap<>();
     /** When the other side was first weighed against, and how many buildings it had then. */
     float foeFirstSeen = -1f;
     int foeFirstCount;
@@ -187,7 +189,7 @@ public final class Command{
         long t0 = System.nanoTime();
         log.setLength(0);
         weighed.clear();
-        forecast = new Forecast(me, foe, horizon, step);
+        forecast = new Forecast(me, foe, horizon, step, yardsSeen);
         reachCache.clear();
         nowReaching = mobileNow(true);
         nowStaying = mobileNow(false);

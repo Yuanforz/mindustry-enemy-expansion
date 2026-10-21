@@ -37,8 +37,33 @@ public final class Forecast{
     final Team me, foe;
     final Building home;
     final ObjectMap<UnitType, boolean[]> reach = new ObjectMap<>();
+    final IntMap<float[]> yardsSeen;
+
+    /**
+     * Whether a yard is to be counted as idle: not working now, and seen so for a minute (its progress not moved since).
+     * Not working at one moment is not idle: on lake the sector's ship fabricator had not begun at the landing, the
+     * forecast counted nothing coming, and its eludes took the core at four minutes.
+     */
+    boolean idle(Building b, float fraction, float efficiency){
+        float now = (float)(Vars.state.tick / 60.0);
+        float[] seen = yardsSeen.get(b.pos());
+        if(seen == null || Math.abs(seen[1] - fraction) > 1e-4f){
+            yardsSeen.put(b.pos(), new float[]{now, fraction});
+            return false;
+        }
+        return efficiency <= 0.01f && now - seen[0] >= 60f;
+    }
 
     public Forecast(Team me, Team foe, float horizon, float step){
+        this(me, foe, horizon, step, new IntMap<>());
+    }
+
+    /**
+     * With what was seen of the other side's yards at earlier weighings (by place: {when its progress last moved, its
+     * progress then}), kept by the caller: a yard is idle only once it has been seen not to move for a minute.
+     */
+    public Forecast(Team me, Team foe, float horizon, float step, IntMap<float[]> yardsSeen){
+        this.yardsSeen = yardsSeen;
         this.me = me;
         this.foe = foe;
         this.step = step;
@@ -134,9 +159,10 @@ public final class Forecast{
             if(b instanceof UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0){
                 UnitFactory block = (UnitFactory)b.block;
                 var plan = block.plans.get(yard.currentPlan);
-                //a factory that is not making anything (starved, unpowered) makes nothing; one that is, at its rate
-                if(yard.efficiency <= 0.01f && !b.cheating()) continue;
-                float time = plan.time / Math.max(0.01f, b.cheating() ? 1f : Math.min(1f, yard.efficiency)) / 60f;
+                //a factory seen making nothing for a minute (starved, unpowered) makes nothing; one that is, at its rate (one not
+                //working at this moment but not seen idle for long, at its full rate)
+                if(!b.cheating() && idle(b, yard.fraction(), yard.efficiency)) continue;
+                float time = plan.time / Math.max(0.01f, b.cheating() || yard.efficiency <= 0.01f ? 1f : Math.min(1f, yard.efficiency)) / 60f;
                 float left = (1f - yard.fraction()) * time;
                 for(float t = left; t <= steps * step && made < room; t += time){
                     put(plan.unit, 1f, t, b.x, b.y);
@@ -144,7 +170,7 @@ public final class Forecast{
                 }
                 kinds.increment(plan.unit.name);
             }else if(b instanceof Reconstructor.ReconstructorBuild re && b.block instanceof Reconstructor block && block.upgrades.size > 0){
-                if(re.efficiency <= 0.01f && !b.cheating()) continue;
+                if(!b.cheating() && idle(b, re.fraction(), re.efficiency)) continue;
                 UnitType[] up = block.upgrades.first();
                 float time = block.constructTime / 60f;
                 for(float t = time; t <= steps * step; t += time){
