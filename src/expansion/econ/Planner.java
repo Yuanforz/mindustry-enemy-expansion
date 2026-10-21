@@ -472,6 +472,13 @@ public final class Planner{
                 if(other != r && other.makes(k)) best = Math.max(best, 1 + depth(other, memo, seen));
             }
         }
+        //(power is taken too: what runs on it comes after what makes it, the nearest maker of it; on a generated map with its
+        //only vent far off, eleven bores went up before the turbine and stood without power for five minutes)
+        if(r.powerUse > 0f){
+            int maker = Integer.MAX_VALUE;
+            for(Recipe other : cat.recipes) if(other != r && other.powerOut > 0f) maker = Math.min(maker, depth(other, memo, seen));
+            if(maker != Integer.MAX_VALUE) best = Math.max(best, 1 + maker);
+        }
         memo.put(r, best);
         return best;
     }

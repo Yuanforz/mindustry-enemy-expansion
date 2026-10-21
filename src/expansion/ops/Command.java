@@ -71,7 +71,12 @@ public final class Command{
     /** The defence planner, as the game stands now, and what our turrets can be fed with. */
     public interface Defences{
         /** The defence planner's plan for now, of so many modules at each place it defends (the kind strongest for its cost), or null. */
-        expansion.defense.Planner.Plan plan(int modules);
+        default expansion.defense.Planner.Plan plan(int modules){
+            return plan(modules, 0);
+        }
+
+        /** The same of the kind ranked so (0: the strongest for its cost, 1: the next kind). */
+        expansion.defense.Planner.Plan plan(int modules, int rank);
 
         Collection<String> feedable();
     }
@@ -81,6 +86,11 @@ public final class Command{
         public final Muster.Aim aim;
         /** How many modules of the defence go first (0: none, Integer.MAX_VALUE: all it plans). */
         public final int modules;
+        /** Which kind of module (by its rank for strength for its cost), and its turret, for the report. */
+        public int rank;
+        public String kind = "";
+        /** Whether its stage was planned on top of the defence (else from the game as it stands, begun once that is up). */
+        public boolean atop;
         public float score, firstUnit = Float.POSITIVE_INFINITY, defenceDone;
         /** Whether it does what the map's tasks ask. */
         public boolean task;
@@ -102,7 +112,7 @@ public final class Command{
 
         @Override
         public String toString(){
-            String d = modules == 0 ? "" : String.format(" after a defence of %d module(s) a place (%d turrets, all up by %s)", modules, turrets, Float.isInfinite(defenceDone) ? "never" : Plan.time(defenceDone));
+            String d = modules == 0 ? "" : String.format(" after a defence of %d module(s) %sa place (%d turrets, all up by %s%s)", modules, kind.isEmpty() ? "" : "of " + kind + " ", turrets, Float.isInfinite(defenceDone) ? "never" : Plan.time(defenceDone), atop ? "; the stage planned on it" : "");
             return String.format("%s%s%s: score %.1f, first unit %s; at worst: %s", stage(), d, task ? " (a task)" : "", score, Float.isInfinite(firstUnit) ? "never" : Plan.time(firstUnit), outcome);
         }
     }
@@ -140,8 +150,12 @@ public final class Command{
     static final float[] sendAts = {0.5f, 1f, 2f};
     /** What doing one of the map's tasks is worth, now (discounted like the rest by when it is done; -Dops.task). */
     public static float taskWorth = Float.parseFloat(System.getProperty("ops.task", "150"));
-    /** How many modules at each defended place a defence is weighed with. */
+    /** How many modules at each defended place a defence is weighed with, and of which kinds (by rank for strength for cost). */
     public static int[] defenceCounts = {1, 2, 4};
+    public static int defenceKinds = Integer.getInteger("ops.defkinds", 2);
+    /** How many of the best stages alone are planned again on top of each defence (-Dops.atop). */
+    public static int afterTop = Integer.getInteger("ops.atop", 3);
+    long afterNanos;
     /** How many makers a kind is weighed with, besides one. */
     public static int[] makerCounts = {2, 3, 4, 6};
     /** How many kinds of unit get more makers weighed, at most. */
@@ -233,31 +247,53 @@ public final class Command{
         //defences of so many modules (a choice point: one, two, four), each with the economy that pays for and feeds it,
         //worked out by the model with what comes in over time
         List<Object[]> guards = new ArrayList<>();
-        guards.add(new Object[]{0, null, null});
-        if(defences != null) for(int k : defenceCounts){
+        guards.add(new Object[]{0, null, null, 0, ""});
+        Set<String> guardsSeen = new HashSet<>();
+        List<java.util.concurrent.Future<Object[]>> defenceJobs = new ArrayList<>();
+        if(defences != null) for(int rank = 0; rank < defenceKinds; rank++) for(int k : defenceCounts){
             expansion.defense.Planner.Plan dp;
             try{
-                dp = defences.plan(k);
+                dp = defences.plan(k, rank);
             }catch(Throwable t){
                 log.append("  command: the defence planner failed: ").append(t).append('\n');
                 continue;
             }
             if(dp == null || dp.placements.isEmpty()){
-                if(dp != null && k == defenceCounts[0]) log.append("  command: the defence planner has nothing: ").append(String.join("; ", dp.notes)).append('\n');
+                if(dp != null && k == defenceCounts[0]) log.append("  command: the defence planner has nothing").append(rank > 0 ? " of a kind ranked " + (rank + 1) : "").append(": ").append(String.join("; ", dp.notes)).append('\n');
                 continue;
             }
-            Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
-            p.gate = true;
-            p.dry = true;
-            p.gateDepth = 2;
-            p.income = income;
-            Plan dry = null;
+            //(the same turrets again, as four modules where only two fit: weighed once)
+            Map<String, Integer> turretsOf = new TreeMap<>();
+            for(Placement pl : dp.placements) if(pl.kind == Placement.Kind.turret) turretsOf.merge(pl.block, 1, Integer::sum);
+            if(!guardsSeen.add(turretsOf.toString())) continue;
+            String kind = turretsOf.isEmpty() ? "" : turretsOf.keySet().iterator().next();
+            final int kk = k, rk = rank;
+            final expansion.defense.Planner.Plan dpf = dp;
+            Collection<String> feed = defences.feedable();
+            //(each defence's economy worked out by the model on the pool, as the stages are)
+            defenceJobs.add(pool().submit(() -> {
+                Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
+                p.gate = true;
+                p.dry = true;
+                p.gateDepth = 2;
+                p.income = income;
+                try{
+                    Plan dry = p.defend(me, blocks, allowed, dpf, feed);
+                    return dry != null && dry.model != null ? new Object[]{kk, dry, dpf, rk, kind} : null;
+                }catch(Throwable t){
+                    return new Object[]{kk, null, t};
+                }
+            }));
+        }
+        for(var job : defenceJobs){
             try{
-                dry = p.defend(me, blocks, allowed, dp, defences.feedable());
-            }catch(Throwable t){
-                log.append("  command: a defence of ").append(k).append(" could not be weighed: ").append(t).append('\n');
+                Object[] g = job.get();
+                if(g == null) continue;
+                if(g[1] == null) log.append("  command: a defence of ").append(g[0]).append(" could not be weighed: ").append(g[2]).append('\n');
+                else guards.add(g);
+            }catch(Exception e){
+                log.append("  command: a defence could not be weighed: ").append(e).append('\n');
             }
-            if(dry != null && dry.model != null) guards.add(new Object[]{k, dry, dp});
         }
         long d1 = System.nanoTime();
         dpAt = d1;
@@ -298,59 +334,84 @@ public final class Command{
             mirrors.put(lag, shifted(added, walkTime()));
         }
 
-        for(Object[] g : guards){
+        //the stages alone first; then, for each defence, the best few of them planned again on top of it (its machines
+        //standing, what it leaves in the core to begin with), as the next stage would be once it is up; the rest are
+        //counted as begun only once it is up, from nothing (too slow by what the defence's economy gives them)
+        Map<Float, Object[]> none = new HashMap<>();
+        for(Object[] c : stages){
+            Muster.Aim aim = (Muster.Aim)c[0];
+            Plan stage = (Plan)c[1];
+            weighed.add(weighOne(aim, stage, null, 0, 0, "", none, scenarios, mirrors, foeGuard, taskDefence));
+        }
+        List<Candidate> plain = new ArrayList<>(weighed);
+        plain.sort((a, b) -> Float.compare(b.score, a.score));
+        List<Object[]> tops = new ArrayList<>();
+        for(Candidate c : plain){
+            if(tops.size() >= afterTop) break;
+            for(Object[] st : stages) if(st[0] == c.aim) tops.add(st);
+        }
+        long a0 = System.nanoTime();
+        Map<String, java.util.concurrent.Future<Plan>> atop = new HashMap<>();
+        for(int gi = 1; gi < guards.size(); gi++){
+            Object[] g = guards.get(gi);
+            Plan guard = (Plan)g[1];
+            float done = (Float)schedule(guard, (expansion.defense.Planner.Plan)g[2], lags[0])[2];
+            if(Float.isInfinite(done) || done >= horizon) continue;
+            Timeline before = new Timeline(guard.cat, guard.field, guard.model.order);
+            before.runUntil(done);
+            Set<Machine> skip = guard.feeding();
+            for(Object[] st : tops){
+                Muster.Aim aim = (Muster.Aim)st[0];
+                atop.put(gi + "|" + System.identityHashCode(aim), pool().submit(() -> {
+                    Plan p = new Plan(new PrintStream(OutputStream.nullOutputStream()));
+                    p.gate = true;
+                    p.widen = true;
+                    p.dry = true;
+                    p.after = before;
+                    p.afterSkip = skip;
+                    try{
+                        Plan dry = aim.item != null ? p.make(me, blocks, allowed, library, aim.item.name, aim.rate, income == null || income.isEmpty() ? null : income)
+                            : p.make(me, blocks, allowed, library, aim.type.name, aim.makers, income == null || income.isEmpty() ? null : income);
+                        return dry == null || dry.model == null || Float.isInfinite(dry.model.first[dry.unit]) ? null : dry;
+                    }catch(Throwable t){
+                        return null;
+                    }
+                }));
+            }
+        }
+        for(int gi = 1; gi < guards.size(); gi++){
+            Object[] g = guards.get(gi);
             int k = (Integer)g[0];
             Plan guard = (Plan)g[1];
             expansion.defense.Planner.Plan dp = (expansion.defense.Planner.Plan)g[2];
+            int rank = (Integer)g[3];
+            String kind = (String)g[4];
             Map<Float, Object[]> schedules = new HashMap<>();
-            if(guard != null) for(float lag : lags) schedules.put(lag, schedule(guard, dp, lag));
+            for(float lag : lags) schedules.put(lag, schedule(guard, dp, lag));
+            if(Boolean.getBoolean("ops.all")){
+                Object[] s0 = schedules.get(lags[0]);
+                log.append(String.format("    defence of %d %s: all up by %s, its modules at %s: %s\n", k, kind, Plan.time((Float)s0[2]), s0[0], guard.model.order));
+            }
             for(Object[] c : stages){
                 Muster.Aim aim = (Muster.Aim)c[0];
-                Plan stage = (Plan)c[1];
-                Candidate cand = new Candidate(aim, k);
-                float[] scores = new float[scenarios.size()];
-                float worst = Float.POSITIVE_INFINITY;
-                Map<Float, Force[]> curves = new HashMap<>();
-                for(float lag : lags) curves.put(lag, unitCurve(stage, lag));
-                cand.outcomes = new Outcome[scenarios.size()];
-                for(int i = 0; i < scenarios.size(); i++){
-                    Scenario sc = scenarios.get(i);
-                    Object[] sched = guard == null ? null : schedules.get(sc.lag);
-                    float done = sched == null ? 0f : (Float)sched[2];
-                    //(one core unit builds both: the stage after the defence is all up)
-                    Force[] units = shifted(curves.get(sc.lag), done);
-                    Outcome o = play(units, sched, sc.mirror ? mirrors.get(sc.lag) : null, foeGuard, sc.sendAt, aim.reaches);
-                    scores[i] = score(o);
-                    cand.outcomes[i] = o;
-                    if(scores[i] < worst){
-                        worst = scores[i];
-                        cand.outcome = o;
+                Plan stage = (Plan)c[1], on = null;
+                var job = atop.get(gi + "|" + System.identityHashCode(aim));
+                if(job != null){
+                    try{
+                        on = job.get();
+                    }catch(Exception e){
+                        on = null;
                     }
                 }
-                cand.score = aggregate(scores);
-                cand.scores = scores;
-                //(a way that does a task: worth what the task is, discounted by when it is done)
-                if(aim.task){
-                    float done = stage.model.first[stage.unit] * lags[0] + cand.defenceDone;
-                    cand.score += taskWorth * d(done);
-                    cand.task = true;
-                }else if(k > 0 && taskDefence){
-                    cand.score += taskWorth * d(cand.defenceDone);
-                    cand.task = true;
-                }
-                if(sched(schedules) != null){
-                    Object[] s = sched(schedules);
-                    cand.turrets = ((Force)s[3]).count;
-                    cand.defenceDone = (Float)s[2];
-                }
-                Force[] base = shifted(curves.get(lags[0]), cand.defenceDone);
-                for(int i = 0; i < base.length; i++) if(base[i].count > 0){ cand.firstUnit = i * step; break; }
+                Candidate cand = weighOne(aim, on != null ? on : stage, null, k, rank, kind, schedules, scenarios, mirrors, foeGuard, taskDefence);
+                cand.atop = on != null;
                 weighed.add(cand);
             }
         }
+        afterNanos = System.nanoTime() - a0;
         long p1 = System.nanoTime();
         weighed.sort((a, b) -> Float.compare(b.score, a.score));
-        log.append(String.format("  command: times: stages %.1f + %.1f s, defences %.1f s, playing %.1f s\n", (w1 - w0) / 1e9f, (w2 - w1) / 1e9f, (d1 - d0) / 1e9f, (p1 - d1) / 1e9f));
+        log.append(String.format("  command: times: stages %.1f + %.1f s, defences %.1f s, stages after them %.1f s, playing %.1f s\n", (w1 - w0) / 1e9f, (w2 - w1) / 1e9f, (d1 - d0) / 1e9f, afterNanos / 1e9f, (p1 - d1 - afterNanos) / 1e9f));
         log.append(String.format("  command (%s, horizon %s, %d scenarios): theirs at our core by the horizon at most %s; %s\n", posture, Plan.time(horizon), scenarios.size(), forecast.at[forecast.steps], forecast.notes));
         for(int i = 0; i < Math.min(weighed.size(), 8); i++) log.append("    ").append(weighed.get(i)).append('\n');
         if(weighed.size() > 8) log.append("    (").append(weighed.size() - 8).append(" more)\n");
@@ -359,7 +420,7 @@ public final class Command{
             for(Scenario sc : scenarios) head.append(String.format(" %.2f/%s/%.1f", sc.lag, sc.mirror ? "m" : "-", sc.sendAt));
             log.append(head).append('\n');
             for(Candidate c : weighed){
-                log.append("    ").append(c.stage()).append(c.modules == 0 ? "" : "+d" + c.modules).append(String.format(" %.1f:", c.score));
+                log.append("    ").append(c.stage()).append(c.modules == 0 ? "" : "+d" + c.modules + c.kind).append(String.format(" %.1f:", c.score));
                 for(int i = 0; i < c.scores.length; i++) log.append(String.format(" %.0f[%s]", c.scores[i], c.outcomes[i]));
                 log.append('\n');
             }
@@ -367,6 +428,51 @@ public final class Command{
         log.append(String.format("  command: weighed %d ways in %d scenarios in %.1f s\n", weighed.size(), scenarios.size(), (System.nanoTime() - t0) / 1e9f));
         if(Boolean.getBoolean("ops.time")) log.append(Took.report());
         return weighed.isEmpty() ? null : weighed.get(0);
+    }
+
+    /** One way to go weighed: its stage's units (after the defence, if any, is all up), played in every scenario. */
+    Candidate weighOne(Muster.Aim aim, Plan stage, Force[] unused, int k, int rank, String kind, Map<Float, Object[]> schedules, List<Scenario> scenarios, Map<Float, Force[]> mirrors, Force foeGuard, boolean taskDefence){
+        Candidate cand = new Candidate(aim, k);
+        cand.rank = rank;
+        cand.kind = kind;
+        float[] scores = new float[scenarios.size()];
+        float worst = Float.POSITIVE_INFINITY;
+        Map<Float, Force[]> curves = new HashMap<>();
+        for(float lag : lags) curves.put(lag, unitCurve(stage, lag));
+        cand.outcomes = new Outcome[scenarios.size()];
+        if(sched(schedules) != null){
+            Object[] s = sched(schedules);
+            cand.turrets = ((Force)s[3]).count;
+            cand.defenceDone = (Float)s[2];
+        }
+        for(int i = 0; i < scenarios.size(); i++){
+            Scenario sc = scenarios.get(i);
+            Object[] sched = schedules.get(sc.lag);
+            float done = sched == null ? 0f : (Float)sched[2];
+            //(one core unit builds both: the stage after the defence is all up)
+            Force[] units = shifted(curves.get(sc.lag), done);
+            Outcome o = play(units, sched, sc.mirror ? mirrors.get(sc.lag) : null, foeGuard, sc.sendAt, aim.reaches);
+            scores[i] = score(o);
+            cand.outcomes[i] = o;
+            if(scores[i] < worst){
+                worst = scores[i];
+                cand.outcome = o;
+            }
+        }
+        cand.score = aggregate(scores);
+        cand.scores = scores;
+        //(a way that does a task: worth what the task is, discounted by when it is done)
+        if(aim.task){
+            float done = stage.model.first[stage.unit] * lags[0] + cand.defenceDone;
+            cand.score += taskWorth * d(done);
+            cand.task = true;
+        }else if(k > 0 && taskDefence){
+            cand.score += taskWorth * d(cand.defenceDone);
+            cand.task = true;
+        }
+        Force[] base = shifted(curves.get(lags[0]), cand.defenceDone);
+        for(int i = 0; i < base.length; i++) if(base[i].count > 0){ cand.firstUnit = i * step; break; }
+        return cand;
     }
 
     static Object[] sched(Map<Float, Object[]> schedules){

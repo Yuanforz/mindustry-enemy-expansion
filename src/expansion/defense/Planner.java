@@ -60,6 +60,8 @@ public final class Planner{
         public final Map<String, Integer> budget = new TreeMap<>();
         /** So many modules at each place, of the kind strongest for its cost, instead of as many as hold what comes (0: that). */
         public int fixedModules;
+        /** Of the kinds of module, which by strength for its cost (0: the strongest, 1: the next kind...): a choice point too. */
+        public int fixedRank;
         /** What each block costs, by item. */
         public Map<String, Map<String, Integer>> costs = new HashMap<>();
         public List<Battery> modules = new ArrayList<>();
@@ -590,6 +592,8 @@ public final class Planner{
     List<Choice> chooseFixed(Map<String, Integer> units){
         Choice best = null;
         float bestValue = 0f;
+        //(the kinds by value, each kind once; the one asked for by its rank)
+        List<Object[]> ranked = new ArrayList<>();
         for(Choice o : options()){
             boolean fits = false;
             for(String u : units.keySet()) if(suits(o, u)) fits = true;
@@ -601,10 +605,23 @@ public final class Planner{
             for(Gun.Ammo a : gun.ammo) gunDps = Math.max(gunDps, a.dps);
             float hp = (b == null ? 0f : b.health) * o.module.guns(), dps = gunDps * o.module.guns();
             float value = dps * hp / Math.max(1f, o.cost * o.cost);
-            if(value > bestValue){
-                bestValue = value;
+            ranked.add(new Object[]{o, value});
+        }
+        ranked.sort((a, b) -> Float.compare((Float)b[1], (Float)a[1]));
+        Set<String> kinds = new HashSet<>();
+        int rank = 0;
+        for(Object[] r : ranked){
+            Choice o = (Choice)r[0];
+            if(!kinds.add(o.module.name)) continue;
+            if(rank++ == ask.fixedRank){
                 best = o;
+                bestValue = (Float)r[1];
+                break;
             }
+        }
+        if(best == null && ask.fixedRank > 0 && !ranked.isEmpty()){
+            plan.notes.add("no kind of module ranked " + (ask.fixedRank + 1) + " (" + kinds.size() + " kinds)");
+            return new ArrayList<>();
         }
         if(best == null){
             StringBuilder why = new StringBuilder();

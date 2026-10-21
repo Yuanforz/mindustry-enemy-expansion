@@ -377,12 +377,14 @@ public class Match{
                 else if(command != null){
                     int fNow = f;
                     expansion.ops.Command.Candidate best = command.decide(blocks, allowed, library, new expansion.ops.Command.Defences(){
-                        public expansion.defense.Planner.Plan plan(int modules){
+                        public expansion.defense.Planner.Plan plan(int modules, int rank){
                             fixedModules = modules;
+                            fixedRank = rank;
                             try{
-                                return defence(us, them, sector, fNow / 60f, "weighing a defence of " + modules + ": ");
+                                return defence(us, them, sector, fNow / 60f, "weighing a defence of " + modules + (rank > 0 ? " of the kind ranked " + (rank + 1) : "") + ": ");
                             }finally{
                                 fixedModules = 0;
+                                fixedRank = 0;
                             }
                         }
 
@@ -395,6 +397,7 @@ public class Match{
                     else if(best.modules > 0){
                         ways = new String[]{"defend"};
                         defendModules = best.modules;
+                        defendRank = best.rank;
                     }else ways = new String[]{best.stage()};
                 }else ways = stages[stage].equals("auto") ? autoWays(f, stage, blocks, allowed, library, army) : stages[stage].split("\\|");
                 //"climb:conquer": a step at a time towards the goal, each step the nearest of what its maker needs that nothing
@@ -439,12 +442,16 @@ public class Match{
                         if(st[0].equals("defend")){
                             lastDefenceAt = f;
                             //(as many modules as the command layer weighed)
-                            if(command != null) fixedModules = defendModules;
+                            if(command != null){
+                                fixedModules = defendModules;
+                                fixedRank = defendRank;
+                            }
                             expansion.defense.Planner.Plan dp;
                             try{
                                 dp = defence(us, them, sector, f / 60f, p.label);
                             }finally{
                                 fixedModules = 0;
+                                fixedRank = 0;
                             }
                             //(it pays for itself out of what the core holds and brings in; built of what is near at hand; the one
                             //put first for a threat from the start is its first module only)
@@ -945,9 +952,27 @@ public class Match{
         //what turrets can be fed with: what the sector's tech gives that our base makes already, or that a drill on the
         //ground digs with nothing put into it (a plasma bore's beryllium and graphite): a defence that waits on a new
         //chain of crafters is not up when it is wanted
-        Catalog cat = Recipes.read(new ArrayList<>(Plan.erekir()), (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
-        Field field = Sites.scan(cat, me, Integer.getInteger("xp.radius", 110));
-        Chains chains = new Chains(cat, field);
+        //(read once a frame: the command layer asks for several defences at one moment)
+        Object[] read = askReads.get(me.id + "@" + (long)Vars.state.tick);
+        if(read == null){
+            askReads.clear();
+            Catalog c0 = Recipes.read(new ArrayList<>(Plan.erekir()), (CoreBlock)core.block, Vars.state.rules.buildSpeed(me));
+            //(looked for as far out as the economy's plans look when there is no power near: on a generated map with no vent
+            //within 110 tiles nothing could be fed, no defence was planned, and four stells took the core at eight minutes)
+            int radius = Plan.baseRadius;
+            Field f0 = Sites.scan(c0, me, radius);
+            Chains ch0 = new Chains(c0, f0);
+            for(int pass = 0; pass < 2 && Float.isInfinite(ch0.power) && radius < Plan.maxRadius(); pass++){
+                radius = Math.min(Plan.maxRadius(), (int)(radius * 1.5f));
+                f0 = Sites.scan(c0, me, radius);
+                ch0 = new Chains(c0, f0);
+            }
+            read = new Object[]{c0, f0, ch0};
+            askReads.put(me.id + "@" + (long)Vars.state.tick, read);
+        }
+        Catalog cat = (Catalog)read[0];
+        Field field = (Field)read[1];
+        Chains chains = (Chains)read[2];
         Set<String> made = new HashSet<>();
         for(Machine m : field.existing) for(int k = 0; k < cat.size(); k++) if(m.out(k) > 1e-4f) made.add(cat.get(k).name);
         for(int k = 0; k < cat.size(); k++){
@@ -959,6 +984,8 @@ public class Match{
             //at all is made yet, and a defence that only counted what stands could fire nothing)
             if(bare && cat.get(k).kind == Res.Kind.item) made.add(cat.get(k).name);
         }
+        //(and what the core unit digs by hand)
+        for(int k = 0; k < cat.size(); k++) if(cat.get(k).kind == Res.Kind.item && field.handRate(cat, k) > 0f) made.add(cat.get(k).name);
         for(String what : expansion.defense.Tech.supply(sector)) if(made.contains(what)) ask.supply.add(what);
         feedable.clear();
         feedable.addAll(ask.supply);
@@ -985,6 +1012,7 @@ public class Match{
             if(budget > 0) ask.budget.put(item.name, budget);
         }
         ask.fixedModules = fixedModules;
+        ask.fixedRank = fixedRank;
         ask.modules = expansion.defense.Battery.parse(new Fi("blueprints/defense/modules.txt").readString());
         ask.capacity = expansion.defense.Capacity.parse(new Fi("blueprints/defense/capacity.txt").readString());
         return ask;
@@ -1019,9 +1047,11 @@ public class Match{
     }
 
     /** So many modules at each place for the defence planned now (0: as many as hold what comes). */
-    static int fixedModules;
+    static int fixedModules, fixedRank;
+    /** The defence ask's reading of the catalog and the places, for the frame it was made in. */
+    static final Map<String, Object[]> askReads = new HashMap<>();
     /** How many modules of the defence the command layer chose (Integer.MAX_VALUE: all). */
-    static int defendModules = Integer.MAX_VALUE;
+    static int defendModules = Integer.MAX_VALUE, defendRank;
     static float pressureEdge = Float.parseFloat(System.getProperty("match.pressure", "1.5"));
 
     /**

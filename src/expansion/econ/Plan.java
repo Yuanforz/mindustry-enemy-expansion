@@ -68,7 +68,7 @@ public final class Plan{
     /** Of the blocks that can't be paid for, what each lacks. */
     final Map<String, Set<String>> unpaid = new HashMap<>();
 
-    static int maxRadius(){
+    public static int maxRadius(){
         //(twice as far at most: further out the places to weigh grow past what the planner can go through in a few seconds)
         return Math.max(baseRadius, Math.min(baseRadius * 2, Math.max(Vars.world.width(), Vars.world.height()) / 2));
     }
@@ -339,6 +339,7 @@ public final class Plan{
             String pruned = Sites.prune(cat, field, income, me);
             if(!pruned.isEmpty()) out.println("  the map's own: " + pruned);
         }
+        if(after != null) atop(after, afterSkip);
         check("after the scan");
         planner = new Planner(cat, field);
         planner.rough = dry;
@@ -436,6 +437,38 @@ public final class Plan{
      * and of those only the ones whose materials are at most this many steps of making away (see {@link #depths}). What
      * may be built, as it then is.
      */
+    /**
+     * A plan worked out as coming after another (a defence put first): that one's model played to its end, its machines
+     * standing as the map's own do and what it leaves in the core the stock to begin with (those of its machines in the skip
+     * list, as the drills that feed its turrets, give the core nothing). Null for a plan from the game as it stands.
+     */
+    public Timeline after;
+    public Set<Machine> afterSkip = Set.of();
+
+    /** Puts what a plan before this one built and left on the map as read (see {@link #after}). */
+    void atop(Timeline before, Set<Machine> skip){
+        for(int k = 0; k < cat.size(); k++){
+            Res r = cat.get(k);
+            Res o = before.cat.byName.get(r.name);
+            if(o != null && o.id < before.stock.length) field.stock[k] = before.stock[o.id];
+        }
+        int added = 0;
+        for(int i = 0; i < before.order.size(); i++){
+            Machine m = before.order.get(i);
+            if(Float.isNaN(before.finished[i]) || skip.contains(m)) continue;
+            Recipe r = cat.recipe(m.recipe.name);
+            if(r == null) continue;
+            int item = m.item < 0 ? -1 : cat.byName.containsKey(before.cat.get(m.item).name) ? cat.id(before.cat.get(m.item).name) : -1;
+            Machine c = new Machine(r, item, m.factor, m.x, m.y, m.distance, new int[cat.size()], m.boosted, true);
+            c.rotation = m.rotation;
+            field.existing.add(c);
+            field.sites.removeIf(st -> st.x == m.x && st.y == m.y);
+            field.revivable.removeIf(o -> o.x == m.x && o.y == m.y);
+            added++;
+        }
+        out.println("  after the plan before: " + added + " of its machines standing, the core holding what it left");
+    }
+
     /** How far each block's materials are, worked out once for the tries of one pass of {@link #make}; null outside one. */
     Map<String, Integer> depthCache;
 
@@ -574,7 +607,16 @@ public final class Plan{
      */
     public Plan defend(Team me, List<String> blocks, Set<String> allowed, expansion.defense.Planner.Plan defence, Collection<String> feedable){
         CoreBlock.CoreBuild core = me.core();
+        Set<String> allowedAsked = allowed;
         allowed = read(me, blocks, allowed, gateDepth);
+        //(looked for further out while no power can be made this near, as a stage's plan is: on a generated map with its
+        //vents beyond 110 tiles the defence's bores had no power, and the model had its turrets up never)
+        for(int pass = 0; pass < 2 && Float.isInfinite(new Chains(cat, field).power) && radius < maxRadius(); pass++){
+            radius = Math.min(maxRadius(), (int)(radius * 1.5f));
+            out.println("  places looked for out to " + radius + " tiles (no power nearer)");
+            allowed = read(me, blocks, allowedAsked, gateDepth);
+        }
+        radius = baseRadius;
         StringBuilder notes = new StringBuilder();
         //our turrets standing dry first (only a line to build), then what the defence planner laid
         List<Machine> guard = new ArrayList<>(Defence.existing(cat, me, feedable, notes));
@@ -682,6 +724,13 @@ public final class Plan{
     }
 
     Map<Machine, List<Machine>> feeders = new HashMap<>();
+
+    /** The machines of a defence's plan that feed its turrets (they give the core nothing). */
+    public Set<Machine> feeding(){
+        Set<Machine> fed = new HashSet<>();
+        for(List<Machine> l : feeders.values()) fed.addAll(l);
+        return fed;
+    }
 
     /**
      * Module by module in the defence's order: its drills, then it, so the first module fires before the last is begun;
