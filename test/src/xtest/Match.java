@@ -127,6 +127,12 @@ public class Match{
         if(campaign){
             //(as xtest.Campaign lands on a sector: its waves, its win wave, the time between waves for the difficulty)
             if(preset != null && preset.captureWave > 0) rules.winWave = preset.captureWave;
+            //the map's own tasks and the part of the map they keep shut are left out of the benchmark (-Dmatch.tasks=true keeps
+            //them): what is measured is taking the sector's base and holding off its waves, not working through a tutorial
+            if(!Boolean.getBoolean("match.tasks")){
+                rules.objectives.all.clear();
+                rules.limitMapArea = false;
+            }
         }else{
             rules.waves = false;
             rules.attackMode = true;
