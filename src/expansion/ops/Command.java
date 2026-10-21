@@ -856,19 +856,17 @@ public final class Command{
         Timeline run = new Timeline(plan.cat, plan.field, order);
         int n = (int)Math.ceil(horizon / step) + 1;
         Force[] out = new Force[n];
-        int cap = mindustry.entities.Units.getCap(side);
-        int have = 0;
-        for(Unit u : side.data().units) if(!u.spawnedByCore && u.type.canAttack) have++;
+        //(the cap is of each kind, as the game has it: taken as of all kinds together, a side with fifteen of one kind was
+        //counted to make none of another)
+        int cap = side == me ? mindustry.entities.Units.getCap(side) : Forecast.capOfKind(side);
         for(int i = 0; i < n; i++){
             run.runUntil(i * step / lag);
             Force f = new Force(me);
-            int room = Math.max(0, cap - have);
             for(int k = 0; k < plan.cat.size(); k++){
                 if(plan.cat.get(k).kind != Res.Kind.unit || run.made[k] <= 0f) continue;
                 UnitType type = Vars.content.unit(plan.cat.get(k).name);
                 if(type == null) continue;
-                float m = Math.min(run.made[k], room);
-                room -= (int)m;
+                float m = Math.min(run.made[k], Math.max(0, cap - side.data().countType(type)));
                 f.add(type, m);
             }
             out[i] = f;

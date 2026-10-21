@@ -219,6 +219,12 @@ public class Match{
         Events.on(UnitCreateEvent.class, e -> {
             if(e.unit.team == us) made.increment("us " + e.unit.type.name);
             if(e.unit.team == them) made.increment("them " + e.unit.type.name);
+            //(for the scoreboard: when each side's first fighting unit came)
+            float now = (float)(Vars.state.tick / 60.0);
+            if(e.unit.type.canAttack && !e.unit.spawnedByCore && !expansion.army.Bait.coreUnit(e.unit)){
+                if(e.unit.team == us && firstUs < 0f) firstUs = now;
+                if(e.unit.team == them && firstThem < 0f) firstThem = now;
+            }
         });
         //who hurts our buildings, and which: by the kind of attacker, and by the block hit
         Events.on(BuildDamageEvent.class, e -> {
@@ -724,6 +730,8 @@ public class Match{
                 if(!tb.hasAmmo()) drySeconds++;
             }
             if(f % 3600 == 0 && f > 0) System.out.println(report(f / 60f, hand, stage));
+            //(for the scoreboard: each side's fighting units and their strength at 5, 10 and 15 minutes)
+            if(f % 3600 == 0 && (f / 3600 == 5 || f / 3600 == 10 || f / 3600 == 15)) armyAt.append(String.format(" at %d us %d/%.0f them %d/%.0f;", f / 3600, fighters(us), strength(us), fighters(them), strength(them)));
             if(f % 3600 == 0 && f > 0 && Boolean.getBoolean("match.fogprobe")){
                 int seenNow = 0;
                 for(int x = 0; x < Vars.world.width(); x++) for(int y = 0; y < Vars.world.height(); y++) if(Vars.fogControl.isDiscovered(us, x, y)) seenNow++;
@@ -929,6 +937,10 @@ public class Match{
             }
             System.out.println(String.format("    grid of %s at %d,%d: #%d, %d buildings, made %.1f wanted %.1f a second, satisfaction %.2f", m.recipe.name, part.x, part.y, System.identityHashCode(g) % 10000, g.all.size, g.getLastPowerProduced() * 60f, g.getLastPowerNeeded() * 60f, g.getSatisfaction()));
         }
+        //(the scoreboard's line: the side we played, each side's first fighting unit, the armies at 5, 10 and 15 minutes as
+        //count/strength, strength being damage a second times health over the units)
+        System.out.println(String.format("STATS %s side %s winner=%s at %s; first unit us %s them %s;%s", map.nameWithoutExtension(), Boolean.getBoolean("match.swap") ? "b" : "a", winner, Plan.time(t),
+            firstUs < 0f ? "never" : Plan.time(firstUs), firstThem < 0f ? "never" : Plan.time(firstThem), armyAt));
         System.out.println(String.format("RESULT %s %s winner=%s at %s; units made us %d them %d, lost us %d them %d; blocks lost us %d them %d; planning took %.0fs; our turrets dry %d of %d turret-seconds",
             map.nameWithoutExtension(), mode, winner, Plan.time(t), count("us "), count("them "), lostUnits.get("us"), lostUnits.get("them"), blocksLostUs, blocksLostThem, planSeconds, drySeconds, turretSeconds));
         System.exit(0);
@@ -1553,6 +1565,21 @@ public class Match{
     }
 
     /** Everything taken off but one core a side, the same core and the same items for both. */
+    static float firstUs = -1f, firstThem = -1f;
+    static final StringBuilder armyAt = new StringBuilder();
+
+    static int fighters(Team team){
+        int n = 0;
+        for(Unit u : team.data().units) if(u.type.canAttack && !u.spawnedByCore && !expansion.army.Bait.coreUnit(u)) n++;
+        return n;
+    }
+
+    static float strength(Team team){
+        float s = 0f;
+        for(Unit u : team.data().units) if(u.type.canAttack && !u.spawnedByCore && !expansion.army.Bait.coreUnit(u)) s += u.type.dpsEstimate * u.health;
+        return s / 1000f;
+    }
+
     static void even(){
         CoreBlock.CoreBuild ours = us.core();
         CoreBlock.CoreBuild theirs = null;
@@ -1566,6 +1593,15 @@ public class Match{
             if(theirs != null) break;
         }
         int ox = ours.tileX(), oy = ours.tileY(), tx = theirs.tileX(), ty = theirs.tileY();
+        //(-Dmatch.swap=true: the two places the other way round, so that a map is played from both sides: which place a
+        //side has can decide a game on its own)
+        if(Boolean.getBoolean("match.swap")){
+            int sx = ox, sy = oy;
+            ox = tx;
+            oy = ty;
+            tx = sx;
+            ty = sy;
+        }
         Block coreBlock = ours.block;
         //(every tile with a building of either side's cleared: taken off one by one, some stood, and the Brain, which opens as
         //planned only from a bare core, did not)

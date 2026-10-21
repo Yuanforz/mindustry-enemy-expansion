@@ -193,11 +193,9 @@ public final class Forecast{
      * up to the side's unit cap.
      */
     void factories(){
-        int cap = mindustry.entities.Units.getCap(foe);
-        int have = 0;
-        for(Unit u : foe.data().units) if(!u.spawnedByCore && u.type.canAttack) have++;
-        float room = Math.max(0, cap - have);
-        float made = 0f;
+        //(the cap is of each kind, as the game has it, not of all together)
+        int cap = capOfKind(foe);
+        ObjectIntMap<UnitType> madeOf = new ObjectIntMap<>();
         ObjectIntMap<String> kinds = new ObjectIntMap<>();
         for(Building b : foe.data().buildings){
             if(b instanceof UnitFactory.UnitFactoryBuild yard && yard.currentPlan >= 0){
@@ -208,9 +206,9 @@ public final class Forecast{
                 if(eff <= 1e-3f) continue;
                 float time = plan.time / eff / 60f;
                 float left = (1f - yard.fraction()) * time;
-                for(float t = left; t <= steps * step && made < room; t += time){
+                for(float t = left; t <= steps * step && foe.data().countType(plan.unit) + madeOf.get(plan.unit, 0) < cap; t += time){
                     put(plan.unit, 1f, t, b.x, b.y);
-                    made++;
+                    madeOf.increment(plan.unit);
                 }
                 kinds.increment(plan.unit.name);
             }else if(b instanceof Reconstructor.ReconstructorBuild re && b.block instanceof Reconstructor block && block.upgrades.size > 0){
@@ -218,15 +216,30 @@ public final class Forecast{
                 if(eff <= 1e-3f) continue;
                 UnitType[] up = block.upgrades.first();
                 float time = block.constructTime / eff / 60f;
-                for(float t = time; t <= steps * step; t += time){
+                for(float t = time; t <= steps * step && foe.data().countType(up[1]) + madeOf.get(up[1], 0) < cap; t += time){
                     //(the difference: one of the tier above, one fewer of the tier below)
                     put(up[1], 1f, t, b.x, b.y);
                     put(up[0], -1f, t, b.x, b.y);
+                    madeOf.increment(up[1]);
                 }
                 kinds.increment(up[1].name);
             }
         }
         if(kinds.size > 0) notes.append("made by its yards: ").append(kinds).append("; ");
+    }
+
+    /**
+     * How many of each kind of unit a side may have. The game caps each kind apart (Units.canCreate), and the side of the
+     * waves not at all; where there are no waves (two bases, as against the Brain) that side is taken to keep to a
+     * player's number of each, as the Brain keeps itself (Brain.unitCap): taken as uncapped, its yards were counted to
+     * turn out stells for half an hour without end.
+     */
+    public static int capOfKind(Team team){
+        int game = mindustry.entities.Units.getCap(team);
+        Rules rules = Vars.state.rules;
+        if(game != Integer.MAX_VALUE || rules.waves) return game;
+        int player = Math.max(0, rules.unitCapVariable ? rules.unitCap + team.data().unitCap : rules.unitCap);
+        return player > 0 ? player : game;
     }
 
     /** The map's waves, for the side that sends them: each wave's units, from its spawns (air from the map edge where the map has it so). */
