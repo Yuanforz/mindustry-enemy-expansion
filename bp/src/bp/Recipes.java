@@ -223,38 +223,28 @@ public final class Recipes{
         List<Recipe> out = new ArrayList<>();
         if(r.heatNeed <= 0f || heater.heatOut <= 0f) return out;
         int s = r.size, h = heater.size;
-        float q = heater.heatOut;
-        List<mindustry.world.Block> cs = new ArrayList<>();
-        cs.add(null);
-        cs.addAll(conductors);
-        int bestK = Integer.MAX_VALUE;
-        for(mindustry.world.Block cond : cs){
-            for(int reds = 0; reds <= (cond == null ? 0 : 4); reds++){
-                List<Float> give = new ArrayList<>();
+        //(whole heaters for the whole need: each gives all its heat through a face that touches whole)
+        int k = (int)Math.ceil(r.heatNeed / Math.min(heater.heatOut, heater.heatOut) - 1e-6);
+        if(s >= h && k <= 4 * (s / h)) out.add(compose(r, heater, k, null, 0, 1f));
+        for(mindustry.world.Block cond : conductors){
+            int c = cond.size;
+            if(c > s || c < h) continue;
+            //redirectors against its sides, as many as a side holds and the rest of the side for heaters; each gathers
+            //through its three other faces, each taking a heater or another redirector (a chain: redirectors pass all on)
+            int perSide = s / c, best = Integer.MAX_VALUE;
+            for(int r0 = 1; r0 <= 4 * perSide; r0++){
+                int direct = 0, left = r0;
                 for(int side = 0; side < 4; side++){
-                    int free = s;
-                    if(side < reds){
-                        int c = cond.size, contact = Math.min(c, s);
-                        free = s - contact;
-                        float pass = (float)contact / c;
-                        //(what it gathers: its three other sides, each of c tiles)
-                        for(int i = 0; i < 3; i++) slots(give, c, h, q * pass);
-                    }
-                    slots(give, free, h, q);
+                    int here = Math.min(perSide, left);
+                    left -= here;
+                    direct += (s - here * c) / h;
                 }
-                give.sort(Comparator.reverseOrder());
-                float got = 0f;
-                int k = 0;
-                for(float g : give){
-                    if(got >= r.heatNeed - 1e-4f) break;
-                    got += g;
-                    k++;
-                }
-                if(k <= 0) continue;
-                float share = Math.min(r.maxEfficiency, got / r.heatNeed);
-                //(only ways that give the whole need, and of those only one that takes fewer heaters than fewer redirectors did)
-                if(share < 1f - 1e-4f || k >= bestK) continue;
-                bestK = k;
+                int slots = direct + 3 * r0 * (c / h);
+                int r1 = slots >= k ? 0 : (int)Math.ceil((k - slots) / (3.0 * (c / h) - 1.0));
+                int reds = r0 + r1;
+                //(the fewest redirectors for these heaters: one more against the sides helps only while it does)
+                if(reds >= best) continue;
+                best = reds;
                 out.add(compose(r, heater, k, cond, reds, 1f));
             }
         }
