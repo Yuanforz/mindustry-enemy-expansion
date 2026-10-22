@@ -798,8 +798,10 @@ public final class Grow{
         }
         //what is committed, fixed
         Map<Integer, Map<String, Float>> outOf = new HashMap<>(), into = new HashMap<>();
+        //(what goes to the core is what is left: a maker hands it to whatever line will take it, so what it sends the core
+        //is still to be had by a taker that lacks it, a new line from it taking its share)
         for(Inst i : ledger.insts) if(!i.removed) for(Object[] f : i.flows){
-            outOf.computeIfAbsent((Integer)f[1] * 1000 + (Integer)f[2], k -> new HashMap<>()).merge((String)f[0], (Float)f[5], Float::sum);
+            if((Integer)f[3] != 0) outOf.computeIfAbsent((Integer)f[1] * 1000 + (Integer)f[2], k -> new HashMap<>()).merge((String)f[0], (Float)f[5], Float::sum);
             into.computeIfAbsent((Integer)f[3] * 1000 + (Integer)f[4], k -> new HashMap<>()).merge((String)f[0], (Float)f[5], Float::sum);
         }
         for(Inst i : ledger.insts){
