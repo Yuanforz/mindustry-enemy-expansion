@@ -81,6 +81,11 @@ public final class Plot{
             g.setColor(new Color(0x34343d));
             g.drawRect(x * T, (h - 1 - y) * T, T, T);
         }
+        //areas kept clear (an assembler's), outlined
+        g.setStroke(new BasicStroke(2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 1f, new float[]{6f, 4f}, 0f));
+        g.setColor(new Color(0x9c4dcc));
+        for(Body body : bodies) for(int[] r : body.clearWorld) g.drawRect(r[0] * T + 1, (h - 1 - r[3]) * T + 1, (r[2] - r[0] + 1) * T - 2, (r[3] - r[1] + 1) * T - 2);
+        g.setStroke(new BasicStroke(1f));
         //machines
         g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10));
         Map<String, Color> key = new LinkedHashMap<>();
@@ -114,8 +119,8 @@ public final class Plot{
         for(Router.Net n : nets){
             var it = Vars.content.item(n.res);
             var lq = Vars.content.liquid(n.res);
-            Color c = it != null ? of(it.color) : lq != null ? of(lq.color) : Color.white;
-            key.put(n.res + (lq != null ? " (liquid)" : ""), c);
+            Color c = it != null ? of(it.color) : lq != null ? of(lq.color) : new Color(Color.HSBtoRGB((n.res.hashCode() & 0xff) / 255f, 0.5f, 0.85f));
+            key.put(n.res + (lq != null ? " (liquid)" : Board.isPayload(n.res) ? " (payload)" : ""), c);
             for(int i = 0; i < n.pieces.size(); i++){
                 Piece q = n.pieces.get(i);
                 int px = q.x * T, py = (h - 1 - q.y) * T;
@@ -143,6 +148,15 @@ public final class Plot{
                             g.setColor(Color.black);
                             arrow(g, px + T / 2f, py + T / 2f, q.rot, T * 0.3f);
                         }
+                    }
+                    case payload -> {
+                        int px0 = (q.x - 1) * T, py0 = (h - 1 - (q.y + 1)) * T;
+                        g.setColor(c.darker());
+                        g.fillRect(px0 + 3, py0 + 3, 3 * T - 6, 3 * T - 6);
+                        g.setColor(c);
+                        g.drawRect(px0 + 3, py0 + 3, 3 * T - 6, 3 * T - 6);
+                        g.setColor(Color.white);
+                        arrow(g, px0 + 1.5f * T, py0 + 1.5f * T, q.rot, T * 0.8f);
                     }
                     case router, lrouter -> {
                         g.fillOval(px + 2, py + 2, T - 4, T - 4);
@@ -205,6 +219,8 @@ public final class Plot{
         g.drawString("ring = leak tile;  yellow dot = beam node", kx, ky);
         ky += 13;
         g.drawString("white edge = armoured duct; + = router", kx, ky);
+        ky += 13;
+        g.drawString("dashed purple = assembler's area (no solid blocks)", kx, ky);
         g.dispose();
         ImageIO.write(img, "png", out);
     }

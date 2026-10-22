@@ -206,8 +206,12 @@ public class BpBench{
         float[] running = new float[n], blocked = new float[n], starved = new float[n], unpowered = new float[n], eff = new float[n], made = new float[n];
         float[] last = new float[n];
         IntIntMap units = new IntIntMap();
+        Seq<Unit> assembled = new Seq<>();
         Events.on(UnitCreateEvent.class, e -> {
             if(e.spawner != null) units.increment(e.spawner.pos(), 1);
+            //(a unit an assembler makes stands in its area until it leaves, and the next is not begun while it does:
+            //taken away, as if sent off)
+            if(e.spawner != null && e.spawner.block instanceof UnitAssembler) assembled.add(e.unit);
         });
         ObjectFloatMap<Item> intake = new ObjectFloatMap<>();
         //(what is lost, when, and holding what: a generator blown up when full, a reactor unstable)
@@ -223,6 +227,8 @@ public class BpBench{
         int frames = Math.round(seconds * 60f);
         for(int f = 0; f < frames; f++){
             Boot.frames(1);
+            for(Unit u : assembled) if(u.isAdded()) u.remove();
+            assembled.clear();
             for(int i = 0; i < n; i++){
                 Building b = machines.get(i);
                 if(!b.isValid()) continue;

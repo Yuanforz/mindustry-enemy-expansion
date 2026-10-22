@@ -87,11 +87,35 @@ public final class Gen{
             }
             for(int k = 0; k < count; k++){
                 Body body = new Body(id++, r.name, false);
-                body.add(r.block, 0, 0, 0, r, work / count, null);
+                //(what a block that is set to make one thing of several is set to: a unit factory's unit, a constructor's
+                //block, the part of the recipe's name after its block's)
+                String config = (r.block instanceof mindustry.world.blocks.units.UnitFactory || r.block instanceof mindustry.world.blocks.payloads.Constructor) && r.name.contains(":") ? r.name.substring(r.name.indexOf(':') + 1) : null;
+                body.add(r.block, 0, 0, 0, r, work / count, config);
                 if(r.heatNeed > 0f) heat(body, r);
+                if(r.block instanceof mindustry.world.blocks.units.UnitAssembler a) assembler(body, r, a);
                 body.put(0, 0, 0);
                 bodies.add(body);
             }
+        }
+    }
+
+    /**
+     * An assembler with its area and its modules: facing +x, its area the square of areaSize in front of it, its centre
+     * (areaSize + size) / 2 ahead of the assembler's (UnitAssembler.getRect, getUnitSpawn); a module stands against the
+     * area's far side facing the centre, its front tile on the area's edge (UnitAssembler.moduleFits).
+     */
+    void assembler(Body body, Recipe r, mindustry.world.blocks.units.UnitAssembler a){
+        int s = a.size, area = a.areaSize;
+        int cx = Geo.at(0, s), spawn = cx + (area + s) / 2;
+        int half = area / 2;
+        body.clearLocal.add(new int[]{spawn - half, cx - half, spawn + half, cx + half});
+        body.exclusive = true;
+        for(var e : r.parts.entrySet()){
+            if(e.getKey() == r.block) continue;
+            Block m = e.getKey();
+            //(the first module straight across the area; more, at its sides)
+            int[][] at = {{spawn + half + 1, Geo.lo(cx, m.size), 2}, {Geo.lo(spawn, m.size), cx + half + 1, 3}, {Geo.lo(spawn, m.size), cx - half - m.size, 1}};
+            for(int k = 0; k < e.getValue() && k < at.length; k++) body.add(m, at[k][0], at[k][1], at[k][2], null, 1f, null);
         }
     }
 
@@ -131,13 +155,14 @@ public final class Gen{
         }
         for(String k : res){
             boolean item = Vars.content.item(k) != null, liquid = Vars.content.liquid(k) != null;
-            if(!item && !liquid) continue;
+            if(!item && !liquid && !Board.isPayload(k)) continue;
             Placer.Group g = new Placer.Group(k, liquid);
             for(Body body : bodies) for(Body.Part p : body.parts){
                 if(p.makes(k) > 1e-6f || k.equals(p.config) && (p.block instanceof mindustry.world.blocks.sandbox.ItemSource || p.block instanceof mindustry.world.blocks.sandbox.LiquidSource)) g.makers.add(p);
                 if(p.takes(k) > 1e-6f || Board.isCore(p) && item && prob.goals.containsKey(k)) g.takers.add(p);
                 if(p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid && liquid && drained(k)) g.takers.add(p);
             }
+            if(g.payload) for(Body.Part t : g.takers) g.buffer.put(t, Math.max(0, (int)batch(t, k) - 1));
             if(!g.makers.isEmpty() && !g.takers.isEmpty()) groups.add(g);
         }
     }
@@ -174,6 +199,10 @@ public final class Gen{
         double ductCost = weights.cost(carriers.cheapest(Carriers.Role.duct, weights));
         double surgeCost = surgeBlock == null ? Double.MAX_VALUE : weights.cost(surgeBlock);
         for(Placer.Group g : groups){
+            if(g.payload){
+                id = payloadNets(g, nets, id);
+                continue;
+            }
             List<Body.Part> ms = g.makers, ts = g.takers;
             //(the transportation problem: least rate times gap, each taker's need met, no maker past what it makes)
             MPSolver lp = MPSolver.createSolver("GLOP");
@@ -270,6 +299,67 @@ public final class Gen{
         return nets;
     }
 
+    /**
+     * Lines of a payload: a maker hands its payload only out of its front, so each maker feeds one taker (an
+     * assignment, SCIP: least gap, each taker's need met as far as it can be, a shortfall dear). A taker that takes a
+     * whole batch at once (an assembler: the plan's payloads, all before it starts, none while it works) wants its lines to
+     * hold what comes in while it works, its share of the batch, less the one its maker holds: the line's buffer.
+     */
+    int payloadNets(Placer.Group g, List<Router.Net> nets, int id){
+        List<Body.Part> ms = g.makers, ts = g.takers;
+        MPSolver ip = MPSolver.createSolver("SCIP");
+        MPVariable[][] x = new MPVariable[ms.size()][ts.size()], f = new MPVariable[ms.size()][ts.size()];
+        MPObjective obj = ip.objective();
+        MPConstraint[] need = new MPConstraint[ts.size()];
+        for(int j = 0; j < ts.size(); j++){
+            float d = demand(ts.get(j), g.res);
+            need[j] = ip.makeConstraint(d, MPSolver.infinity());
+            MPVariable short_ = ip.makeNumVar(0, d, "short" + j);
+            need[j].setCoefficient(short_, 1);
+            obj.setCoefficient(short_, 1e4);
+        }
+        for(int i = 0; i < ms.size(); i++){
+            MPConstraint one = ip.makeConstraint(0, 1);
+            for(int j = 0; j < ts.size(); j++){
+                if(ms.get(i) == ts.get(j)) continue;
+                x[i][j] = ip.makeIntVar(0, 1, "x" + i + "_" + j);
+                f[i][j] = ip.makeNumVar(0, MPSolver.infinity(), "f" + i + "_" + j);
+                MPConstraint cap = ip.makeConstraint(-MPSolver.infinity(), 0);
+                cap.setCoefficient(f[i][j], 1);
+                cap.setCoefficient(x[i][j], -supply(ms.get(i), g.res));
+                one.setCoefficient(x[i][j], 1);
+                need[j].setCoefficient(f[i][j], 1);
+                obj.setCoefficient(x[i][j], Placer.gap(ms.get(i), ts.get(j)) + 1);
+            }
+        }
+        obj.setMinimization();
+        ip.solve();
+        for(int i = 0; i < ms.size(); i++) for(int j = 0; j < ts.size(); j++){
+            if(x[i][j] == null || x[i][j].solutionValue() < 0.5) continue;
+            Body.Part m = ms.get(i), t = ts.get(j);
+            Router.Net n = new Router.Net(id++, g.res, 3, m);
+            n.to.add(t);
+            float flow = (float)f[i][j].solutionValue();
+            n.flows.add(flow);
+            n.buffer = Math.max(0, (int)Math.ceil(batch(t, g.res) * flow / Math.max(1e-9f, demand(t, g.res)) - 1e-4) - 1);
+            nets.add(n);
+        }
+        for(int j = 0; j < ts.size(); j++){
+            float got = 0f;
+            for(int i = 0; i < ms.size(); i++) if(f[i][j] != null && x[i][j].solutionValue() > 0.5) got += f[i][j].solutionValue();
+            if(got < demand(ts.get(j), g.res) * 0.999f) notes.add(String.format("%s gets %s at %.4f/s of %.4f/s: its makers each feed one taker", where(ts.get(j)), g.res, got, demand(ts.get(j), g.res)));
+        }
+        return id;
+    }
+
+    /** How many of a payload a taker takes at once: an assembler its plan's amount, else one. */
+    static float batch(Body.Part t, String res){
+        if(t.block instanceof mindustry.world.blocks.units.UnitAssembler a){
+            for(var plan : a.plans) if(t.recipe != null && t.recipe.out.containsKey(plan.unit.name)) for(var st : plan.requirements) if(st.item.name.equals(res)) return st.amount;
+        }
+        return 1f;
+    }
+
     // ------------------------------------------------------------------ the whole
 
     Spec spec(Router router, Power power){
@@ -300,7 +390,9 @@ public final class Gen{
             //stays and the room asked for is found about the places fought over)
             int steps = (attempt == 0 ? 4000 : 1500) * Math.max(4, placer.movable.size());
             long tp = System.nanoTime();
+            Arrays.fill(board.clear, false);
             placer.run(steps, attempt == 0, attempt == 0 ? 1.0 : 0.05);
+            board.putClear(bodies);
             long tr = System.nanoTime();
             System.out.println(String.format("placing %d: cost %.1f (%d bodies, %d steps)", attempt, placer.cost, bodies.size(), steps));
             List<Router.Net> nets = nets();
@@ -396,7 +488,7 @@ public final class Gen{
         //(what the lines were laid for, against what the game's rules say they do)
         int wrong = 0;
         for(Router.Net n : gen.bestNets){
-            Set<String> got = check.reach.getOrDefault(n.res + " from " + where(n.from), Set.of());
+            Set<String> got = check.reach.getOrDefault((n.cls == 3 ? "payload" : n.res) + " from " + where(n.from), Set.of());
             for(Body.Part t : n.to) if(!got.contains(where(t))){
                 wrong++;
                 System.out.println("  NOT AS LAID: " + n.res + " from " + where(n.from) + " does not reach " + where(t) + " (it reaches " + got + ")");
@@ -415,6 +507,7 @@ public final class Gen{
     static List<String> differ(List<Router.Net> nets){
         List<String> out = new ArrayList<>();
         for(Router.Net n : nets){
+            if(n.cls == 3) continue;
             boolean liquid = Vars.content.liquid(n.res) != null;
             for(int i = 0; i < n.pieces.size(); i++){
                 Piece q = n.pieces.get(i);

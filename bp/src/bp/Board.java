@@ -35,6 +35,8 @@ public final class Board{
         duct(Carriers.Role.duct), armored(Carriers.Role.armored), router(Carriers.Role.router), bridgeIn(Carriers.Role.bridge), bridgeOut(Carriers.Role.bridge),
         surge(Carriers.Role.surge), conduit(Carriers.Role.conduit), lbridgeIn(Carriers.Role.liquidBridge), lbridgeOut(Carriers.Role.liquidBridge),
         lrouter(Carriers.Role.liquidRouter), node(Carriers.Role.node), power(Carriers.Role.powerSource),
+        /** A payload conveyor (3x3 on Erekir), its tile the centre. */
+        payload(Carriers.Role.payload),
         /** The empty tile a drain's last conduit leaks onto (no block; kept empty). */
         leak(null);
 
@@ -168,6 +170,12 @@ public final class Board{
         return floorOk[idx(x, y)];
     }
 
+    /** Marks the ground the bodies keep clear (their areas) as no place for a solid block. */
+    public void putClear(Collection<Body> bodies){
+        Arrays.fill(clear, false);
+        for(Body b : bodies) for(int[] r : b.clearWorld) for(int y = Math.max(0, r[1]); y <= Math.min(h - 1, r[3]); y++) for(int x = Math.max(0, r[0]); x <= Math.min(w - 1, r[2]); x++) clear[idx(x, y)] = true;
+    }
+
     public void putParts(Collection<Body> bodies){
         Arrays.fill(partAt, null);
         for(Body b : bodies) for(Body.Part p : b.parts) for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++) if(in(x, y)) partAt[idx(x, y)] = p;
@@ -209,6 +217,24 @@ public final class Board{
         }
         for(String k : p.recipe.out.keySet()) if(Vars.content.liquid(k) != null) out.add(k);
         return out;
+    }
+
+    /** Whether a thing is carried as a payload: a unit or a block, by name. */
+    public static boolean isPayload(String res){
+        return Vars.content.item(res) == null && Vars.content.liquid(res) == null && (Vars.content.unit(res) != null || Vars.content.block(res) != null);
+    }
+
+    /** The tile a part hands its payload into: ahead of its centre (PayloadBlock.moveOutPayload, Building.front()). */
+    public static int[] front(Body.Part p){
+        int t = p.size / 2 + 1;
+        return new int[]{p.ax() + Geo.dx(p.rot) * t, p.ay() + Geo.dy(p.rot) * t};
+    }
+
+    /** Whether a part takes a payload from a block on this tile against it: a refabricator not from ahead of it (Reconstructor.acceptPayload). */
+    public static boolean takesPayloadFrom(Body.Part to, int x, int y){
+        int side = x > to.x1() ? 0 : y > to.y1() ? 1 : x < to.x0 ? 2 : 3;
+        if(to.block instanceof mindustry.world.blocks.units.Reconstructor) return side != to.rot;
+        return true;
     }
 
     /** Whether a part takes this (item or liquid) from a neighbour. */

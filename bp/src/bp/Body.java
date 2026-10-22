@@ -90,6 +90,15 @@ public final class Body{
     public final int id;
     public final String label;
     public final List<Part> parts = new ArrayList<>();
+    /**
+     * Ground it keeps clear of solid blocks, in its own frame ({x0, y0, x1, y1}): an assembler's area, where its unit
+     * comes together and out (UnitAssembler.getRect, checkSolid). Two bodies' areas may not overlap if exclusive (an
+     * assembler may not stand where its area would overlap another's, UnitAssembler.canPlaceOn).
+     */
+    public final List<int[]> clearLocal = new ArrayList<>();
+    public boolean exclusive;
+    /** Where those areas are now, on the map. */
+    public final List<int[]> clearWorld = new ArrayList<>();
     public final boolean fixed;
     public int ox, oy, rot;
 
@@ -127,6 +136,18 @@ public final class Body{
             p.y0 = oy + y0;
             p.rot = (p.lrot + rot) % 4;
         }
+        clearWorld.clear();
+        for(int[] r : clearLocal){
+            int x0 = r[0], y0 = r[1], x1 = r[2], y1 = r[3];
+            for(int k = 0; k < rot; k++){
+                int nx0 = -y1, nx1 = -y0, ny0 = x0, ny1 = x1;
+                x0 = nx0;
+                x1 = nx1;
+                y0 = ny0;
+                y1 = ny1;
+            }
+            clearWorld.add(new int[]{ox + x0, oy + y0, ox + x1, oy + y1});
+        }
     }
 
     /** Its extent in its own frame turned by rot: {minx, miny, maxx, maxy}. */
@@ -139,6 +160,12 @@ public final class Body{
             e[1] = Math.min(e[1], p.y0);
             e[2] = Math.max(e[2], p.x1());
             e[3] = Math.max(e[3], p.y1());
+        }
+        for(int[] r : clearWorld){
+            e[0] = Math.min(e[0], r[0]);
+            e[1] = Math.min(e[1], r[1]);
+            e[2] = Math.max(e[2], r[2]);
+            e[3] = Math.max(e[3], r[3]);
         }
         put(ox0, oy0, r0);
         return e;

@@ -29,6 +29,8 @@ public final class Router{
         public final Set<Body.Part> unreached = new LinkedHashSet<>();
         /** A drain: a line of conduits to an empty tile it leaks onto (Building.moveLiquidForward), no taker. */
         public boolean drain;
+        /** Payloads the line must hold on its way (each payload conveyor holds one): for a taker that takes a batch at once. */
+        public int buffer;
         public boolean drained;
 
         public Net(int id, String res, int cls, Body.Part from){
@@ -46,7 +48,7 @@ public final class Router{
 
         @Override
         public String toString(){
-            return String.format("%s %s->%s %.2f/s (%s)", res, from, to, flow(), new String[]{"ducts", "surge", "conduits"}[cls]);
+            return String.format("%s %s->%s %.3f/s (%s)", res, from, to, flow(), new String[]{"ducts", "surge", "conduits", "payloads, buffer " + buffer}[cls]);
         }
     }
 
@@ -162,7 +164,7 @@ public final class Router{
 
     int leaks(Piece q0, Piece partner){
         int c = 0;
-        if(q0.kind == Kind.leak) return 0;
+        if(q0.kind == Kind.leak || q0.kind == Kind.payload) return 0;
         Piece q = taking(q0);
         for(int dir = 0; dir < 4; dir++){
             int nx = q.x + Geo.dx(dir), ny = q.y + Geo.dy(dir);
@@ -438,6 +440,119 @@ public final class Router{
         return h[i];
     }
 
+    // ------------------------------------------------------------------ payloads
+
+    /** Whether a payload conveyor can stand with its centre here: every tile of it free of bodies and its line, floor. */
+    boolean openSquare(int cx, int cy, int s){
+        int x0 = Geo.lo(cx, s), y0 = Geo.lo(cy, s);
+        for(int y = y0; y < y0 + s; y++) for(int x = x0; x < x0 + s; x++) if(!open(x, y, blockOf(Kind.payload).solid)) return false;
+        return true;
+    }
+
+    float squarePrice(int cx, int cy, int s){
+        int x0 = Geo.lo(cx, s), y0 = Geo.lo(cy, s);
+        float c = cost(Kind.payload);
+        for(int y = y0; y < y0 + s; y++) for(int x = x0; x < x0 + s; x++){
+            int i = b.idx(x, y);
+            if(hard && !at[i].isEmpty()) return Float.POSITIVE_INFINITY;
+            c += hist[i] / (s * s) + pf * at[i].size();
+        }
+        return c;
+    }
+
+    /**
+     * A line of payload conveyors from a maker's front to a taker: each conveyor hands what it holds to what is ahead of
+     * its centre (PayloadConveyor: next, aligned and of its size, or a block that takes payloads), and holds one; the
+     * search's states are a conveyor's centre, the way it is entered and how many the line holds so far (to the
+     * buffer it must have), each step a conveyor's width.
+     */
+    boolean layPayload(Net net, Body.Part sink){
+        int s = blockOf(Kind.payload).size, need = net.buffer + 1;
+        int n = b.w * b.h * 4 * (need + 1);
+        float[] dist = new float[n];
+        int[] from = new int[n];
+        Arrays.fill(dist, Float.POSITIVE_INFINITY);
+        PriorityQueue<long[]> open = new PriorityQueue<>((p, q) -> Double.compare(Double.longBitsToDouble(p[0]), Double.longBitsToDouble(q[0])));
+        Body.Part m = net.from;
+        int[] f = Board.front(m);
+        int d0 = m.rot;
+        float unit = cost(Kind.payload);
+        for(int k = -1; k <= 1; k++){
+            int cx = f[0] + Geo.dx(d0) * (s / 2) + Geo.dx((d0 + 1) % 4) * k, cy = f[1] + Geo.dy(d0) * (s / 2) + Geo.dy((d0 + 1) % 4) * k;
+            if(!b.in(cx, cy) || !openSquare(cx, cy, s)) continue;
+            int st = ((b.idx(cx, cy) * 4) + d0) * (need + 1);
+            dist[st] = 0f;
+            from[st] = -1;
+            open.add(new long[]{Double.doubleToLongBits(gap(cx, cy, sink) / (float)s * unit), st});
+        }
+        int goal = -1, goalRot = -1;
+        float best = Float.POSITIVE_INFINITY;
+        while(!open.isEmpty()){
+            long[] top = open.poll();
+            int st = (int)top[1];
+            if(Double.longBitsToDouble(top[0]) >= best) break;
+            int held = st % (need + 1), d = st / (need + 1) % 4, idx = st / (need + 1) / 4;
+            int cx = idx % b.w, cy = idx / b.w;
+            for(int e = 0; e < 4; e++){
+                if(e == (d + 2) % 4) continue;
+                float c = squarePrice(cx, cy, s);
+                if(c == Float.POSITIVE_INFINITY) continue;
+                float nd = dist[st] + c;
+                int h2 = Math.min(need, held + 1);
+                //(ahead of its centre: the taker, which takes it from this side, with the line holding enough)
+                int fx = cx + Geo.dx(e) * (s / 2 + 1), fy = cy + Geo.dy(e) * (s / 2 + 1);
+                if(b.in(fx, fy) && sink.covers(fx, fy)){
+                    //(a conveyor hands on only to a block of its size straight ahead, or a bigger one it lies wholly against,
+                    //PayloadConveyor.onProximityUpdate)
+                    int off = e % 2 == 0 ? Math.abs(sink.ay() - cy) : Math.abs(sink.ax() - cx);
+                    boolean aligned = sink.size == s ? sink.ax() == cx + Geo.dx(e) * s && sink.ay() == cy + Geo.dy(e) * s : sink.size > s && off * 2 <= sink.size - s;
+                    if(aligned && h2 >= need && Board.takesPayloadFrom(sink, cx + Geo.dx(e) * (s / 2), cy + Geo.dy(e) * (s / 2)) && nd < best){
+                        best = nd;
+                        goal = st;
+                        goalRot = e;
+                    }
+                    continue;
+                }
+                int nx = cx + Geo.dx(e) * s, ny = cy + Geo.dy(e) * s;
+                if(!b.in(nx, ny) || !openSquare(nx, ny, s) || squareOnPath(from, need, st, nx, ny, s)) continue;
+                int ns = ((b.idx(nx, ny) * 4) + e) * (need + 1) + h2;
+                if(nd < dist[ns]){
+                    dist[ns] = nd;
+                    from[ns] = st * 4 + e;
+                    open.add(new long[]{Double.doubleToLongBits(nd + gap(nx, ny, sink) / (float)s * unit), ns});
+                }
+            }
+        }
+        if(goal < 0) return false;
+        List<Piece> laid = new ArrayList<>();
+        int st = goal, rot = goalRot;
+        while(true){
+            int idx = st / (need + 1) / 4;
+            Piece q = piece(Kind.payload, idx % b.w, idx / b.w, rot, net.id, net.res);
+            q.outs = 1 << rot;
+            laid.add(0, q);
+            if(from[st] < 0) break;
+            rot = from[st] % 4;
+            st = from[st] / 4;
+        }
+        for(Piece q : laid){
+            net.pieces.add(q);
+            place(q);
+        }
+        return true;
+    }
+
+    /** Whether a square about (x, y) overlaps a conveyor of the path to a state. */
+    boolean squareOnPath(int[] from, int need, int st, int x, int y, int s){
+        int cur = st;
+        while(cur >= 0){
+            int idx = cur / (need + 1) / 4;
+            if(Math.abs(idx % b.w - x) < s && Math.abs(idx / b.w - y) < s) return true;
+            cur = from[cur] < 0 ? -1 : from[cur] / 4;
+        }
+        return false;
+    }
+
     /** An empty tile a conduit may leak onto: no block, not solid ground, nothing of a line on it. */
     boolean leakable(int x, int y){
         int i = b.idx(x, y);
@@ -632,7 +747,24 @@ public final class Router{
     /** Bridges of items and of liquids on each tile, counted, for finding them along a way fast. */
     int[] itemBridges, liquidBridges;
 
+    /** The tiles a piece stands on (one, or a payload conveyor's square about its centre). */
+    int[] tilesOf(Piece q){
+        if(q.block == null || q.block.size == 1) return new int[]{b.idx(q.x, q.y)};
+        int s = q.block.size, x0 = Geo.lo(q.x, s), y0 = Geo.lo(q.y, s);
+        int[] out = new int[s * s];
+        int k = 0;
+        for(int y = y0; y < y0 + s; y++) for(int x = x0; x < x0 + s; x++) out[k++] = b.in(x, y) ? b.idx(x, y) : -1;
+        return out;
+    }
+
     void place(Piece q){
+        if(q.block != null && q.block.size > 1){
+            for(int t : tilesOf(q)) if(t >= 0){
+                at[t].add(q);
+                own[t] = true;
+            }
+            return;
+        }
         int i = b.idx(q.x, q.y);
         at[i].add(q);
         own[i] = true;
@@ -641,6 +773,10 @@ public final class Router{
     }
 
     void unplace(Piece q){
+        if(q.block != null && q.block.size > 1){
+            for(int t : tilesOf(q)) if(t >= 0) at[t].remove(q);
+            return;
+        }
         int i = b.idx(q.x, q.y);
         if(at[i].remove(q)){
             if(q.kind == Kind.bridgeIn || q.kind == Kind.bridgeOut) itemBridges[i]--;
@@ -691,7 +827,7 @@ public final class Router{
                 order.sort(Comparator.comparingInt(p -> gap(p, net.from)));
                 for(Body.Part sink : order){
                     if(touches(net.from, sink, net.res, net.cls == 2)) continue;
-                    if(!lay(net, sink)) net.unreached.add(sink);
+                    if(!(net.cls == 3 ? layPayload(net, sink) : lay(net, sink))) net.unreached.add(sink);
                 }
                 if(net.drain) net.drained = lay(net, null);
             }
@@ -798,7 +934,7 @@ public final class Router{
                 order.sort(Comparator.comparingInt(p -> gap(p, net.from)));
                 for(Body.Part sink : order){
                     if(touches(net.from, sink, net.res, net.cls == 2)) continue;
-                    if(!lay(net, sink)){
+                    if(!(net.cls == 3 ? layPayload(net, sink) : lay(net, sink))){
                         whole = false;
                         break;
                     }
@@ -839,8 +975,12 @@ public final class Router{
         return dx + dy;
     }
 
-    /** Whether a maker hands this straight to a taker it touches. */
+    /** Whether a maker hands this straight to a taker it touches (a payload out of its front only, into what takes it there). */
     static boolean touches(Body.Part from, Body.Part to, String res, boolean liquid){
+        if(Board.isPayload(res)){
+            int[] f = Board.front(from);
+            return to.covers(f[0], f[1]) && Board.takesPayloadFrom(to, Board.front(from)[0] - Geo.dx(from.rot), Board.front(from)[1] - Geo.dy(from.rot));
+        }
         for(int[] t : from.around()){
             if(!to.covers(t[0], t[1])) continue;
             List<String> gives = liquid ? Board.liquidsOut(from, t[2]) : Board.itemsOut(from);

@@ -20,12 +20,15 @@ public final class Placer{
     /** What is made and taken of a thing: makers and takers (parts), with their rates. */
     public static final class Group{
         public final String res;
-        public final boolean liquid;
+        public final boolean liquid, payload;
         public final List<Body.Part> makers = new ArrayList<>(), takers = new ArrayList<>();
+        /** For a payload: what a taker that takes a batch wants its lines to hold (payload conveyors), as ground to keep. */
+        public final Map<Body.Part, Integer> buffer = new HashMap<>();
 
         public Group(String res, boolean liquid){
             this.res = res;
             this.liquid = liquid;
+            this.payload = Board.isPayload(res);
         }
     }
 
@@ -81,6 +84,19 @@ public final class Placer{
         Arrays.fill(crowd, 0f);
         double hard = 0, wire = 0, port = 0, crowding = 0, yield = 0;
         boolean[] lane = new boolean[w * h];
+        //(the areas bodies keep clear: none of two exclusive bodies over one another)
+        int[] zone = new int[w * h];
+        for(Body body : bodies) for(int[] r : body.clearWorld){
+            for(int y = r[1]; y <= r[3]; y++) for(int x = r[0]; x <= r[2]; x++){
+                if(!b.in(x, y)){
+                    if(body.exclusive) hard += 0.2;
+                    continue;
+                }
+                int i = b.idx(x, y);
+                lane[i] = true;
+                if(body.exclusive && zone[i]++ > 0) hard += 1;
+            }
+        }
         for(var e : places.entrySet()){
             Places p = e.getValue();
             int k = index(e.getKey(), p);
@@ -117,9 +133,16 @@ public final class Placer{
                     }
                 }
                 if(best == null) continue;
+                //(a payload line's buffer: so many conveyors more, laid about the taker, a conveyor's square each)
+                int held = g.payload ? g.buffer.getOrDefault(t, 0) : 0;
+                if(held > 0){
+                    int s = 3;
+                    wire += held * s;
+                    spread(best, t, held * s * s);
+                }
                 if(bg >= 0){
-                    wire += bg + 1;
-                    spread(best, t, bg + 1);
+                    wire += g.payload ? (bg + 1) * 3 : bg + 1;
+                    spread(best, t, g.payload ? (bg + 1) * 3 : bg + 1);
                 }
             }
             for(Body.Part m : g.makers){
@@ -156,7 +179,7 @@ public final class Placer{
                     for(Body.Part t : g.takers) if(t != p && !Router.touches(p, t, g.res, g.liquid)) touching = false;
                 }
                 if(touching) continue;
-                wants.add(new int[]{gi, makes && !takes && g.liquid ? 1 : 0});
+                wants.add(new int[]{gi, makes && !takes && g.payload ? 2 : makes && !takes && g.liquid ? 1 : 0});
                 wantPart.add(p);
             }
             //(a maker of what the core should not have, against the core)
@@ -167,6 +190,23 @@ public final class Placer{
             }
         }
         port += wants.size() - match(wants, wantPart, cover);
+        //(a payload leaves its maker into the square ahead of its front: a conveyor there, or its taker; each tile of
+        //that square held by another body counts short)
+        for(Group g : groups){
+            if(!g.payload) continue;
+            for(Body.Part m : g.makers){
+                if(m.body.fixed) continue;
+                boolean touching = false;
+                for(Body.Part t : g.takers) if(t != m && Router.touches(m, t, g.res, false)) touching = true;
+                if(touching) continue;
+                int[] f = Board.front(m);
+                int cx = f[0] + Geo.dx(m.rot), cy = f[1] + Geo.dy(m.rot);
+                for(int y = cy - 1; y <= cy + 1; y++) for(int x = cx - 1; x <= cx + 1; x++){
+                    if(!b.in(x, y) || !b.floor(x, y)) port += 1;
+                    else if(cover[b.idx(x, y)] != 0) port += 1;
+                }
+            }
+        }
         //(a free tile handed different things by the blocks about it takes only a carrier that faces away from all but
         //one of them: little use to any line; each thing more handed into it counts as a line end short)
         Map<Integer, Set<String>> handed = new HashMap<>();
@@ -198,6 +238,12 @@ public final class Placer{
     /** The tiles a want may take: free tiles against its part (on the side its liquid comes out of, for a one-sided maker). */
     List<Integer> tilesFor(int[] want, Body.Part p, int[] cover){
         List<Integer> out = new ArrayList<>();
+        if(want[0] >= 0 && want[1] == 2){
+            //(a payload leaves by the tile ahead of its maker only)
+            int[] f = Board.front(p);
+            if(b.in(f[0], f[1]) && cover[b.idx(f[0], f[1])] == 0 && b.floor(f[0], f[1])) out.add(b.idx(f[0], f[1]));
+            return out;
+        }
         String liquid = want[0] == -2 ? Board.mustDrain(p) : want[0] >= 0 && want[1] == 1 ? groups.get(want[0]).res : null;
         for(int[] t : p.around()){
             if(!b.in(t[0], t[1]) || cover[b.idx(t[0], t[1])] != 0 || !b.floor(t[0], t[1])) continue;

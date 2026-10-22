@@ -25,7 +25,7 @@ import java.util.*;
  */
 public final class Carriers{
     /** What a carrier does in a line, by its class (Board's rules are written for these). */
-    public enum Role{duct, armored, router, bridge, surge, conduit, liquidBridge, liquidJunction, liquidRouter, node, powerSource}
+    public enum Role{duct, armored, router, bridge, surge, conduit, liquidBridge, liquidJunction, liquidRouter, node, powerSource, payload, payloadRouter}
 
     public final EnumMap<Role, List<Block>> blocks = new EnumMap<>(Role.class);
     /** Items or liquid a second a line of it carries (for a surge line, without power; powered in surgePowered). */
@@ -33,6 +33,8 @@ public final class Carriers{
     public final Map<Block, Float> surgePowered = new HashMap<>();
 
     static Role role(Block b){
+        if(b instanceof mindustry.world.blocks.payloads.PayloadRouter) return Role.payloadRouter;
+        if(b instanceof mindustry.world.blocks.payloads.PayloadConveyor) return Role.payload;
         if(b instanceof StackConveyor s) return s.outputRouter ? null : Role.surge;
         if(b instanceof StackRouter) return null;
         if(b instanceof Duct d) return d.armored ? Role.armored : Role.duct;

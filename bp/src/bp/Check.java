@@ -372,8 +372,30 @@ public final class Check{
         }
     }
 
+    /**
+     * Payloads: a block that makes them (a unit factory, a refabricator, a constructor) hands each out of its front
+     * (PayloadBlock.moveOutPayload); a payload conveyor to what is ahead of it (its next, PayloadConveyor), the end to
+     * whatever is ahead that takes payloads.
+     */
+    void payloads(){
+        for(Building b : world.buildings()){
+            boolean makes = b.block instanceof mindustry.world.blocks.units.UnitFactory || b.block instanceof mindustry.world.blocks.units.Reconstructor || b.block instanceof mindustry.world.blocks.payloads.Constructor;
+            if(!makes) continue;
+            Set<String> got = reach.computeIfAbsent("payload from " + Scratch.where(b), k -> new HashSet<>());
+            Building at = b.front();
+            Set<Building> seen = new HashSet<>();
+            while(at != null && at.block instanceof mindustry.world.blocks.payloads.PayloadConveyor && !(at.block instanceof mindustry.world.blocks.payloads.PayloadRouter) && seen.add(at)){
+                at = ((mindustry.world.blocks.payloads.PayloadConveyor.PayloadConveyorBuild)at).next;
+            }
+            String end = at == null ? "nowhere" : Scratch.where(at);
+            if(at != null) got.add(end);
+            lines.add("payload from " + Scratch.where(b) + " -> " + end + (seen.isEmpty() ? "" : " (" + seen.size() + " conveyors)"));
+        }
+    }
+
     public Check run(){
         lines.addAll(world.problems);
+        payloads();
         items();
         liquids();
         power();
