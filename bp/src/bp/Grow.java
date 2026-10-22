@@ -901,6 +901,23 @@ public final class Grow{
         Spec s = g.layOut(seed);
         s.name = prob.name;
         s.world = world;
+        //(a line between what stands only, that could not be laid: not laid now, tried again at a later step; what is
+        //new is not held up by it)
+        List<Router.Net> notNow = new ArrayList<>();
+        for(Router.Net n : g.bestNets){
+            if(n.unreached.isEmpty()) continue;
+            boolean standingOnly = n.from.body.standing;
+            for(Body.Part t : n.to) if(!t.body.standing) standingOnly = false;
+            if(standingOnly) notNow.add(n);
+        }
+        if(!notNow.isEmpty()){
+            Set<String> gone = new HashSet<>();
+            for(Router.Net n : notNow) for(Piece q : n.pieces) if(q.block != null) gone.add(q.block.name + "@" + q.x + "," + q.y);
+            s.places.removeIf(p -> gone.contains(p.block() + "@" + p.x() + "," + p.y()));
+            g.bestNets.removeAll(notNow);
+            g.problems -= notNow.stream().mapToInt(n -> n.unreached.size()).sum();
+            System.out.println("  not laid now (between what stands): " + notNow);
+        }
         int bad = g.verify(s, false);
         System.out.println(String.format("  laid out; %s", bad == 0 ? "clean by the game's rules" : bad + " things wrong by the game's rules" + (before > 0 ? " (" + before + " before it)" : "")));
         if(g.problems > 0 || bad > before){
