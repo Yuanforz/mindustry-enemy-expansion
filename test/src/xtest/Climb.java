@@ -29,7 +29,9 @@ import java.util.*;
  */
 public class Climb{
     static Team us;
-    static final ObjectIntMap<Item> lastStock = new ObjectIntMap<>();
+    static final ObjectIntMap<Item> lastStock = new ObjectIntMap<>(), planStock = new ObjectIntMap<>();
+    static float lastPlanAt;
+    static final Set<String> builtKeys = new HashSet<>();
 
     /** One thing to build: its id in the ledger, its blocks (name, x, y, turn, config or null). */
     static final class Job{
@@ -108,7 +110,20 @@ public class Climb{
                 for(Job j : next) names.add(j.unit == null ? j.kind : j.unit);
                 String summary = out.stream().filter(l -> l.startsWith("  built by then")).reduce("", (a, c) -> a + " " + c.trim());
                 System.out.println(String.format("  %s: step %d planned in %.0f s:%s; to build: %s", time(now), steps, secs, summary, names));
-                for(String l : out) if(l.contains("NOT laid out") || l.contains("Exception") || l.contains("things wrong") || l.startsWith("schedule")) System.out.println("    " + l.trim());
+                for(String l : out) if(l.contains("NOT laid out") || l.contains("Exception") || l.contains("things wrong") || l.startsWith("schedule") || l.contains("expected into the core")) System.out.println("    " + l.trim());
+                //(what came into the core over the span just gone, a second, against what was expected of it: what the
+                //stock grew by, and what was spent on the blocks built meanwhile)
+                ObjectIntMap<Item> spent = new ObjectIntMap<>();
+                for(Job j : jobs) if(!j.remove) for(Object[] b : j.blocks) if(built(b) && builtKeys.add(Builder.key(b))) for(ItemStack st : Vars.content.block((String)b[0]).requirements) spent.increment(st.item, st.amount);
+                StringBuilder got = new StringBuilder();
+                float spanGone = Math.max(1f, now - lastPlanAt);
+                for(Item item : Vars.content.items()){
+                    int d = core.items.get(item) - planStock.get(item, 0) + spent.get(item, 0);
+                    if(d != 0) got.append(String.format(Locale.ROOT, "%s %.2f ", item.name, d / spanGone));
+                    planStock.put(item, core.items.get(item));
+                }
+                System.out.println("    came into the core over the last " + Math.round(spanGone) + " s, a second: " + got.toString().trim());
+                lastPlanAt = now;
             }
             Boot.frames(1);
             if(now >= nextTell){
@@ -142,19 +157,52 @@ public class Climb{
                     lastStock.put(item, core.items.get(item));
                 }
                 System.out.println(String.format("  %s: %d of %d things given stand; %d of %d machines work (idle: %s); core %s (this minute: %s); %s", time(now), standing, jobs.size(), working, machines, idle, core.items, came.toString().trim(), hand.doing));
+                if((int)(now / 60f) % 5 == 0) System.out.println("    " + finalForm());
             }
         }
         int standing = 0;
         for(Job j : jobs) if(standing(j)) standing++;
         System.out.println(String.format("CLIMB RESULT %s: %d of %d things given stand after %s; %d steps planned in %.0f s", map.nameWithoutExtension(), standing, jobs.size(), time(minutes * 60f), steps, thought));
+        System.out.println("  " + finalForm());
         System.exit(0);
+    }
+
+    /**
+     * How near the final form is: of Erekir's blocks a player may build (bp.Final.erekir), how many stand, and of those
+     * that work by something, how many work at full by the game's own measure (efficiency); power to spare on the grids.
+     */
+    static String finalForm(){
+        List<Block> all = bp.Final.erekir();
+        Map<Block, Float> best = new HashMap<>();
+        for(Building b : us.data().buildings){
+            float e = b.block.consumers.length == 0 ? 1f : b.efficiency;
+            best.merge(b.block, e, Math::max);
+        }
+        int stand = 0, full = 0;
+        List<String> missing = new ArrayList<>(), slow = new ArrayList<>();
+        for(Block bl : all){
+            if(bl instanceof CoreBlock) continue;
+            Float e = best.get(bl);
+            if(e == null){
+                missing.add(bl.name);
+                continue;
+            }
+            stand++;
+            if(e >= 0.99f) full++;
+            else slow.add(bl.name + String.format(Locale.ROOT, ":%.2f", e));
+        }
+        float spare = 0f;
+        Set<mindustry.world.blocks.power.PowerGraph> grids = new HashSet<>();
+        for(Building b : us.data().buildings) if(b.power != null) grids.add(b.power.graph);
+        for(var g : grids) spare += (g.getPowerProduced() - g.getPowerNeeded()) * 60f;
+        return String.format(Locale.ROOT, "final form: %d of %d kinds of block stand, %d at full; power to spare %.0f/s; not yet: %d %s; not at full: %s", stand, all.size(), full, spare, missing.size(), missing.subList(0, Math.min(12, missing.size())), slow.subList(0, Math.min(12, slow.size())));
     }
 
     /** One step of the planner, in a process of its own (the game waits meanwhile); its output lines. */
     static List<String> grow(String dataDir, String map, String plan, String ledger, String state, String orders, String spans, String spanSeconds, String think){
         List<String> lines = new ArrayList<>();
         try{
-            ProcessBuilder pb = new ProcessBuilder("sh", "bp/run.sh", "-Dbp.wholeSpans=1", "bp.Grow", dataDir, map, plan, ledger, state, orders, spans, spanSeconds, think);
+            ProcessBuilder pb = new ProcessBuilder("sh", "bp/run.sh", "-Dbp.wholeSpans=1", "-Dbp.attempts=4", "bp.Grow", dataDir, map, plan, ledger, state, orders, spans, spanSeconds, think);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             try(BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))){

@@ -221,6 +221,7 @@ public final class Grow{
     /** What a unit costs, takes and makes, from one of it as a body (its heaters arranged as they will stand). */
     void measure(Gen g){
         float line = ledger.lineTiles();
+        Map<String, Float> perLine = ledger.lineCost(), perNode = ledger.nodeCost();
         Block duct = g.carriers.cheapest(Carriers.Role.duct, g.weights), conduit = g.carriers.cheapest(Carriers.Role.conduit, g.weights);
         for(Unit u : units){
             Body b = body(g, u, 0);
@@ -235,13 +236,16 @@ public final class Grow{
                 res.addAll(p.recipe.fixedOut.keySet());
                 for(String k : res) u.rate.merge(k, p.makes(k) - p.takes(k), Float::sum);
                 u.power += (rt.powerOut - rt.powerUse) * p.work + p.recipe.fixedPowerOut - p.recipe.fixedPowerUse;
-                //(and a line for each thing it takes or makes, so long as lines have been: what it will cost to join it)
+                //(and a line for each thing it takes or makes, what lines have cost so far (else so many tiles of the
+                //cheapest carrier); power nodes for one that uses power, what they have cost so far)
                 for(String k : res){
                     Block c = Vars.content.liquid(k) != null ? conduit : Vars.content.item(k) != null ? duct : null;
                     if(c == null) continue;
-                    for(ItemStack st : c.requirements) u.cost.merge(st.item.name, st.amount * line, Float::sum);
+                    if(perLine != null) for(var e : perLine.entrySet()) u.cost.merge(e.getKey(), e.getValue(), Float::sum);
+                    else for(ItemStack st : c.requirements) u.cost.merge(st.item.name, st.amount * line, Float::sum);
                     u.seconds += c.buildTime / 60f * line;
                 }
+                if(perNode != null && Power.needs(p.block)) for(var e : perNode.entrySet()) u.cost.merge(e.getKey(), e.getValue(), Float::sum);
             }
         }
     }
@@ -359,6 +363,34 @@ public final class Grow{
             int n = 0;
             for(Inst i : insts) if(unit.equals(i.unit) && !i.removed) n++;
             return n;
+        }
+
+        /**
+         * What a line has cost, a thing joined (the items of its blocks over its flows), and power nodes, a machine joined:
+         * as they have been; null until there are lines (nodes).
+         */
+        Map<String, Float> lineCost(){
+            Map<String, Float> c = new TreeMap<>();
+            int joins = 0;
+            for(Inst i : insts) if(i.kind.equals("line")){
+                for(Object[] q : i.pieces) for(ItemStack st : Vars.content.block((String)q[1]).requirements) c.merge(st.item.name, (float)st.amount, Float::sum);
+                joins += Math.max(1, i.flows.size());
+            }
+            if(joins == 0) return null;
+            for(var e : c.entrySet()) e.setValue(e.getValue() / joins);
+            return c;
+        }
+
+        Map<String, Float> nodeCost(){
+            Map<String, Float> c = new TreeMap<>();
+            int machines = 0;
+            for(Inst i : insts){
+                if(i.kind.equals("nodes")) for(Object[] p : i.parts) for(ItemStack st : Vars.content.block((String)p[0]).requirements) c.merge(st.item.name, (float)st.amount, Float::sum);
+                else if(!i.kind.equals("line")) machines++;
+            }
+            if(machines == 0 || c.isEmpty()) return null;
+            for(var e : c.entrySet()) e.setValue(e.getValue() / machines);
+            return c;
         }
 
         /** How long a line has been, a thing joined (tiles of carrier over flows): ten until there are lines. */
@@ -645,6 +677,11 @@ public final class Grow{
             System.out.println("    ways up taken: " + ways);
         }
         for(var e : dig.entrySet()) if(e.getValue()[1].solutionValue() > 1e-3) digFirst.put(e.getKey(), (float)e.getValue()[1].solutionValue());
+        //(what the plan expects into the core in the first span, a second: made beyond taken, and dug)
+        for(Unit u : units) for(var e : u.rate.entrySet()) if(Vars.content.item(e.getKey()) != null) expected.merge(e.getKey(), e.getValue() * (float)a.get(u)[1].solutionValue(), Float::sum);
+        for(var e : dig.entrySet()) expected.merge(e.getKey(), st.dig.get(e.getKey()) * (float)e.getValue()[1].solutionValue() / L[1], Float::sum);
+        expected.values().removeIf(v -> Math.abs(v) < 1e-3f);
+        System.out.println("  expected into the core, a second: " + Recipe.fmt(new LinkedHashMap<>(expected)));
         return out;
     }
 
@@ -698,6 +735,8 @@ public final class Grow{
     }
 
     final Map<String, Float> digFirst = new LinkedHashMap<>();
+    /** What the first span is expected to bring into the core, a second, by item. */
+    final Map<String, Float> expected = new TreeMap<>();
     /** Ways up the first span takes down: how many of each. */
     final Map<Unit, Integer> takeDown = new LinkedHashMap<>();
 

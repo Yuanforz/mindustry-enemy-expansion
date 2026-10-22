@@ -670,7 +670,41 @@ public final class Router{
     }
 
     /** Lays the line to one taker (null: a drain's empty tile): true if laid. */
+    /**
+     * Lays the line to one taker (null: a drain's empty tile): true if laid. Sought first about the maker and the taker
+     * (the square about them and the line so far, so many tiles more each way), then wider, at last the whole map: a
+     * line seldom goes far out of its way, and a search of the whole map for each line, each round, is most of the time.
+     */
     boolean lay(Net net, Body.Part sink){
+        if(sink == null || b.w * b.h <= 64 * 64) return layIn(net, sink, null);
+        int x0 = Math.min(net.from.x0, sink.x0), y0 = Math.min(net.from.y0, sink.y0), x1 = Math.max(net.from.x1(), sink.x1()), y1 = Math.max(net.from.y1(), sink.y1());
+        for(Piece q : net.pieces){
+            x0 = Math.min(x0, q.x);
+            y0 = Math.min(y0, q.y);
+            x1 = Math.max(x1, q.x);
+            y1 = Math.max(y1, q.y);
+        }
+        for(int margin : new int[]{12, 36}){
+            int[] box = {x0 - margin, y0 - margin, x1 + margin, y1 + margin};
+            if(box[0] <= 0 && box[1] <= 0 && box[2] >= b.w - 1 && box[3] >= b.h - 1) break;
+            if(layIn(net, sink, box)) return true;
+        }
+        return layIn(net, sink, null);
+    }
+
+    /** The square the search keeps within (null: the whole map). */
+    int[] box;
+
+    boolean layIn(Net net, Body.Part sink, int[] within){
+        box = within;
+        try{
+            return layBoxed(net, sink);
+        }finally{
+            box = null;
+        }
+    }
+
+    boolean layBoxed(Net net, Body.Part sink){
         ensure();
         now++;
         gatheredOf.clear();
@@ -742,6 +776,7 @@ public final class Router{
             for(int m : moves(net, st)){
                 int type = m & 7, e = m >> 3 & 3, j = m >> 5 & 7, ff = m >> 8 & 3;
                 int[] nx = next(st, m);
+                if(box != null && (nx[0] < box[0] || nx[1] < box[1] || nx[0] > box[2] || nx[1] > box[3])) continue;
                 //(a drain ends in a conduit that leaks, Conduit.leaks: a bridge's end hands on without leaking, moveLiquidForward(false))
                 boolean goal = b.in(nx[0], nx[1]) && (sink == null ? leakable(nx[0], nx[1]) && type == 4 && blockOf(Kind.conduit) instanceof mindustry.world.blocks.liquid.Conduit cd && cd.leaks : inPart(nx[0], nx[1], sink));
                 //(a surge line of one tile loads nothing)
@@ -963,6 +998,9 @@ public final class Router{
         return n;
     }
 
+    /** Takers a line cannot reach at all (no way, whatever is shared): not sought again. */
+    final Set<Long> walledOff = new HashSet<>();
+
     public boolean run(int maxRounds){
         own = new boolean[b.w * b.h];
         for(Net n : nets) byId.put(n.id, n);
@@ -981,7 +1019,16 @@ public final class Router{
                 order.sort(Comparator.comparingInt(p -> gap(p, net.from)));
                 for(Body.Part sink : order){
                     if(touches(net.from, sink, net.res, net.cls == 2)) continue;
-                    if(!(net.cls == 3 ? layPayload(net, sink) : lay(net, sink))) net.unreached.add(sink);
+                    //(a taker no way reaches, other lines' tiles allowed, no way reaches in any round: what stands in the
+                    //way does not move while lines are laid)
+                    if(walledOff.contains(net.id * 100000L + System.identityHashCode(sink))){
+                        net.unreached.add(sink);
+                        continue;
+                    }
+                    if(!(net.cls == 3 ? layPayload(net, sink) : lay(net, sink))){
+                        net.unreached.add(sink);
+                        if(net.cls != 3 && net.pieces.isEmpty()) walledOff.add(net.id * 100000L + System.identityHashCode(sink));
+                    }
                 }
                 if(net.drain) net.drained = lay(net, null);
             }
