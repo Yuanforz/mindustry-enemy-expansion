@@ -53,6 +53,7 @@ public class Climb{
         Fi ledger = work.child("ledger.txt"), state = work.child("state.txt"), orders = work.child("orders.txt");
         ledger.delete();
         work.child("shapes.txt").delete();
+        work.child("steps").deleteDirectory();
 
         Vars.logic.reset();
         SaveIO.load(map);
@@ -100,6 +101,8 @@ public class Climb{
                 hand.keepOnly(jobs);
                 long t0 = System.nanoTime();
                 List<String> out = grow(args[0], map.path(), plan, ledger.path(), state.path(), orders.path(), spans, spanSeconds, think);
+                //(the planner's whole say, kept by step)
+                work.child("steps").child("step-" + (steps + 1) + ".log").writeString(String.join("\n", out) + "\n");
                 float secs = (System.nanoTime() - t0) / 1e9f;
                 thought += secs;
                 steps++;
@@ -264,10 +267,16 @@ public class Climb{
         return String.format("%d:%02d", (int)(s / 60), (int)(s % 60));
     }
 
-    /** Whether every block of a thing stands, built (one to be taken down: whether none does). */
+    /** Whether every block of a thing stands, built (one to be taken down: whether none does, nor is half taken down). */
     static boolean standing(Job j){
-        for(Object[] b : j.blocks) if(built(b) == j.remove) return false;
+        for(Object[] b : j.blocks) if(j.remove ? built(b) || comingDown(b) : !built(b)) return false;
         return true;
+    }
+
+    /** Whether a block is being taken down there (the game's ConstructBuild of it, not building it). */
+    static boolean comingDown(Object[] b){
+        Tile t = Vars.world.tile((Integer)b[1], (Integer)b[2]);
+        return t != null && t.build instanceof ConstructBlock.ConstructBuild c && t.build.team == us && !c.wasConstructing && c.current != null && c.current.name.equals(b[0]);
     }
 
     /** Whether some block of a thing stands or is going up. */
@@ -352,8 +361,9 @@ public class Climb{
             job = queue.isEmpty() ? null : queue.peek();
             //what to take down, first
             for(Job j : queue) if(j.remove){
+                //(what still stands of it, a block half taken down too: it goes on being taken down)
                 List<Object[]> stand = new ArrayList<>();
-                for(Object[] b : j.blocks) if(built(b)) stand.add(b);
+                for(Object[] b : j.blocks) if(built(b) || comingDown(b)) stand.add(b);
                 if(stand.isEmpty()) continue;
                 unit.mineTile = null;
                 if(unit.plans.isEmpty() || !unit.plans.first().breaking) {
