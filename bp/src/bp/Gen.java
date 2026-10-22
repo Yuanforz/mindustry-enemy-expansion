@@ -32,6 +32,9 @@ public final class Gen{
     Balance.Result balance;
     Body.Part core;
     final List<Placer.Group> groups = new ArrayList<>();
+    List<Router.Net> bestNets = new ArrayList<>();
+    List<Piece> bestPower = new ArrayList<>();
+    int problems;
 
     Gen(Problem prob, String dataDir){
         this.prob = prob;
@@ -54,6 +57,7 @@ public final class Gen{
         }
         if(prob.freePower) bal.sources.add("power");
         for(Recipe r : Recipes.all()) if(r.kind != Recipe.Kind.source && !r.name.equals("heat-source")) bal.recipes.add(r);
+        bal.expandWildcards();
         balance = bal.solve();
         System.out.println(balance);
     }
@@ -102,6 +106,7 @@ public final class Gen{
         int ports = 0;
         for(String k : r.in.keySet()) if(Vars.content.item(k) != null || Vars.content.liquid(k) != null) ports++;
         for(String k : r.out.keySet()) if(Vars.content.item(k) != null || Vars.content.liquid(k) != null) ports++;
+        if(r.powerUse > 0f || r.powerOut > 0f) ports++;
         List<Heat.Put> puts = Heat.arrange(r, heaters, redirectors, prob.perTile, prob.perItem, ports);
         if(puts == null){
             notes.add("no arrangement of heaters for " + r.name + " with " + heaters.size() + " kinds of heater");
@@ -128,15 +133,27 @@ public final class Gen{
             for(Body body : bodies) for(Body.Part p : body.parts){
                 if(p.makes(k) > 1e-6f || k.equals(p.config) && (p.block instanceof mindustry.world.blocks.sandbox.ItemSource || p.block instanceof mindustry.world.blocks.sandbox.LiquidSource)) g.makers.add(p);
                 if(p.takes(k) > 1e-6f || Board.isCore(p) && item && prob.goals.containsKey(k)) g.takers.add(p);
+                if(p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid && liquid && drained(k)) g.takers.add(p);
             }
             if(!g.makers.isEmpty() && !g.takers.isEmpty()) groups.add(g);
         }
     }
 
+    /** Whether something must be rid of this liquid all the time. */
+    boolean drained(String liquid){
+        for(Body body : bodies) for(Body.Part p : body.parts) if(liquid.equals(Board.mustDrain(p))) return true;
+        return false;
+    }
+
     // ------------------------------------------------------------------ 4: who feeds whom
 
+    /** What a maker gives a second; a source as much as lines from each of its sides carry. */
     float supply(Body.Part p, String res){
-        if(p.recipe == null) return 1e6f;
+        if(p.recipe == null){
+            boolean liquid = Vars.content.liquid(res) != null;
+            Block line = carriers.cheapest(liquid ? Carriers.Role.conduit : Carriers.Role.duct, prob.perTile, prob.perItem);
+            return p.around().size() * carriers.rate.get(line);
+        }
         return p.makes(res);
     }
 
@@ -232,6 +249,21 @@ public final class Gen{
                 }
             }
         }
+        //drains for what must be got rid of all the time: into the nearest void standing there (the sandbox's), else let
+        //out onto the ground, where it harms least (Router.harmAt: a liquid floor it cannot lie on takes it, away from what
+        //holds the liquid its puddles spread into)
+        for(Body body : bodies) for(Body.Part p : body.parts){
+            String liquid = Board.mustDrain(p);
+            if(liquid == null) continue;
+            Body.Part sink = null;
+            for(Body o : bodies) for(Body.Part q : o.parts) if(q.block instanceof mindustry.world.blocks.sandbox.LiquidVoid && (sink == null || Placer.gap(p, q) < Placer.gap(p, sink))) sink = q;
+            Router.Net n = new Router.Net(id++, liquid, 2, p);
+            if(sink != null){
+                n.to.add(sink);
+                n.flows.add(p.makes(liquid));
+            }else n.drain = true;
+            nets.add(n);
+        }
         return nets;
     }
 
@@ -255,33 +287,68 @@ public final class Gen{
         bodies();
         groups();
         Placer placer = new Placer(board, bodies, groups, seed);
-        Router router = null;
-        boolean clean = false;
-        for(int attempt = 0; attempt < 5 && !clean; attempt++){
-            int steps = 4000 * Math.max(4, placer.movable.size());
-            placer.run(steps, attempt == 0);
+        Spec best = null;
+        int bestBad = Integer.MAX_VALUE;
+        Map<Body, int[]> bestAt = new HashMap<>();
+        List<String> bestNotes = new ArrayList<>();
+        for(int attempt = 0; attempt < 8; attempt++){
+            //(the first placing from anywhere; after it, mending: from where things are, cool, so that what was laid well
+            //stays and the room asked for is found about the places fought over)
+            int steps = (attempt == 0 ? 4000 : 1500) * Math.max(4, placer.movable.size());
+            placer.run(steps, attempt == 0, attempt == 0 ? 1.0 : 0.05);
             System.out.println(String.format("placing %d: cost %.1f (%d bodies, %d steps)", attempt, placer.cost, bodies.size(), steps));
             List<Router.Net> nets = nets();
-            router = new Router(board, nets, prob.perTile, prob.perItem);
-            clean = router.run(40);
-            System.out.println(String.format("lines: %d, %s after %d rounds (%d tiles shared, %d leaks)", nets.size(), clean ? "clean" : "NOT clean", router.rounds, router.overused, router.leaks));
-            if(!clean){
-                //(more room about the parts whose lines could not be laid, and about the ends of lines still fought over)
-                for(Router.Net n : nets){
-                    for(Body.Part p : n.unreached){
-                        placer.margin.merge(p, 1, Integer::sum);
-                        placer.margin.merge(n.from, 1, Integer::sum);
-                    }
-                }
-                placer.wCrowd *= 2f;
+            Router router = new Router(board, nets, prob.perTile, prob.perItem);
+            boolean clean = router.run(80);
+            Power power = new Power(board, bodies, router.all(), prob.freePower, prob.perTile, prob.perItem).run();
+            List<String> here = new ArrayList<>();
+            int unreached = 0;
+            for(Router.Net n : nets) if(!n.unreached.isEmpty()){
+                unreached += n.unreached.size();
+                here.add("not reached: " + n + " to " + n.unreached);
             }
+            for(Router.Net n : nets) if(n.drain && !n.drained){
+                unreached++;
+                here.add("not drained: " + n);
+            }
+            if(!power.unpowered.isEmpty()) here.add("without power: " + power.unpowered);
+            int bad = unreached + router.overused + router.leaks + power.unpowered.size();
+            System.out.println(String.format("lines: %d, %s after %d rounds (%d tiles shared, %d leaks, %d not reached); power: %d nodes, %d without", nets.size(), clean ? "clean" : "NOT clean", router.rounds, router.overused, router.leaks, unreached, power.added.size(), power.unpowered.size()));
+            for(String h : here) System.out.println("    " + h);
+            if(bad < bestBad){
+                bestBad = bad;
+                best = spec(router, power);
+                bestNotes = here;
+                bestNets = nets;
+                bestPower = power.added;
+                bestAt.clear();
+                for(Body body : bodies) bestAt.put(body, new int[]{body.ox, body.oy, body.rot});
+            }
+            if(bad == 0) break;
+            //(more room about the parts whose lines could not be laid, and about the ends of lines still fought over)
+            for(Router.Net n : nets) for(Body.Part p : n.unreached){
+                placer.margin.merge(p, 1, Integer::sum);
+                placer.margin.merge(n.from, 1, Integer::sum);
+            }
+            //(and about each tile still fought over, the parts against it)
+            Set<Body.Part> about = new HashSet<>();
+            for(int i : router.fought){
+                int x = i % board.w, y = i / board.w;
+                for(int d = 0; d < 4; d++){
+                    int nx = x + Geo.dx(d), ny = y + Geo.dy(d);
+                    if(board.in(nx, ny) && board.partAt[board.idx(nx, ny)] != null) about.add(board.partAt[board.idx(nx, ny)]);
+                }
+            }
+            for(Body.Part p : about) placer.margin.merge(p, 1, Integer::sum);
+            placer.wCrowd *= 1.3f;
         }
-        Power power = new Power(board, bodies, router.all(), prob.freePower, prob.perTile, prob.perItem).run();
-        if(!power.unpowered.isEmpty()) notes.add("without power: " + power.unpowered);
-        for(Router.Net n : router.nets) if(!n.unreached.isEmpty()) notes.add("not reached: " + n + " to " + n.unreached);
-        System.out.println(String.format("power: %d nodes or sources; generated in %.1f s", power.added.size(), (System.nanoTime() - t0) / 1e9));
+        notes.addAll(bestNotes);
+        for(var e : bestAt.entrySet()) e.getKey().put(e.getValue()[0], e.getValue()[1], e.getValue()[2]);
+        board.putParts(bodies);
+        problems = bestBad;
+        System.out.println(String.format("generated in %.1f s; kept the layout with %d problems", (System.nanoTime() - t0) / 1e9, bestBad));
         for(String n : notes) System.out.println("  note: " + n);
-        return spec(router, power);
+        return best;
     }
 
     public static void main(String[] args){
@@ -295,8 +362,16 @@ public final class Gen{
         }
         s.name = prob.name;
         Fi out = new Fi(args.length > 2 ? args[2] : "build/bp-out/" + prob.name + ".txt");
-        out.writeString("# laid out by bp.Gen from " + args[1] + "\n" + s.write());
+        //(the bench starts it primed: how a layout gets going is left out for now)
+        out.writeString("# laid out by bp.Gen from " + args[1] + "\n" + s.write() + "prime\n");
         System.out.println("written " + out.path());
+        try{
+            java.io.File png = new java.io.File(out.pathWithoutExtension() + ".png");
+            Plot.draw(gen.board, gen.bodies, gen.bestNets, gen.bestPower, prob.name + ": " + String.join(", ", prob.goals.keySet()) + (gen.problems > 0 ? "  (" + gen.problems + " problems left)" : ""), png);
+            System.out.println("drawn " + png.getPath());
+        }catch(Exception e){
+            System.out.println("could not draw: " + e);
+        }
         System.out.print(new Check(new Scratch(s)).run().report());
         System.out.println(drawn(s));
         System.exit(0);

@@ -34,7 +34,9 @@ public final class Board{
     public enum Kind{
         duct(Carriers.Role.duct), armored(Carriers.Role.armored), router(Carriers.Role.router), bridgeIn(Carriers.Role.bridge), bridgeOut(Carriers.Role.bridge),
         surge(Carriers.Role.surge), conduit(Carriers.Role.conduit), lbridgeIn(Carriers.Role.liquidBridge), lbridgeOut(Carriers.Role.liquidBridge),
-        node(Carriers.Role.node), power(Carriers.Role.powerSource);
+        lrouter(Carriers.Role.liquidRouter), node(Carriers.Role.node), power(Carriers.Role.powerSource),
+        /** The empty tile a drain's last conduit leaks onto (no block; kept empty). */
+        leak(null);
 
         public final Carriers.Role role;
 
@@ -71,7 +73,7 @@ public final class Board{
         }
 
         public boolean liquidCarrier(){
-            return kind == Kind.conduit || kind == Kind.lbridgeIn || kind == Kind.lbridgeOut;
+            return kind == Kind.conduit || kind == Kind.lbridgeIn || kind == Kind.lbridgeOut || kind == Kind.lrouter;
         }
 
         @Override
@@ -106,6 +108,27 @@ public final class Board{
         Spec bare = new Spec();
         bare.rows.addAll(ground.rows);
         new Scratch(bare);
+        solidGround = new boolean[w * h];
+        floorAt = new mindustry.world.blocks.environment.Floor[w * h];
+        for(int y = 0; y < h; y++) for(int x = 0; x < w; x++){
+            solidGround[idx(x, y)] = Vars.world.tile(x, y).solid();
+            floorAt[idx(x, y)] = Vars.world.tile(x, y).floor();
+        }
+    }
+
+    /** The floor of each tile. */
+    public final mindustry.world.blocks.environment.Floor[] floorAt;
+
+    /** Tiles of the bare map that are solid (walls). */
+    public final boolean[] solidGround;
+
+    /**
+     * The liquid a part must be rid of all the time, whether or not anything takes it (a generator that blows up when
+     * full of what it makes, ConsumeGenerator.explodeOnFull), or null.
+     */
+    public static String mustDrain(Body.Part p){
+        if(p.block instanceof mindustry.world.blocks.power.ConsumeGenerator g && g.explodeOnFull && g.outputLiquid != null) return g.outputLiquid.liquid.name;
+        return null;
     }
 
     public boolean in(int x, int y){
@@ -181,6 +204,7 @@ public final class Board{
     /** Whether a part takes this (item or liquid) from a neighbour. */
     public boolean partTakes(Body.Part p, String res){
         if(isCore(p)) return Vars.content.item(res) != null;
+        if(p.block instanceof LiquidVoid) return Vars.content.liquid(res) != null;
         if(p.recipe == null) return false;
         return p.recipe.in.containsKey(res) || p.recipe.fixedIn.containsKey(res);
     }
@@ -203,6 +227,8 @@ public final class Board{
         return switch(q.kind){
             case duct, armored, bridgeOut, conduit, lbridgeOut -> new int[]{q.rot};
             case router -> new int[]{q.rot, (q.rot + 1) % 4, (q.rot + 3) % 4};
+            //(a liquid router hands to all about it, LiquidRouter: dumpLiquid)
+            case lrouter -> new int[]{0, 1, 2, 3};
             case surge -> q.role == 2 ? new int[]{q.rot} : new int[0];
             default -> new int[0];
         };
@@ -222,6 +248,8 @@ public final class Board{
                 return src != null && ductLike(src) && (src.x + ox(src.rot) == q.x && src.y + oy(src.rot) == q.y);
             case router:
                 return dir == back;
+            case lrouter:
+                return true;
             case surge:
                 return q.role == 0 && dir != q.rot;
             case conduit:

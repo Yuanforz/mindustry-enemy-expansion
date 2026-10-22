@@ -127,11 +127,24 @@ public final class Placer{
                 if(bg != Integer.MAX_VALUE && bg >= 0) wire += 0.5 * (bg + 1);
             }
         }
-        //tiles about each part for its lines
+        //tiles about each part for its lines: each line, power, a drain takes a tile of its own against the part (a
+        //tile holds one block), a liquid put out of one side only on that side (GenericCrafter.liquidOutputDirections);
+        //what cannot be given its tile, the most of them matched (augmenting paths), is short
+        List<int[]> wants = new ArrayList<>();
+        List<Body.Part> wantPart = new ArrayList<>();
         for(Body body : bodies) for(Body.Part p : body.parts){
-            //(a block that uses power wants a free tile against it too, for a node: beams stop at the first block with power)
-            int need = margin.getOrDefault(p, 0) + (Power.needs(p.block) ? 1 : 0);
-            for(Group g : groups){
+            int extra = margin.getOrDefault(p, 0) + (Power.needs(p.block) || Power.makes(p.block) ? 1 : 0);
+            for(int k = 0; k < extra; k++){
+                wants.add(new int[]{-1});
+                wantPart.add(p);
+            }
+            String drain = Board.mustDrain(p);
+            if(drain != null){
+                wants.add(new int[]{-2, groups.size()});
+                wantPart.add(p);
+            }
+            for(int gi = 0; gi < groups.size(); gi++){
+                Group g = groups.get(gi);
                 boolean makes = g.makers.contains(p), takes = g.takers.contains(p);
                 if(!makes && !takes) continue;
                 boolean touching = false;
@@ -140,12 +153,10 @@ public final class Placer{
                     touching = true;
                     for(Body.Part t : g.takers) if(t != p && !Router.touches(p, t, g.res, g.liquid)) touching = false;
                 }
-                if(!touching) need++;
+                if(touching) continue;
+                wants.add(new int[]{gi, makes && !takes && g.liquid ? 1 : 0});
+                wantPart.add(p);
             }
-            if(need == 0) continue;
-            int free = 0;
-            for(int[] t : p.around()) if(b.in(t[0], t[1]) && cover[b.idx(t[0], t[1])] == 0 && b.floor(t[0], t[1])) free++;
-            if(free < need) port += need - free;
             //(a maker of what the core should not have, against the core)
             for(int[] t : p.around()){
                 if(!b.in(t[0], t[1])) continue;
@@ -153,11 +164,58 @@ public final class Placer{
                 if(o != null && Board.isCore(o)) for(String y : Board.itemsOut(p)) if(!b.goals.contains(y)) hard += 1;
             }
         }
+        port += wants.size() - match(wants, wantPart, cover);
         for(int i = 0; i < w * h; i++){
             float over = crowd[i] + cover[i] - 1f;
             if(over > 0f) crowding += over;
         }
         return wHard * hard + wWire * wire + wPort * port + wCrowd * crowding + wYield * yield;
+    }
+
+    int[] owner;
+    int seen;
+    int[] seenAt;
+
+    /** The tiles a want may take: free tiles against its part (on the side its liquid comes out of, for a one-sided maker). */
+    List<Integer> tilesFor(int[] want, Body.Part p, int[] cover){
+        List<Integer> out = new ArrayList<>();
+        String liquid = want[0] == -2 ? Board.mustDrain(p) : want[0] >= 0 && want[1] == 1 ? groups.get(want[0]).res : null;
+        for(int[] t : p.around()){
+            if(!b.in(t[0], t[1]) || cover[b.idx(t[0], t[1])] != 0 || !b.floor(t[0], t[1])) continue;
+            if(liquid != null && !Board.liquidsOut(p, t[2]).contains(liquid)) continue;
+            out.add(b.idx(t[0], t[1]));
+        }
+        return out;
+    }
+
+    /** How many wants get a tile each, at most (Kuhn's augmenting paths). */
+    int match(List<int[]> wants, List<Body.Part> parts, int[] cover){
+        int n = b.w * b.h;
+        if(owner == null || owner.length != n){
+            owner = new int[n];
+            seenAt = new int[n];
+        }
+        Arrays.fill(owner, -1);
+        List<List<Integer>> adj = new ArrayList<>();
+        for(int i = 0; i < wants.size(); i++) adj.add(tilesFor(wants.get(i), parts.get(i), cover));
+        int got = 0;
+        for(int i = 0; i < wants.size(); i++){
+            seen++;
+            if(augment(i, adj)) got++;
+        }
+        return got;
+    }
+
+    boolean augment(int i, List<List<Integer>> adj){
+        for(int t : adj.get(i)){
+            if(seenAt[t] == seen) continue;
+            seenAt[t] = seen;
+            if(owner[t] == -1 || augment(owner[t], adj)){
+                owner[t] = i;
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A line's tiles spread over the box between two parts. */
@@ -200,8 +258,12 @@ public final class Placer{
         b.putParts(bodies);
     }
 
-    /** Anneals from where the bodies are (or anywhere, if start), so many steps. */
+    /** Anneals from where the bodies are (or anywhere, if start), so many steps; heat scales the starting temperature. */
     public void run(int steps, boolean start){
+        run(steps, start, 1.0);
+    }
+
+    public void run(int steps, boolean start, double heat){
         if(movable.isEmpty()){
             refresh();
             cost = evaluate();
@@ -223,7 +285,7 @@ public final class Placer{
             body.put(ox, oy, r);
         }
         refresh();
-        double t0 = Math.max(1e-3, sum / n), t1 = 1e-3;
+        double t0 = Math.max(1e-3, heat * sum / n), t1 = 1e-3;
         double best = cost;
         Map<Body, int[]> bestAt = snapshot();
         int span = Math.max(b.w, b.h);

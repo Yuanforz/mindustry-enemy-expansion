@@ -98,6 +98,7 @@ public class BpBench{
         List<String> rows = new ArrayList<>();
         List<Place> places = new ArrayList<>();
         float seconds = 60f;
+        boolean prime = false;
         String section = "";
         for(String raw : file.readString().split("\n")){
             String line = raw.replace("\r", "");
@@ -111,6 +112,7 @@ public class BpBench{
                 String[] w = line.trim().split("\\s+");
                 if(w[0].equals("map") || w[0].equals("place")) section = w[0];
                 else if(w[0].equals("seconds")) seconds = Float.parseFloat(w[1]);
+                else if(w[0].equals("prime")) prime = true;
                 continue;
             }
             if(section.equals("map")) rows.add(line);
@@ -175,6 +177,29 @@ public class BpBench{
             else tile.build.configureAny(value);
         }
 
+        //(primed: every block starts with its stores of the items and liquids it uses full, as if it had been running: how a layout is
+        //started, the bootstrapping, is left out)
+        if(prime) for(Building b : placed){
+            for(mindustry.world.consumers.Consume c : b.block.consumers){
+                if(c instanceof mindustry.world.consumers.ConsumeItems ci) for(ItemStack st : ci.items) b.items.set(st.item, b.block.itemCapacity);
+                if(c instanceof mindustry.world.consumers.ConsumeLiquid cl && b.liquids != null) b.liquids.add(cl.liquid, b.block.liquidCapacity);
+                if(c instanceof mindustry.world.consumers.ConsumeLiquids cls && b.liquids != null) for(var st : cls.liquids) b.liquids.add(st.liquid, b.block.liquidCapacity);
+                if(c instanceof mindustry.world.consumers.ConsumeItemFilter cf) for(Item item : Vars.content.items()) if(cf.filter.get(item)){
+                    b.items.set(item, b.block.itemCapacity);
+                    break;
+                }
+            }
+        }
+
+        //(and then run a while with every block working as if fed and powered, the team's cheat rule, so that the lines
+        //fill: what is measured after is the layout going by itself, the start of it left out)
+        if(prime){
+            Vars.state.rules.teams.get(team).cheat = true;
+            Boot.frames(30 * 60);
+            Vars.state.rules.teams.get(team).cheat = false;
+            System.out.println("  (primed: stores filled, 30 s run as if fed)");
+        }
+
         //what each machine does, frame by frame
         Seq<Building> machines = placed.select(BpBench::machine);
         int n = machines.size;
@@ -185,6 +210,16 @@ public class BpBench{
             if(e.spawner != null) units.increment(e.spawner.pos(), 1);
         });
         ObjectFloatMap<Item> intake = new ObjectFloatMap<>();
+        //(what is lost, when, and holding what: a generator blown up when full, a reactor unstable)
+        Events.on(BlockDestroyEvent.class, e -> {
+            Building b = e.tile.build;
+            if(b == null) return;
+            StringBuilder held = new StringBuilder();
+            if(b.liquids != null) b.liquids.each((l, a) -> held.append(String.format(" %s %.1f/%.0f", l.name, a, b.block.liquidCapacity)));
+            if(b.items != null) b.items.each((it, a) -> held.append(" ").append(it.name).append(" ").append(a));
+            String extra = b instanceof mindustry.world.blocks.power.VariableReactor.VariableReactorBuild v ? String.format(" heat %.1f instability %.2f", v.heat, v.instability) : "";
+            System.out.println(String.format("  LOST %s at %d,%d after %.1f s:%s%s", b.block.name, b.tileX(), b.tileY(), Vars.state.tick / 60f, held, extra));
+        });
         int frames = Math.round(seconds * 60f);
         for(int f = 0; f < frames; f++){
             Boot.frames(1);

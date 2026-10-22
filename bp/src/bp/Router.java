@@ -27,6 +27,9 @@ public final class Router{
         public final List<Float> flows = new ArrayList<>();
         public final List<Piece> pieces = new ArrayList<>();
         public final Set<Body.Part> unreached = new LinkedHashSet<>();
+        /** A drain: a line of conduits to an empty tile it leaks onto (Building.moveLiquidForward), no taker. */
+        public boolean drain;
+        public boolean drained;
 
         public Net(int id, String res, int cls, Body.Part from){
             this.id = id;
@@ -57,6 +60,8 @@ public final class Router{
     int range, lrange;
     public int rounds;
     public int overused, leaks;
+    /** The tiles still fought over (two blocks, or a leak) after the last round. */
+    public final Set<Integer> fought = new HashSet<>();
 
     @SuppressWarnings("unchecked")
     public Router(Board b, List<Net> nets, float perTile, float perItem){
@@ -83,6 +88,7 @@ public final class Router{
     }
 
     float base(Kind k){
+        if(k == Kind.leak) return perTile;
         return (float)Carriers.cost(blockOf(k), perTile, perItem);
     }
 
@@ -118,8 +124,30 @@ public final class Router{
      * not go (another line, the core for what is no goal), a bridge that would reach it or that it would reach unmeant.
      * partner: for a bridge, the other end (its line's), else null.
      */
-    int leaks(Piece q, Piece partner){
+    /** Whether a bridge end reaches another bridge of its kind ahead (DirectionBridge.findLink): it then takes from about it as a start. */
+    boolean reachesAhead(Piece q){
+        if(q.kind != Kind.bridgeOut && q.kind != Kind.lbridgeOut) return false;
+        for(int i = 1; i <= Carriers.range(q.block); i++){
+            int nx = q.x + Geo.dx(q.rot) * i, ny = q.y + Geo.dy(q.rot) * i;
+            if(!b.in(nx, ny)) return false;
+            for(Piece o : at[b.idx(nx, ny)]) if(o != q && bridgeFamily(o, q)) return true;
+        }
+        return false;
+    }
+
+    /** A piece as it takes things: a bridge end that reaches another takes as a start does. */
+    Piece taking(Piece q){
+        if(!reachesAhead(q)) return q;
+        Piece as = new Piece(q.kind == Kind.bridgeOut ? Kind.bridgeIn : Kind.lbridgeIn, q.block, q.x, q.y, q.rot, q.net, q.res);
+        as.from = q.from;
+        as.outs = q.outs;
+        return as;
+    }
+
+    int leaks(Piece q0, Piece partner){
         int c = 0;
+        if(q0.kind == Kind.leak) return 0;
+        Piece q = taking(q0);
         for(int dir = 0; dir < 4; dir++){
             int nx = q.x + Geo.dx(dir), ny = q.y + Geo.dy(dir);
             if(!b.in(nx, ny)) continue;
@@ -135,11 +163,12 @@ public final class Router{
             for(Piece o : at[n]){
                 if(o.net == q.net || !family(o, q)) continue;
                 if(has(Board.handsDirs(o), (dir + 2) % 4) && Board.pieceTakes(q, dir, o, null) && !o.res.equals(q.res)) c++;
-                if(has(Board.handsDirs(q), dir) && Board.pieceTakes(o, (dir + 2) % 4, q, null) && !o.res.equals(q.res)) c++;
+                if(has(Board.handsDirs(q), dir) && Board.pieceTakes(taking(o), (dir + 2) % 4, q, null) && !o.res.equals(q.res)) c++;
                 //(a surge line hands its stack on to whatever surge conveyor it points at, taking or not)
                 if(o.kind == Kind.surge && q.kind == Kind.surge && (o.role != 2 && o.x + Geo.dx(o.rot) == q.x && o.y + Geo.dy(o.rot) == q.y || q.role != 2 && q.x + Geo.dx(q.rot) == o.x && q.y + Geo.dy(q.rot) == o.y)) c++;
             }
         }
+        q = q0;
         if(isBridge(q)){
             //(the first bridge of its kind along each way from it within range: one pointing at it reaches it, and this
             //one reaches the first ahead of it; that is meant only between the two ends of a hop, or from an end into
@@ -188,6 +217,7 @@ public final class Router{
     }
 
     int gap(int x, int y, Body.Part p){
+        if(p == null) return 0;
         int dx = Math.max(0, Math.max(p.x0 - x, x - p.x1())), dy = Math.max(0, Math.max(p.y0 - y, y - p.y1()));
         return dx + dy;
     }
@@ -300,7 +330,89 @@ public final class Router{
         return p.covers(x, y);
     }
 
-    /** Lays the line to one taker: true if laid. */
+    /**
+     * Whether what a conduit hands on to takes from a liquid router put in its place: the next conduit of its line
+     * points on the same way (a reinforced conduit takes from a block not a conduit only from behind), or it is a
+     * bridge or what the line ends in.
+     */
+    boolean straightAfter(Net net, Piece p){
+        int nx = p.x + Geo.dx(p.rot), ny = p.y + Geo.dy(p.rot);
+        if(!b.in(nx, ny)) return false;
+        for(Piece q : at[b.idx(nx, ny)]) if(q.net == net.id) return q.kind != Kind.conduit || q.rot == p.rot;
+        return b.partAt[b.idx(nx, ny)] != null;
+    }
+
+    /**
+     * Whether a tile is taken by the path that leads to a state (the pieces its moves put down): the search's states are
+     * a tile and a direction, so a path could cross itself unless this is asked.
+     */
+    boolean onPath(int st, int tile){
+        int cur = st;
+        while(par[cur] >= 0){
+            int parent = par[cur], m = mv[cur];
+            int idx = parent / 12;
+            if(idx == tile) return true;
+            int type = m & 7;
+            if(type == 2 || type == 5){
+                int e = m >> 3 & 3, j = m >> 5 & 7;
+                int x = idx % b.w + Geo.dx(e) * j, y = idx / b.w + Geo.dy(e) * j;
+                if(b.idx(x, y) == tile) return true;
+                //(and a bridge of its kind on the line between the ends of a hop of the path: that hop would reach it)
+                int tx = tile % b.w, ty = tile / b.w, px = idx % b.w, py = idx / b.w;
+                if(Geo.dx(e) != 0 ? ty == py && (tx - px) * Geo.dx(e) > 0 && (tx - px) * Geo.dx(e) < j : tx == px && (ty - py) * Geo.dy(e) > 0 && (ty - py) * Geo.dy(e) < j) return true;
+            }
+            cur = parent;
+        }
+        return false;
+    }
+
+    /** What leaking a liquid onto a tile weighs, as a tile of ground weighs 1 (perTile): the harm of its puddles. */
+    public float wHarm = 100f;
+    final Map<String, float[]> harm = new HashMap<>();
+
+    /**
+     * The harm of letting a liquid out onto a tile. On a liquid floor it cannot lie on (Liquid.canStayOn) it is gone at
+     * once (Puddles.deposit): none. A liquid whose puddles take another out of what holds it (CellLiquid.spreadTarget:
+     * neoplasm, water) grows a field about the tile: as much as its puddle hands its four neighbours (0.3 a tick each,
+     * PuddleComp.update) over what a puddle loses (1 - viscosity over 5 a tick), in tiles; each block in the field that
+     * holds the target liquid is harmed.
+     */
+    float harmAt(String res, int x, int y){
+        float[] h = harm.computeIfAbsent(res, k -> {
+            float[] out = new float[b.w * b.h];
+            mindustry.type.Liquid l = mindustry.Vars.content.liquid(k);
+            if(!(l instanceof mindustry.type.CellLiquid cl) || cl.spreadTarget == null) return out;
+            float area = 4f * 0.3f / ((1f - l.viscosity) / 5f);
+            int r = 0;
+            while(2 * r * r + 2 * r + 1 < area) r++;
+            String target = cl.spreadTarget.name;
+            List<Body.Part> holders = new ArrayList<>();
+            Set<Body.Part> seenParts = new HashSet<>();
+            for(Body.Part p : b.partAt) if(p != null && seenParts.add(p)){
+                boolean holds = target.equals(p.config) || p.recipe != null && (p.recipe.in.containsKey(target) || p.recipe.out.containsKey(target) || p.recipe.fixedIn.containsKey(target));
+                if(holds) holders.add(p);
+            }
+            for(int yy = 0; yy < b.h; yy++) for(int xx = 0; xx < b.w; xx++){
+                int n = 0;
+                for(Body.Part p : holders) if(gap(xx, yy, p) <= r) n++;
+                out[b.idx(xx, yy)] = n * wHarm;
+            }
+            return out;
+        });
+        int i = b.idx(x, y);
+        var f = b.floorAt[i];
+        mindustry.type.Liquid l = mindustry.Vars.content.liquid(res);
+        if(f.isLiquid && f.liquidDrop != null && l != null && !l.canStayOn.contains(f.liquidDrop)) return 0f;
+        return h[i];
+    }
+
+    /** An empty tile a conduit may leak onto: no block, not solid ground, nothing of a line on it. */
+    boolean leakable(int x, int y){
+        int i = b.idx(x, y);
+        return b.partAt[i] == null && !b.solidGround[i] && !own[i];
+    }
+
+    /** Lays the line to one taker (null: a drain's empty tile): true if laid. */
     boolean lay(Net net, Body.Part sink){
         ensure();
         now++;
@@ -318,17 +430,20 @@ public final class Router{
         //and the line's ducts so far, turned to routers: their sides (ducts only)
         float bestGoal = Float.MAX_VALUE;
         int goalSt = -1, goalMv = -1, goalTap = -1;
-        if(net.cls == 0) for(int pi = 0; pi < net.pieces.size(); pi++){
+        //(a line's ducts so far turned to routers, its conduits to liquid routers: their sides; where a router hands on
+        //ahead to what takes from it, a straight run)
+        if(net.cls != 1 && sink != null) for(int pi = 0; pi < net.pieces.size(); pi++){
             Piece p = net.pieces.get(pi);
-            boolean router = p.kind == Kind.router;
-            if(!router && !((p.kind == Kind.duct || p.kind == Kind.armored) && p.from == p.rot)) continue;
+            Kind tapKind = net.cls == 0 ? Kind.router : Kind.lrouter;
+            boolean router = p.kind == tapKind;
+            if(!router && !(net.cls == 0 ? (p.kind == Kind.duct || p.kind == Kind.armored) && p.from == p.rot : p.kind == Kind.conduit && p.from == p.rot && straightAfter(net, p))) continue;
             for(int side : new int[]{(p.rot + 1) % 4, (p.rot + 3) % 4}){
                 if((p.outs & (1 << side)) != 0) continue;
                 int nx = p.x + Geo.dx(side), ny = p.y + Geo.dy(side);
-                Piece r = piece(Kind.router, p.x, p.y, p.rot, net.id, net.res);
+                Piece r = piece(tapKind, p.x, p.y, p.rot, net.id, net.res);
                 r.from = p.from;
                 r.outs = p.outs | (1 << side);
-                float tap = (router ? 0f : cost(Kind.router) - cost(p.kind)) + pf * leaks(r, null);
+                float tap = (router ? 0f : cost(tapKind) - cost(p.kind)) + pf * leaks(r, null);
                 if(b.in(nx, ny) && inPart(nx, ny, sink)){
                     if(tap < bestGoal){
                         bestGoal = tap;
@@ -352,7 +467,8 @@ public final class Router{
             for(int m : moves(net, st)){
                 int type = m & 7, e = m >> 3 & 3, j = m >> 5 & 7, ff = m >> 8 & 3;
                 int[] nx = next(st, m);
-                boolean goal = b.in(nx[0], nx[1]) && inPart(nx[0], nx[1], sink);
+                //(a drain ends in a conduit that leaks, Conduit.leaks: a bridge's end hands on without leaking, moveLiquidForward(false))
+                boolean goal = b.in(nx[0], nx[1]) && (sink == null ? leakable(nx[0], nx[1]) && type == 4 && blockOf(Kind.conduit) instanceof mindustry.world.blocks.liquid.Conduit cd && cd.leaks : inPart(nx[0], nx[1], sink));
                 //(a surge line of one tile loads nothing)
                 if(type == 3 && st % 3 == 1 && goal) continue;
                 if(type == 2 || type == 5){
@@ -362,9 +478,15 @@ public final class Router{
                 }
                 if(!goal && !open(nx[0], nx[1], false)) continue;
                 List<Piece> ps = pieces(net, st, m, goal);
+                //(not over the path itself)
+                boolean crosses = false;
+                for(Piece q : ps) if(onPath(st, b.idx(q.x, q.y))) crosses = true;
+                if(!goal && onPath(st, b.idx(nx[0], nx[1]))) crosses = true;
+                if(crosses) continue;
                 float c = 0f;
                 for(Piece q : ps) c += price(q, ps.size() == 2 ? ps.get(ps.size() - 1 - ps.indexOf(q)) : null);
                 float ng = g[st] + c;
+                if(goal && sink == null) ng += harmAt(net.res, nx[0], nx[1]);
                 if(goal){
                     if(ng < bestGoal){
                         bestGoal = ng;
@@ -404,13 +526,25 @@ public final class Router{
         if(tapRef >= 0){
             Piece p = net.pieces.get(tapRef / 4);
             unplace(p);
-            p.kind = Kind.router;
+            p.kind = net.cls == 0 ? Kind.router : Kind.lrouter;
+            p.block = blockOf(p.kind);
             p.outs |= 1 << (tapRef % 4);
             place(p);
         }
         for(Piece q : laid){
             net.pieces.add(q);
             place(q);
+        }
+        //(what of the line now goes wrong with the rest of itself, a bridge reaching one of its own unmeant: dearer next round)
+        for(Piece q : laid){
+            if(selfLeaks(net, q) > 0) hist[b.idx(q.x, q.y)] += 1f;
+        }
+        if(sink == null && !laid.isEmpty()){
+            //(the tile it leaks onto, kept empty)
+            Piece last = laid.get(laid.size() - 1);
+            Piece leak = new Piece(Kind.leak, null, last.x + Geo.dx(last.rot), last.y + Geo.dy(last.rot), 0, net.id, net.res);
+            net.pieces.add(leak);
+            place(leak);
         }
         return true;
     }
@@ -455,6 +589,7 @@ public final class Router{
                     if(touches(net.from, sink, net.res, net.cls == 2)) continue;
                     if(!lay(net, sink)) net.unreached.add(sink);
                 }
+                if(net.drain) net.drained = lay(net, null);
             }
             //what is still fought over
             overused = 0;
@@ -472,13 +607,48 @@ public final class Router{
                 }
             }
             int unreached = 0;
-            for(Net net : nets) unreached += net.unreached.size();
+            for(Net net : nets) unreached += net.unreached.size() + (net.drain && !net.drained ? 1 : 0);
+            fought.clear();
+            fought.addAll(bad);
             if(bad.isEmpty() && unreached == 0) return true;
+            if(Boolean.getBoolean("bp.debug") && rounds == maxRounds) for(int i = 0; i < at.length; i++) if(at[i].size() > 1){
+                StringBuilder who = new StringBuilder();
+                for(Piece o : at[i]) who.append(" ").append(o).append("/").append(o.res).append("#").append(o.net);
+                int x = i % b.w, y = i / b.w;
+                StringBuilder around = new StringBuilder();
+                for(int d = 0; d < 4; d++){
+                    int nx = x + Geo.dx(d), ny = y + Geo.dy(d);
+                    if(!b.in(nx, ny)) continue;
+                    Body.Part p = b.partAt[b.idx(nx, ny)];
+                    around.append(" ").append(d).append(":").append(p != null ? p.toString() : at[b.idx(nx, ny)].isEmpty() ? (b.floor(nx, ny) ? "free" : "wall") : at[b.idx(nx, ny)].get(0).toString());
+                }
+                System.out.println("  shared " + x + "," + y + " hist " + hist[i] + ":" + who + " | about:" + around);
+            }
+            if(Boolean.getBoolean("bp.debug") && rounds == maxRounds) for(Net net : nets) for(Piece q : net.pieces){
+                int l = leaks(q, partner(net, q));
+                if(l == 0) continue;
+                StringBuilder why = new StringBuilder();
+                for(int dir = 0; dir < 4; dir++){
+                    int nx = q.x + Geo.dx(dir), ny = q.y + Geo.dy(dir);
+                    if(!b.in(nx, ny)) continue;
+                    Body.Part p = b.partAt[b.idx(nx, ny)];
+                    if(p != null) why.append(" ").append(dir).append(":").append(p).append(Board.liquidsOut(p, (dir + 2) % 4)).append(Board.itemsOut(p));
+                    for(Piece o : at[b.idx(nx, ny)]) why.append(" ").append(dir).append(":").append(o).append("/").append(o.res).append("#").append(o.net);
+                }
+                System.out.println("  leak " + l + " at " + q + " (" + q.res + " #" + q.net + " role " + q.role + "):" + why);
+            }
+            //(the price of sharing grows slowly and stops growing, so that what has been fought over, the history, comes to
+            //decide: PathFinder's present and history costs)
             for(int i : bad) hist[i] += 1f;
-            pf *= 1.6f;
+            pf = Math.min(pf * 1.3f, 50f);
         }
         rounds = maxRounds;
         return false;
+    }
+
+    /** Bridge reaches between a piece and the rest of its own line (leaks() asks the same of all lines). */
+    int selfLeaks(Net net, Piece q){
+        return isBridge(q) ? leaks(q, partner(net, q)) : 0;
     }
 
     static Piece partner(Net net, Piece q){
@@ -503,9 +673,10 @@ public final class Router{
         return false;
     }
 
+    /** The blocks laid (not the tiles kept empty for leaks). */
     public List<Piece> all(){
         List<Piece> out = new ArrayList<>();
-        for(Net n : nets) out.addAll(n.pieces);
+        for(Net n : nets) for(Piece q : n.pieces) if(q.block != null) out.add(q);
         return out;
     }
 }

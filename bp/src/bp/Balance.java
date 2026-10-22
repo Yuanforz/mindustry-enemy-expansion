@@ -407,6 +407,17 @@ public final class Balance{
         return out;
     }
 
+    /**
+     * A goal with * in it is any of the ways it matches, as many of them in all: "scathe:*+coolant", a scathe with coolant
+     * on whatever ammunition. Each recipe that matches makes the goal too.
+     */
+    public void expandWildcards(){
+        for(String g : new ArrayList<>(goals.keySet())) if(g.contains("*")){
+            String re = g.replace("+", "\\+").replace("*", ".*");
+            for(Recipe r : recipes) for(var e : new ArrayList<>(r.out.entrySet())) if(e.getKey().matches(re)) r.out.put(g, e.getValue());
+        }
+    }
+
     /** Usage: bp.Balance data-dir goal:rate[,goal:rate] sources (comma separated; "power", "heat" too) [front:most-tiles] */
     public static void main(String[] args){
         Game.boot(args[0]);
@@ -448,15 +459,7 @@ public final class Balance{
             b.places.put(p[0], ys);
         }
         for(Recipe r : Recipes.all()) if(r.kind != Recipe.Kind.source && !r.name.equals("heat-source")) b.recipes.add(r);
-        //(a goal with * in it is any of the ways it matches, as many of them in all: "scathe:*+coolant", a scathe with
-        //coolant on whatever ammunition)
-        for(String g : new ArrayList<>(b.goals.keySet())) if(g.contains("*")){
-            String re = g.replace("+", "\\+").replace("*", ".*");
-            for(Recipe r : b.recipes) for(var e : new ArrayList<>(r.out.entrySet())) if(e.getKey().matches(re)){
-                r.out.put(g, e.getValue());
-                if(Boolean.getBoolean("bp.debug")) System.out.println("  goal " + g + " met by " + r.name);
-            }
-        }
+        b.expandWildcards();
         long t0 = System.nanoTime();
         String frontArg = null;
         for(int i = 3; i < args.length; i++) if(args[i].startsWith("front:")) frontArg = args[i];

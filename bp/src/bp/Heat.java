@@ -126,10 +126,12 @@ public final class Heat{
             for(int c : onTile.getOrDefault(key(t[0], t[1]), List.of())) covered.add(x[c]);
         }
         m.addLessOrEqual(covered, around - ports);
-        //a heater that takes anything (power, fuel) keeps a tile against it free, for a line or a node to reach it by
+        //a heater that takes or gives anything (fuel, power, a liquid it makes) keeps as many tiles against it free as it
+        //has lines, and one for a node, for them to reach it by
         for(int i = 0; i < n; i++){
             Cand c = cands.get(i);
-            if(c.recipe == null || c.recipe.in.isEmpty() && c.recipe.powerUse <= 0f && c.recipe.fixedIn.isEmpty()) continue;
+            int lines = c.recipe == null ? 0 : lines(c.recipe);
+            if(lines == 0) continue;
             LinearExprBuilder free = LinearExpr.newBuilder();
             int w = c.block.size;
             for(int k = 0; k < w; k++) for(int[] t : new int[][]{{c.x0 + w, c.y0 + k}, {c.x0 - 1, c.y0 + k}, {c.x0 + k, c.y0 + w}, {c.x0 + k, c.y0 - 1}}){
@@ -139,7 +141,7 @@ public final class Heat{
                 for(int o : onTile.getOrDefault(key(t[0], t[1]), List.of())) if(o != i) m.addImplication(f, x[o].not());
                 free.add(f);
             }
-            m.addGreaterOrEqual(free, x[i]);
+            m.addGreaterOrEqual(free, LinearExpr.term(x[i], lines));
         }
         LinearExprBuilder obj = LinearExpr.newBuilder();
         for(int i = 0; i < n; i++) obj.addTerm(x[i], Math.round(cost(cands.get(i).block, perTile, perItem) * 1000));
@@ -155,6 +157,15 @@ public final class Heat{
             out.add(new Put(c.block, c.recipe, c.x0, c.y0, c.rot));
         }
         return out;
+    }
+
+    /** Lines a block has: each item or liquid it takes or gives, and power if it uses or makes any. */
+    static int lines(Recipe r){
+        Set<String> res = new HashSet<>();
+        for(String k : r.in.keySet()) if(mindustry.Vars.content.item(k) != null || mindustry.Vars.content.liquid(k) != null) res.add(k);
+        for(String k : r.out.keySet()) if(mindustry.Vars.content.item(k) != null || mindustry.Vars.content.liquid(k) != null) res.add(k);
+        for(String k : r.fixedIn.keySet()) res.add(k);
+        return res.size() + (r.powerUse > 0f || r.powerOut > 0f ? 1 : 0);
     }
 
     static boolean overlapsMachine(int x0, int y0, int w, int s){
