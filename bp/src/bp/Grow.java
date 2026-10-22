@@ -521,7 +521,7 @@ public final class Grow{
             Loader.loadNativeLibraries();
             loaded = true;
         }
-        MPSolver solver = MPSolver.createSolver(System.getProperty("bp.mip", "HIGHS"));
+        MPSolver solver = MPSolver.createSolver(System.getProperty("bp.mip", "SCIP"));
         double inf = MPSolver.infinity();
         int T = spans;
         float[] L = new float[T + 1];

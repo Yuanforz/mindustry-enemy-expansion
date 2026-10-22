@@ -100,6 +100,12 @@ public class Climb{
                 jobs.removeIf(j -> !j.remove && !standing(j));
                 hand.keepOnly(jobs);
                 long t0 = System.nanoTime();
+                //(what the planner is given, kept by step, to plan a step again apart; orders only from this step)
+                Fi stepDir = work.child("steps");
+                stepDir.mkdirs();
+                if(ledger.exists()) ledger.copyTo(stepDir.child("step-" + (steps + 1) + ".ledger"));
+                state.copyTo(stepDir.child("step-" + (steps + 1) + ".state"));
+                orders.delete();
                 List<String> out = grow(args[0], map.path(), plan, ledger.path(), state.path(), orders.path(), spans, spanSeconds, think);
                 //(the planner's whole say, kept by step)
                 work.child("steps").child("step-" + (steps + 1) + ".log").writeString(String.join("\n", out) + "\n");
@@ -209,7 +215,11 @@ public class Climb{
     static List<String> grow(String dataDir, String map, String plan, String ledger, String state, String orders, String spans, String spanSeconds, String think){
         List<String> lines = new ArrayList<>();
         try{
-            ProcessBuilder pb = new ProcessBuilder("sh", "bp/run.sh", "-Dbp.wholeSpans=1", "-Dbp.attempts=4", "bp.Grow", dataDir, map, plan, ledger, state, orders, spans, spanSeconds, think);
+            //(the planner's settings this was started with, -Dbp.*, passed on)
+            List<String> cmd = new ArrayList<>(List.of("sh", "bp/run.sh", "-Dbp.wholeSpans=1", "-Dbp.attempts=4"));
+            for(String k : System.getProperties().stringPropertyNames()) if(k.startsWith("bp.")) cmd.add("-D" + k + "=" + System.getProperty(k));
+            cmd.addAll(List.of("bp.Grow", dataDir, map, plan, ledger, state, orders, spans, spanSeconds, think));
+            ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
             Process p = pb.start();
             try(BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()))){
