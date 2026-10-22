@@ -27,6 +27,10 @@ public final class Balance{
     public Float groundCap, itemCap;
     /** The recipes that may be used. */
     public final List<Recipe> recipes = new ArrayList<>();
+    /** Blocks that must be at work, at least so much in all (machines at full speed), by block name, whatever their recipe. */
+    public final Map<String, Float> runAtLeast = new LinkedHashMap<>();
+    /** The power to have to spare at the least, a second. */
+    public float powerSurplus = 0f;
     /** Places for machines on ground, each with its yield, by recipe name (a recipe on ground with no place is not used). */
     public final Map<String, List<Float>> places = new HashMap<>();
 
@@ -36,6 +40,8 @@ public final class Balance{
         /** Machines: recipe, how many, how much they work in all (in machines at full speed), and its yield for ground ones. */
         public final List<Object[]> machines = new ArrayList<>();
         public final LinkedHashMap<String, Float> drawn = new LinkedHashMap<>(), delivered = new LinkedHashMap<>(), spilt = new LinkedHashMap<>();
+        /** Elastic: what fell short of what was asked, by goal (and "run block"). */
+        public final LinkedHashMap<String, Float> unmet = new LinkedHashMap<>();
         public float powerMade, powerUsed, heatMade, heatNeeded, area;
         /** Seconds the game takes to build them all, at a build speed of one. */
         public float buildSeconds;
@@ -53,6 +59,7 @@ public final class Balance{
             if(!delivered.isEmpty()) s.append("  to the core: ").append(Recipe.fmt(delivered)).append('\n');
             if(!spilt.isEmpty()) s.append("  liquid let go (a second output its maker goes on past): ").append(Recipe.fmt(spilt)).append('\n');
             if(!spare.isEmpty()) s.append("  to spare, to be had besides (makers at full beyond what is taken): ").append(Recipe.fmt(spare)).append('\n');
+            if(!unmet.isEmpty()) s.append("  FELL SHORT: ").append(Recipe.fmt(unmet)).append('\n');
             s.append(String.format("  power made %.1f used %.1f; heat made %.1f needed %.1f%n", powerMade, powerUsed, heatMade, heatNeeded));
             float all = 0f;
             for(float c : cost.values()) all += c;
@@ -85,6 +92,11 @@ public final class Balance{
 
     static boolean isItem(String name){
         return Vars.content.item(name) != null;
+    }
+
+    /** A block made as a payload (its name; a machine at work is "~" and its name, a turret's way has a colon). */
+    static boolean isBlockPayload(String name){
+        return !name.startsWith("~") && Vars.content.block(name) != null;
     }
 
     static boolean isLiquid(String name){
@@ -120,7 +132,29 @@ public final class Balance{
         return c;
     }
 
+    /**
+     * Elastic: what is asked for may fall short, at a great price a unit (the goals and the blocks to be at work): the most
+     * that can be had, and what fell short is told (Result.unmet).
+     */
+    public boolean elastic;
+    public float shortPrice = 1e5f;
+    MPObjective objective;
+    final Map<String, MPVariable> shorts = new LinkedHashMap<>();
+
+    /** The variable of what goes to a goal: at least the goal, or, elastic, anything, its shortfall dear. */
+    MPVariable goalVar(MPSolver solver, String k){
+        double g = goal(k);
+        if(!elastic || g <= 0) return solver.makeNumVar(g, MPSolver.infinity(), "d_" + k);
+        MPVariable d = solver.makeNumVar(0, MPSolver.infinity(), "d_" + k), sh = solver.makeNumVar(0, g, "short_" + k);
+        MPConstraint c = solver.makeConstraint(g, MPSolver.infinity());
+        c.setCoefficient(d, 1);
+        c.setCoefficient(sh, 1);
+        shorts.put(k, sh);
+        return d;
+    }
+
     public Result solve(){
+        shorts.clear();
         linkSeen.clear();
         if(!loaded){
             Loader.loadNativeLibraries();
@@ -258,17 +292,16 @@ public final class Balance{
                 c.setCoefficient(s, 1);
             }
             if(isItem(k)){
-                //(what is asked for goes to the core at its rate at least; what is not asked for need go nowhere: made
-                //beyond what is taken it backs up in its line and its maker waits, which is its work falling, the
-                //balance as it is. A maker that makes two things works only as fast as both are taken)
-                if(goals.containsKey(k)){
-                    MPVariable d = solver.makeNumVar(goal(k), inf, "d_" + k);
-                    delivered.put(k, d);
-                    c.setCoefficient(d, -1);
-                }
+                //(what is asked for goes to the core at its rate at least; what is not asked for may go to the core too,
+                //which takes every item (and burns what it has no room for, Rules.coreIncinerates), or nowhere: made
+                //beyond what is taken it backs up in its line and its maker waits. A maker that makes two things works
+                //only as fast as both are taken, or both go to the core)
+                MPVariable d = goalVar(solver, k);
+                delivered.put(k, d);
+                c.setCoefficient(d, -1);
             }else if(isLiquid(k)){
                 if(goals.containsKey(k)){
-                    MPVariable d = solver.makeNumVar(goal(k), inf, "d_" + k);
+                    MPVariable d = goalVar(solver, k);
                     delivered.put(k, d);
                     c.setCoefficient(d, -1);
                 }
@@ -276,10 +309,18 @@ public final class Balance{
                 MPVariable sp = solver.makeNumVar(0, inf, "spill_" + k);
                 spilt.put(k, sp);
                 c.setCoefficient(sp, -1);
+            }else if(isBlockPayload(k)){
+                //(a block a constructor makes: something must take it, an assembler or a deconstructor, or the
+                //constructor holds it and stops; only a goal goes out of the plan)
+                if(goals.containsKey(k)){
+                    MPVariable d = goalVar(solver, k);
+                    delivered.put(k, d);
+                    c.setCoefficient(d, -1);
+                }
             }else{
                 //units, and a turret or a generator at work (what such a way "makes"): what is asked for comes out, and the
                 //rest may too (units walk out of their yard; a turret firing needs nothing to take it)
-                MPVariable d = solver.makeNumVar(goal(k), inf, "d_" + k);
+                MPVariable d = goalVar(solver, k);
                 delivered.put(k, d);
                 c.setCoefficient(d, -1);
             }
@@ -299,7 +340,17 @@ public final class Balance{
             }
         }
         //power: made (or supplied) at least what is used
-        MPConstraint power = solver.makeConstraint(0, inf, "power");
+        MPConstraint power = solver.makeConstraint(powerSurplus, inf, "power");
+        //(blocks to be at work: the work of all their machines together at least so much)
+        for(var e : runAtLeast.entrySet()){
+            MPConstraint c = solver.makeConstraint(e.getValue(), inf, "run_" + e.getKey());
+            for(Object[] v : vars) if(((Recipe)v[0]).block.name.equals(e.getKey())) c.setCoefficient((MPVariable)v[2], 1);
+            if(elastic){
+                MPVariable sh = solver.makeNumVar(0, e.getValue(), "short_run_" + e.getKey());
+                c.setCoefficient(sh, 1);
+                shorts.put("run " + e.getKey(), sh);
+            }
+        }
         MPVariable powerSource = sources.contains("power") ? solver.makeNumVar(0, inf, "s_power") : null;
         if(powerSource != null) power.setCoefficient(powerSource, 1);
         MPObjective obj = solver.objective();
@@ -337,6 +388,7 @@ public final class Balance{
             }
             for(var e : goals.entrySet()) if(delivered.containsKey(e.getKey())) obj.setCoefficient(delivered.get(e.getKey()), -1.0 / Math.max(1e-9, e.getValue()));
         }
+        for(MPVariable sh : shorts.values()) obj.setCoefficient(sh, shortPrice);
         obj.setMinimization();
         MPSolver.ResultStatus status = solver.solve();
         Result out = new Result();
@@ -359,6 +411,7 @@ public final class Balance{
             out.heatNeeded += a.solutionValue() * rt.heatNeed;
         }
         for(var e : drawn.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.drawn.put(e.getKey(), (float)e.getValue().solutionValue());
+        for(var e : shorts.entrySet()) if(e.getValue().solutionValue() > 1e-4) out.unmet.put(e.getKey(), (float)e.getValue().solutionValue());
         if(powerSource != null && powerSource.solutionValue() > 1e-6) out.drawn.put("power", (float)powerSource.solutionValue());
         for(var e : delivered.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.delivered.put(e.getKey(), (float)e.getValue().solutionValue());
         for(var e : spilt.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.spilt.put(e.getKey(), (float)e.getValue().solutionValue());

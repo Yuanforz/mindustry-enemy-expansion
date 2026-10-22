@@ -64,8 +64,8 @@ liquid-source 38 1 0 arkycite
 liquid-source 44 1 0 slag
 liquid-source 50 1 0 slag
 end
-goal flux-reactor 1
-goal neoplasia-reactor 1
+goal ~flux-reactor 1
+goal ~neoplasia-reactor 1
 goal scathe:*+coolant 1
 goal breach:carbide* 1
 goal sublimate:* 1

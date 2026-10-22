@@ -37,6 +37,8 @@ public final class Gen{
     int problems;
 
     final Weights weights;
+    /** The recipes the balance may use (null: all): a module keeps to those the whole plan chose for it. */
+    Set<String> allowed;
 
     Gen(Problem prob, String dataDir){
         this.prob = prob;
@@ -61,7 +63,7 @@ public final class Gen{
         if(prob.freePower) bal.sources.add("power");
         //(a module's input ports: what they give, without limit)
         for(Problem.Port port : prob.ports) if(port.in()) bal.sources.add(port.kind().equals("power") ? "power" : port.res());
-        for(Recipe r : Recipes.all()) if(r.kind != Recipe.Kind.source && !r.name.equals("heat-source")) bal.recipes.add(r);
+        for(Recipe r : Recipes.all()) if(r.kind != Recipe.Kind.source && !r.name.equals("heat-source") && (allowed == null || allowed.contains(r.name))) bal.recipes.add(r);
         bal.expandWildcards();
         balance = bal.solve();
         System.out.println(balance);
@@ -227,6 +229,7 @@ public final class Gen{
 
     /** What a maker gives a second; a source as much as lines from each of its sides carry. */
     float supply(Body.Part p, String res){
+        if(supplyRate.containsKey(p)) return supplyRate.get(p);
         if(p.recipe == null){
             boolean liquid = Vars.content.liquid(res) != null;
             Block line = carriers.cheapest(liquid ? Carriers.Role.conduit : Carriers.Role.duct, weights);
@@ -418,18 +421,26 @@ public final class Gen{
         s.rows.addAll(prob.ground.rows);
         s.seconds = prob.seconds;
         s.places.addAll(prob.fixed);
-        for(Body body : bodies) if(!body.fixed) for(Body.Part p : body.parts) s.places.add(new Spec.Place(p.block.name, p.ax(), p.ay(), p.rot, p.block instanceof mindustry.world.blocks.sandbox.ItemVoid || p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid ? null : p.config));
+        for(Body body : bodies) if(!body.fixed) for(Body.Part p : body.parts) s.places.add(new Spec.Place(p.block.name, p.ax(), p.ay(), p.rot, p.block.configurable && !(p.block instanceof mindustry.world.blocks.sandbox.ItemVoid || p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid) ? p.config : null));
         for(Piece q : router.all()) s.places.add(new Spec.Place(q.block.name, q.x, q.y, q.rot, null));
         if(power != null) for(Piece q : power.added) s.places.add(new Spec.Place(q.block.name, q.x, q.y, q.rot, null));
         return s;
     }
 
     Spec run(long seed){
-        long t0 = System.nanoTime();
         balance();
         if(!balance.solved) return null;
         bodies();
         groups();
+        return layOut(seed);
+    }
+
+    /** What a maker that is no machine gives a second (a module's port, in a layout of modules). */
+    final Map<Body.Part, Float> supplyRate = new HashMap<>();
+
+    /** The topology: the bodies placed, the lines laid, power; the best of the tries kept (bodies put back where it had them). */
+    Spec layOut(long seed){
+        long t0 = System.nanoTime();
         Placer placer = new Placer(board, bodies, groups, seed);
         for(var e : portPlaces.entrySet()) placer.restrict(e.getKey(), e.getValue());
         Spec best = null;
@@ -535,21 +546,34 @@ public final class Gen{
         }catch(Exception e){
             System.out.println("could not draw: " + e);
         }
-        Check check = new Check(new Scratch(s)).run();
-        System.out.print(check.report());
-        //(what the lines were laid for, against what the game's rules say they do)
-        int wrong = 0;
-        for(Router.Net n : gen.bestNets){
-            Set<String> got = check.reach.getOrDefault((n.cls == 3 ? "payload" : n.res) + " from " + where(n.from), Set.of());
-            for(Body.Part t : n.to) if(!got.contains(where(t))){
-                wrong++;
-                System.out.println("  NOT AS LAID: " + n.res + " from " + where(n.from) + " does not reach " + where(t) + " (it reaches " + got + ")");
-            }
-        }
-        System.out.println("  as laid: " + (wrong == 0 ? "every line reaches what it was laid to" : wrong + " takers not reached"));
-        if(wrong > 0) for(String d : differ(gen.bestNets)) System.out.println("  DIFFERS: " + d);
+        int bad = gen.verify(s, true);
+        System.out.println("  verified: " + (bad == 0 ? "clean by the game's rules" : bad + " things wrong by the game's rules"));
         System.out.println(drawn(s));
         System.exit(0);
+    }
+
+    /**
+     * The layout put down in the game's world and checked by its rules (Check): lines that stop, liquids mixed, blocks
+     * without power or short of heat, and every line traced against what it was laid to reach. What is wrong, counted.
+     */
+    int verify(Spec s, boolean print){
+        Check check = new Check(new Scratch(s)).run();
+        if(print) System.out.print(check.report());
+        int wrong = 0;
+        for(Router.Net n : bestNets){
+            Set<String> got = check.reach.getOrDefault((n.cls == 3 ? "payload" : n.res) + " from " + where(n.from), Set.of());
+            //(a line from a carrier, a module's port: traced on from it)
+            if(n.from.recipe == null && n.from.config != null && n.cls != 3 && (n.from.block instanceof mindustry.world.blocks.distribution.Duct || n.from.block instanceof mindustry.world.blocks.liquid.Conduit)){
+                mindustry.gen.Building c = Vars.world.build(n.from.ax(), n.from.ay());
+                if(c != null) got = Vars.content.item(n.res) != null ? check.traceItem(c, Vars.content.item(n.res)) : check.traceLiquid(c, Vars.content.liquid(n.res));
+            }
+            for(Body.Part t : n.to) if(!got.contains(where(t))){
+                wrong++;
+                if(print) System.out.println("  NOT AS LAID: " + n.res + " from " + where(n.from) + " does not reach " + where(t) + " (it reaches " + got + ")");
+            }
+        }
+        if(print && wrong > 0) for(String d : differ(bestNets)) System.out.println("  DIFFERS: " + d);
+        return wrong + check.jams + check.mixed + check.unpowered + check.cold;
     }
 
     /**

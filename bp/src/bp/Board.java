@@ -187,6 +187,22 @@ public final class Board{
         return p.block instanceof CoreBlock;
     }
 
+    /**
+     * What a part hands to the neighbour in this direction from it: a machine its items all round and its liquids out of
+     * their sides; a carrier standing as a module's port (a duct or a conduit set to what it carries) only ahead.
+     */
+    public static List<String> out(Body.Part p, int dir){
+        if(p.recipe == null && p.config != null && (p.block instanceof mindustry.world.blocks.distribution.Duct || p.block instanceof Conduit)){
+            return dir == p.rot ? List.of(p.config) : List.of();
+        }
+        List<String> items = itemsOut(p), liquids = liquidsOut(p, dir);
+        if(liquids.isEmpty()) return items;
+        if(items.isEmpty()) return liquids;
+        List<String> both = new ArrayList<>(items);
+        both.addAll(liquids);
+        return both;
+    }
+
     /** Items a part hands to its neighbours. */
     public static List<String> itemsOut(Body.Part p){
         List<String> out = new ArrayList<>();

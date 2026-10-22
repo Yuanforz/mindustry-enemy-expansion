@@ -27,6 +27,8 @@ public final class Router{
         public final List<Float> flows = new ArrayList<>();
         public final List<Piece> pieces = new ArrayList<>();
         public final Set<Body.Part> unreached = new LinkedHashSet<>();
+        /** Takers reached by joining another line of the same thing to the same taker: the piece joined, by taker. */
+        public final Map<Body.Part, Piece> joins = new HashMap<>();
         /** A drain: a line of conduits to an empty tile it leaks onto (Building.moveLiquidForward), no taker. */
         public boolean drain;
         /** Payloads the line must hold on its way (each payload conveyor holds one): for a taker that takes a batch at once. */
@@ -134,8 +136,8 @@ public final class Router{
     List<String>[] outs(Body.Part p){
         return outsOf.computeIfAbsent(p, k -> {
             List<String>[] o = new List[5];
-            for(int d = 0; d < 4; d++) o[d] = Board.liquidsOut(k, d);
-            o[4] = Board.itemsOut(k);
+            for(int d = 0; d < 4; d++) o[d] = Board.out(k, d);
+            o[4] = List.of();
             return o;
         });
     }
@@ -173,8 +175,10 @@ public final class Router{
             Body.Part p = b.partAt[n];
             if(p != null){
                 if(Board.pieceTakes(q, dir, null, p)){
-                    List<String> given = q.itemCarrier() ? outs(p)[4] : q.liquidCarrier() ? outs(p)[(dir + 2) % 4] : List.of();
-                    for(String y : given) if(!y.equals(q.res)) c++;
+                    for(String y : outs(p)[(dir + 2) % 4]){
+                        boolean item = mindustry.Vars.content.item(y) != null;
+                        if((item ? q.itemCarrier() : q.liquidCarrier()) && !y.equals(q.res)) c++;
+                    }
                 }
                 if(has(Board.handsDirs(q), dir) && (q.outs & (1 << dir)) == 0 && (q.itemCarrier() || q.liquidCarrier()) && b.swallows(p, q.res)) c++;
             }
@@ -553,6 +557,22 @@ public final class Router{
         return false;
     }
 
+    Piece goalJoin;
+    final Map<Integer, Net> byId = new HashMap<>();
+
+    /** A piece on a tile of another line carrying the same thing to the same taker that takes from this piece. */
+    Piece joinAt(Net net, Body.Part sink, int x, int y, Piece last){
+        if(!b.in(x, y)) return null;
+        int dir = Geo.dir(x, y, last.x, last.y);
+        for(Piece o : at[b.idx(x, y)]){
+            if(o.net == net.id || !o.res.equals(net.res) || o.block == null || !family(o, last)) continue;
+            Net other = byId.get(o.net);
+            if(other == null || !other.to.contains(sink) || other.joins.containsKey(sink)) continue;
+            if(dir >= 0 && Board.pieceTakes(o, dir, last, null)) return o;
+        }
+        return null;
+    }
+
     /** An empty tile a conduit may leak onto: no block, not solid ground, nothing of a line on it. */
     boolean leakable(int x, int y){
         int i = b.idx(x, y);
@@ -570,13 +590,14 @@ public final class Router{
         Body.Part from = net.from;
         for(int[] t : from.around()){
             if(!open(t[0], t[1], false)) continue;
-            List<String> gives = net.cls == 2 ? Board.liquidsOut(from, t[2]) : Board.itemsOut(from);
+            List<String> gives = Board.out(from, t[2]);
             if(!gives.contains(net.res)) continue;
             push(open, state(b.idx(t[0], t[1]), t[2], 1), 0f, -1, 0, gap(t[0], t[1], sink) * hmin);
         }
         //and the line's ducts so far, turned to routers: their sides (ducts only)
         float bestGoal = Float.MAX_VALUE;
         int goalSt = -1, goalMv = -1, goalTap = -1;
+        goalJoin = null;
         //(a line's ducts so far turned to routers, its conduits to liquid routers: their sides; where a router hands on
         //ahead to what takes from it, a straight run)
         if(net.cls != 1 && sink != null) for(int pi = 0; pi < net.pieces.size(); pi++){
@@ -627,6 +648,12 @@ public final class Router{
                 }
                 if(!goal && !open(nx[0], nx[1], false)) continue;
                 List<Piece> ps = pieces(net, st, m, goal);
+                //(or into another line of the same thing going to the same taker, from a side it takes from: a merge)
+                Piece join = null;
+                if(!goal && sink != null && type != 3){
+                    join = joinAt(net, sink, nx[0], nx[1], ps.get(ps.size() - 1));
+                    if(join != null) goal = true;
+                }
                 //(not over the path itself)
                 boolean crosses = false;
                 for(Piece q : ps) if(onPath(st, b.idx(q.x, q.y))) crosses = true;
@@ -662,6 +689,7 @@ public final class Router{
                         goalSt = st;
                         goalMv = m;
                         goalTap = -1;
+                        goalJoin = join;
                     }
                     continue;
                 }
@@ -704,6 +732,7 @@ public final class Router{
             net.pieces.add(q);
             place(q);
         }
+        if(goalJoin != null && goalSt >= 0) net.joins.put(sink, goalJoin);
         //(what of the line now goes wrong with the rest of itself, a bridge reaching one of its own unmeant: dearer next round)
         for(Piece q : laid){
             if(selfLeaks(net, q) > 0) hist[b.idx(q.x, q.y)] += 1f;
@@ -814,14 +843,30 @@ public final class Router{
         return false;
     }
 
+    /** Joins whose piece is gone (the line joined laid again elsewhere): their takers are not reached, and are marked so. */
+    int brokenJoins(Net net){
+        int n = 0;
+        for(var e : new ArrayList<>(net.joins.entrySet())){
+            Piece o = e.getValue();
+            if(!at[b.idx(o.x, o.y)].contains(o)){
+                net.unreached.add(e.getKey());
+                net.joins.remove(e.getKey());
+                n++;
+            }
+        }
+        return n;
+    }
+
     public boolean run(int maxRounds){
         own = new boolean[b.w * b.h];
+        for(Net n : nets) byId.put(n.id, n);
         int bestBad = Integer.MAX_VALUE, since = 0;
         for(rounds = 1; rounds <= maxRounds; rounds++){
             for(Net net : nets){
                 ripUp(net);
                 Arrays.fill(own, false);
                 net.unreached.clear();
+                net.joins.clear();
                 //(takers nearest the maker first; one the maker touches and hands to needs no line)
                 List<Body.Part> order = new ArrayList<>(net.to);
                 order.sort(Comparator.comparingInt(p -> gap(p, net.from)));
@@ -847,7 +892,7 @@ public final class Router{
                 }
             }
             int unreached = 0;
-            for(Net net : nets) unreached += net.unreached.size() + (net.drain && !net.drained ? 1 : 0);
+            for(Net net : nets) unreached += net.unreached.size() + (net.drain && !net.drained ? 1 : 0) + brokenJoins(net);
             fought.clear();
             fought.addAll(bad);
             if(bad.isEmpty() && unreached == 0) return true;
@@ -909,7 +954,7 @@ public final class Router{
             }
         }
         int unreached = 0;
-        for(Net net : nets) unreached += net.unreached.size() + (net.drain && !net.drained ? 1 : 0);
+        for(Net net : nets) unreached += net.unreached.size() + (net.drain && !net.drained ? 1 : 0) + brokenJoins(net);
         return overused + leaks + unreached;
     }
 
@@ -928,6 +973,7 @@ public final class Router{
                 ripUp(net);
                 Arrays.fill(own, false);
                 net.unreached.clear();
+                net.joins.clear();
                 hard = true;
                 boolean whole = true;
                 List<Body.Part> order = new ArrayList<>(net.to);
@@ -983,7 +1029,7 @@ public final class Router{
         }
         for(int[] t : from.around()){
             if(!to.covers(t[0], t[1])) continue;
-            List<String> gives = liquid ? Board.liquidsOut(from, t[2]) : Board.itemsOut(from);
+            List<String> gives = Board.out(from, t[2]);
             if(gives.contains(res)) return true;
         }
         return false;

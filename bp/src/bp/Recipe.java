@@ -27,7 +27,7 @@ public final class Recipe{
         liquidFloor
     }
 
-    public enum Kind{crafter, heater, generator, drill, pump, units, upgrade, turret, source, sink}
+    public enum Kind{crafter, heater, generator, drill, pump, units, upgrade, turret, source, sink, consumer}
 
     public final String name;
     public final Block block;

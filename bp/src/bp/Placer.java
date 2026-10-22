@@ -179,7 +179,7 @@ public final class Placer{
                     for(Body.Part t : g.takers) if(t != p && !Router.touches(p, t, g.res, g.liquid)) touching = false;
                 }
                 if(touching) continue;
-                wants.add(new int[]{gi, makes && !takes && g.payload ? 2 : makes && !takes && g.liquid ? 1 : 0});
+                wants.add(new int[]{gi, makes && !takes && g.payload ? 2 : makes && !takes ? 1 : 0});
                 wantPart.add(p);
             }
             //(a maker of what the core should not have, against the core)
@@ -187,8 +187,7 @@ public final class Placer{
                 if(!b.in(t[0], t[1])) continue;
                 Body.Part o = b.partAt[b.idx(t[0], t[1])];
                 if(o == null) continue;
-                for(String y : Board.itemsOut(p)) if(b.swallows(o, y)) hard += 1;
-                for(String y : Board.liquidsOut(p, t[2])) if(b.swallows(o, y)) hard += 1;
+                for(String y : Board.out(p, t[2])) if(b.swallows(o, y)) hard += 1;
             }
         }
         port += wants.size() - match(wants, wantPart, cover);
@@ -213,16 +212,13 @@ public final class Placer{
         //one of them: little use to any line; each thing more handed into it counts as a line end short)
         Map<Integer, Set<String>> handed = new HashMap<>();
         for(Body body : bodies) for(Body.Part p : body.parts){
-            List<String> items = Board.itemsOut(p);
             for(int[] t : p.around()){
                 if(!b.in(t[0], t[1])) continue;
                 int i = b.idx(t[0], t[1]);
                 if(cover[i] != 0) continue;
-                List<String> liquids = Board.liquidsOut(p, t[2]);
-                if(items.isEmpty() && liquids.isEmpty()) continue;
-                Set<String> got = handed.computeIfAbsent(i, k -> new HashSet<>());
-                got.addAll(items);
-                got.addAll(liquids);
+                List<String> given = Board.out(p, t[2]);
+                if(given.isEmpty()) continue;
+                handed.computeIfAbsent(i, k -> new HashSet<>()).addAll(given);
             }
         }
         for(Set<String> got : handed.values()) if(got.size() > 1) port += got.size() - 1;
@@ -246,10 +242,18 @@ public final class Placer{
             if(b.in(f[0], f[1]) && cover[b.idx(f[0], f[1])] == 0 && b.floor(f[0], f[1])) out.add(b.idx(f[0], f[1]));
             return out;
         }
+        //(a module's port, a carrier on its edge: an output hands on only ahead, an input is fed from behind, out of the module)
+        if(want[0] >= 0 && p.recipe == null && p.config != null && (p.block instanceof mindustry.world.blocks.distribution.Duct || p.block instanceof mindustry.world.blocks.liquid.Conduit)){
+            int d = want[1] == 1 ? p.rot : (p.rot + 2) % 4;
+            int x = p.x0 + Geo.dx(d), y = p.y0 + Geo.dy(d);
+            if(b.in(x, y) && cover[b.idx(x, y)] == 0 && b.floor(x, y)) out.add(b.idx(x, y));
+            return out;
+        }
+        //(what a maker hands out, only on the sides it hands it out of)
         String liquid = want[0] == -2 ? Board.mustDrain(p) : want[0] >= 0 && want[1] == 1 ? groups.get(want[0]).res : null;
         for(int[] t : p.around()){
             if(!b.in(t[0], t[1]) || cover[b.idx(t[0], t[1])] != 0 || !b.floor(t[0], t[1])) continue;
-            if(liquid != null && !Board.liquidsOut(p, t[2]).contains(liquid)) continue;
+            if(liquid != null && !Board.out(p, t[2]).contains(liquid)) continue;
             out.add(b.idx(t[0], t[1]));
         }
         return out;

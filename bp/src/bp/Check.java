@@ -210,6 +210,8 @@ public final class Check{
                 lines.add(s.toString());
                 Set<String> got = reach.computeIfAbsent(item.name + " from " + Scratch.where(b), k -> new HashSet<>());
                 for(Building e : ends) got.add(Scratch.where(e));
+                //(the carriers it passes count as reached too: a line laid to a module's port ends at a carrier)
+                for(Building c : seen) got.add(Scratch.where(c));
             }
         }
         //lines that carry more than one item: whichever comes first to what takes only the other holds the line
@@ -218,6 +220,41 @@ public final class Check{
             for(Item i : e.getValue()) names.add(i.name);
             lines.add("mixed: " + Scratch.where(e.getKey()) + " carries " + names);
         }
+    }
+
+    /** Where an item handed to a carrier goes on to, by the same rules (for a line that starts at a carrier: a module's port). */
+    public Set<String> traceItem(Building start, Item item){
+        Set<String> ends = new LinkedHashSet<>();
+        Set<Building> seen = new HashSet<>();
+        ArrayDeque<Building> queue = new ArrayDeque<>();
+        queue.add(start);
+        while(!queue.isEmpty()){
+            Building c = queue.poll();
+            if(!seen.add(c)) continue;
+            ends.add(Scratch.where(c));
+            for(Building o : handsTo(c, item)){
+                if(carrier(o)) queue.add(o);
+                else ends.add(Scratch.where(o));
+            }
+        }
+        return ends;
+    }
+
+    public Set<String> traceLiquid(Building start, Liquid liquid){
+        Set<String> ends = new LinkedHashSet<>();
+        Set<Building> seen = new HashSet<>();
+        ArrayDeque<Building> queue = new ArrayDeque<>();
+        queue.add(start);
+        while(!queue.isEmpty()){
+            Building c = queue.poll();
+            if(!seen.add(c)) continue;
+            ends.add(Scratch.where(c));
+            for(Building o : liquidTo(c, liquid)){
+                if(liquidCarrier(o)) queue.add(o);
+                else ends.add(Scratch.where(o));
+            }
+        }
+        return ends;
     }
 
     // ------------------------------------------------------------------ liquids
@@ -298,6 +335,7 @@ public final class Check{
                 List<String> to = new ArrayList<>();
                 for(Building e : ends) to.add(Scratch.where(e));
                 reach.computeIfAbsent(liquid.name + " from " + Scratch.where(b), k -> new HashSet<>()).addAll(to);
+                for(Building c : seen) reach.get(liquid.name + " from " + Scratch.where(b)).add(Scratch.where(c));
                 lines.add(String.format("liquid %s from %s -> %s%s", liquid.name, Scratch.where(b), to.isEmpty() ? "nowhere" : String.join(", ", to), stops.isEmpty() ? "" : "; ENDS at " + String.join(", ", stops)));
             }
         }

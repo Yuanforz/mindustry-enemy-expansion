@@ -44,6 +44,46 @@ public final class Recipes{
         return out;
     }
 
+    static Set<Item> ores;
+    static Set<Liquid> floorLiquids;
+
+    /** The items some ground gives (an ore on the floor or in a wall, a floor's own drop): what a drill may dig. */
+    static Set<Item> ores(){
+        if(ores == null){
+            ores = new HashSet<>();
+            for(Block b : Vars.content.blocks()) if(b instanceof mindustry.world.blocks.environment.OverlayFloor || b instanceof mindustry.world.blocks.environment.Floor || b instanceof mindustry.world.blocks.environment.StaticWall){
+                if(b.itemDrop != null) ores.add(b.itemDrop);
+            }
+        }
+        return ores;
+    }
+
+    /** The liquids some floor gives a pump. */
+    static Set<Liquid> floorLiquids(){
+        if(floorLiquids == null){
+            floorLiquids = new LinkedHashSet<>();
+            for(Block b : Vars.content.blocks()) if(b instanceof mindustry.world.blocks.environment.Floor f && f.liquidDrop != null && f.liquidDrop.isOnPlanet(Planets.erekir)) floorLiquids.add(f.liquidDrop);
+        }
+        return floorLiquids;
+    }
+
+    /** What payloads are made on Erekir: the units of its yards and refabricators, the blocks of its constructors. */
+    static List<Recipe> payloadsMade(){
+        List<Recipe> out = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for(Block b : Vars.content.blocks()){
+            if(!b.isOnPlanet(Planets.erekir)) continue;
+            if(!(b instanceof UnitFactory || b instanceof Reconstructor || b instanceof mindustry.world.blocks.payloads.Constructor || b instanceof UnitAssembler)) continue;
+            List<Recipe> rs = new ArrayList<>();
+            try{
+                read(b, rs);
+            }catch(Throwable ignored){
+            }
+            for(Recipe r : rs) for(String k : r.out.keySet()) if((Vars.content.unit(k) != null || Vars.content.block(k) != null) && seen.add(k)) out.add(r);
+        }
+        return out;
+    }
+
     static float perSecond(float perTick){
         return perTick * 60f;
     }
@@ -117,7 +157,7 @@ public final class Recipes{
         if(b instanceof BeamDrill d){
             for(Item item : Vars.content.items()){
                 if(item.hardness > d.tier || d.blockedItems != null && d.blockedItems.contains(item)) continue;
-                if(!item.isOnPlanet(Planets.erekir)) continue;
+                if(!item.isOnPlanet(Planets.erekir) || !ores().contains(item)) continue;
                 for(boolean boost : hasBooster(b) ? new boolean[]{false, true} : new boolean[]{false}){
                     Recipe r = new Recipe(b.name + ":" + item.name + (boost ? "+boost" : ""), b, Recipe.Kind.drill, Recipe.Ground.wallOre, item.name);
                     consumers(b, r, 0f, boost);
@@ -132,7 +172,7 @@ public final class Recipes{
         if(b instanceof Drill d){
             for(Item item : Vars.content.items()){
                 if(item.hardness > d.tier || item == d.blockedItem || d.blockedItems != null && d.blockedItems.contains(item)) continue;
-                if(!item.isOnPlanet(Planets.erekir)) continue;
+                if(!item.isOnPlanet(Planets.erekir) || !ores().contains(item)) continue;
                 for(boolean boost : hasBooster(b) ? new boolean[]{false, true} : new boolean[]{false}){
                     Recipe r = new Recipe(b.name + ":" + item.name + (boost ? "+boost" : ""), b, Recipe.Kind.drill, Recipe.Ground.floorOre, item.name);
                     consumers(b, r, 0f, boost);
@@ -152,10 +192,34 @@ public final class Recipes{
             return;
         }
         if(b instanceof Pump p){
-            Recipe r = new Recipe(b.name, b, Recipe.Kind.pump, Recipe.Ground.liquidFloor, null);
-            consumers(b, r, 0f, false);
-            r.perYield.put("liquid", perSecond(p.pumpAmount));
-            out.add(r);
+            //(one way for each liquid a floor gives: a pump draws from the floor it stands on, pumpAmount a tick a tile, times
+            //the floor's multiplier, the place's yield)
+            for(Liquid l : floorLiquids()){
+                Recipe r = new Recipe(b.name + ":" + l.name, b, Recipe.Kind.pump, Recipe.Ground.liquidFloor, l.name);
+                consumers(b, r, 0f, false);
+                r.perYield.put(l.name, perSecond(p.pumpAmount));
+                out.add(r);
+            }
+            return;
+        }
+        if(b instanceof mindustry.world.blocks.payloads.PayloadDeconstructor dc){
+            //a deconstructor: each payload it may take (a block a constructor makes, a unit that rides payloads), taken
+            //apart in its build time over the deconstructor's speed, its whole cost handed back (PayloadDeconstructor)
+            for(Recipe made : payloadsMade()){
+                String what = made.out.keySet().iterator().next();
+                Block bl = Vars.content.block(what);
+                UnitType u = Vars.content.unit(what);
+                float size = bl != null ? bl.size : u != null ? u.hitSize / Vars.tilesize : 99f;
+                ItemStack[] req = bl != null ? bl.requirements : u != null ? u.getTotalRequirements() : null;
+                float time = bl != null ? bl.buildTime : u != null ? u.getBuildTime() : 0f;
+                if(req == null || req.length == 0 || size > dc.maxPayloadSize || time <= 0f) continue;
+                float seconds = time / dc.deconstructSpeed / 60f;
+                Recipe r = new Recipe(b.name + ":" + what, b, Recipe.Kind.crafter, Recipe.Ground.none, null);
+                consumers(b, r, 0f, false);
+                r.in.put(what, 1f / seconds);
+                for(ItemStack st : req) r.out.merge(st.item.name, st.amount / seconds, Float::sum);
+                out.add(r);
+            }
             return;
         }
         if(b instanceof ThermalGenerator t){
@@ -174,7 +238,7 @@ public final class Recipes{
             //(one that gives heat too, the neoplasia reactor: what its liquid output fills up it blows up with, and so
             //must be led away all)
             if(b instanceof HeaterGenerator hg) r.heatOut = hg.heatOutput;
-            r.out.put(b.name, 1f);
+            r.out.put("~" + b.name, 1f);
             out.add(r);
             return;
         }
@@ -235,7 +299,7 @@ public final class Recipes{
             consumers(b, r, 0f, false);
             r.powerOut = perSecond(v.powerProduction);
             r.heatNeed = v.maxHeat;
-            r.out.put(b.name, 1f);
+            r.out.put("~" + b.name, 1f);
             out.add(r);
             return;
         }
@@ -247,7 +311,15 @@ public final class Recipes{
                 r.out.put(up[1].name, 60f / re.constructTime);
                 out.add(r);
             }
+            return;
         }
+        //anything else that takes what it needs while it stands (power, a liquid: a radar, a repair tower, a mass driver):
+        //working at full is having it, a second, as its consumers ask; what it gives is itself at work, by its name
+        Recipe r = new Recipe(b.name, b, Recipe.Kind.consumer, Recipe.Ground.none, null);
+        consumers(b, r, 0f, false);
+        if(r.in.isEmpty() && r.powerUse <= 0f) return;
+        r.out.put("~" + b.name, 1f);
+        out.add(r);
     }
 
     /**
