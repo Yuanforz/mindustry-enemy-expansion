@@ -507,34 +507,36 @@ public final class Grow{
 
     static boolean loaded;
 
-    /**
-     * How many of each unit stand by the end of each span (time-indexed, SCIP), the spans growing (two of each length,
-     * each length twice the one before) so that the whole of the plan falls within them: what stands works as far as what
-     * it takes is made at least as fast by what works (every thing, power too), and what it makes beyond goes to the core
-     * (items); what comes into the core and is dug pays for what is built; the core unit's building and digging fill no
-     * more than a span; the core holds so much of an item and burns the rest. Least: how long until the whole stands, and
-     * the building left undone, span by span (so that what makes the rest come sooner goes up first). The first span's is
-     * the next step; the rest is planned again then.
-     */
-    Map<Unit, Integer> next(State st, int spans, float spanSeconds, float think){
-        if(!loaded){
-            Loader.loadNativeLibraries();
-            loaded = true;
+    /** The schedule as a model: its solver, its variables by unit and span, the rows that tie a span to the one before. */
+    static final class Model{
+        MPSolver solver;
+        String solverName;
+        int T;
+        final Map<Unit, MPVariable[]> n = new LinkedHashMap<>(), a = new LinkedHashMap<>(), b = new LinkedHashMap<>(), d = new LinkedHashMap<>();
+        final Map<Unit, MPConstraint[]> flow = new HashMap<>(), act = new HashMap<>();
+        final Map<String, MPVariable[]> dig = new HashMap<>(), stock = new HashMap<>(), part = new HashMap<>();
+        final Map<String, MPConstraint[]> bal = new HashMap<>();
+        MPSolver.ResultStatus status;
+        double seconds;
+
+        boolean solved(){
+            return status == MPSolver.ResultStatus.OPTIMAL || status == MPSolver.ResultStatus.FEASIBLE;
         }
-        MPSolver solver = MPSolver.createSolver(System.getProperty("bp.mip", "SCIP"));
-        double inf = MPSolver.infinity();
-        int T = spans;
-        float[] L = new float[T + 1];
-        for(int t = 1; t <= T; t++) L[t] = spanSeconds * (1 << ((t - 1) / 2));
-        //(each span: how many of a unit are built, and taken down (a way up only: it gives back what the game gives
-        //back, Rules.deconstructRefundMultiplier, and takes the core unit as long); how many stand at its end; how much of
-        //them works, no more than stood from its start and stays)
-        Map<Unit, MPVariable[]> n = new LinkedHashMap<>(), a = new LinkedHashMap<>(), b = new LinkedHashMap<>(), d = new LinkedHashMap<>();
-        float refund = Vars.state.rules.deconstructRefundMultiplier;
-        //(the classes the final form wants, each with its units, and what one of it takes to build, as planned or least)
-        Map<String, List<Unit>> classes = new LinkedHashMap<>();
+
+        double objective(){
+            return solved() ? solver.objective().value() : Double.NaN;
+        }
+    }
+
+    /** The classes the final form wants, each with its units; what one of each takes to build (as planned or least); all of it. */
+    final Map<String, List<Unit>> classes = new LinkedHashMap<>();
+    final Map<String, Float> clsSeconds = new HashMap<>();
+    float total;
+
+    void classes(){
+        classes.clear();
+        clsSeconds.clear();
         for(Unit u : units) if(need.getOrDefault(u.cls, 0) > 0) classes.computeIfAbsent(u.cls, k -> new ArrayList<>()).add(u);
-        Map<String, Float> clsSeconds = new HashMap<>();
         for(var e : classes.entrySet()){
             float least = Float.MAX_VALUE, planned = -1f;
             for(Unit u : e.getValue()){
@@ -543,42 +545,65 @@ public final class Grow{
             }
             clsSeconds.put(e.getKey(), planned >= 0f ? planned : least);
         }
-        float total = 0f;
+        total = 0f;
         for(var e : classes.entrySet()) total += clsSeconds.get(e.getKey()) * need.get(e.getKey());
+    }
+
+    /**
+     * How many of each unit stand by the end of each span (time-indexed), the spans growing (two of each length, each length
+     * twice the one before) so that the whole of the plan falls within them: what stands works as far as what it takes is
+     * made at least as fast by what works (every thing, power too), and what it makes beyond goes to the core (items); what
+     * comes into the core and is dug pays for what is built; the core unit's building and digging fill no more than a span;
+     * the core holds so much of an item and burns the rest. Least: how long until the whole stands, and the building left
+     * undone, span by span (so that what makes the rest come sooner goes up first). Whole numbers in the first spans (so
+     * many); and where given, what each unit standing and each item in the core at the end of the last span is worth to
+     * what comes after, a share of the objective each.
+     */
+    Model build(State st, int T, float[] L, int whole, String solverName, Map<Unit, Double> nWorth, Map<String, Double> sWorth){
+        Model m = new Model();
+        MPSolver solver = m.solver = MPSolver.createSolver(solverName);
+        m.solverName = solverName;
+        m.T = T;
+        double inf = MPSolver.infinity();
+        //(each span: how many of a unit are built, and taken down (a way up only: it gives back what the game gives
+        //back, Rules.deconstructRefundMultiplier, and takes the core unit as long); how many stand at its end; how much of
+        //them works, no more than stood from its start and stays)
+        float refund = Vars.state.rules.deconstructRefundMultiplier;
         for(Unit u : units){
             int have = ledger.committed(u.key);
             MPVariable[] v = new MPVariable[T + 1], w = new MPVariable[T + 1], up = new MPVariable[T + 1], down = new MPVariable[T + 1];
-            v[0] = solver.makeIntVar(have, have, "");
+            MPConstraint[] fl = new MPConstraint[T + 1], ac = new MPConstraint[T + 1];
+            v[0] = solver.makeNumVar(have, have, "");
             int most = blocked(u) ? have : u.count;
             for(int t = 1; t <= T; t++){
-                //(whole numbers in the first two spans, the ones acted on soon; beyond, a share: the far plan an estimate)
-                boolean whole = t <= Integer.getInteger("bp.wholeSpans", 2);
+                boolean isWhole = t <= whole;
                 int lo = u.removable ? 0 : have;
-                v[t] = whole ? solver.makeIntVar(lo, most, "n_" + u.key + "_" + t) : solver.makeNumVar(lo, most, "n_" + u.key + "_" + t);
-                up[t] = whole ? solver.makeIntVar(0, u.count, "") : solver.makeNumVar(0, u.count, "");
-                down[t] = whole ? solver.makeIntVar(0, u.removable ? u.count : 0, "") : solver.makeNumVar(0, u.removable ? u.count : 0, "");
-                MPConstraint flow = solver.makeConstraint(0, 0);
+                v[t] = isWhole ? solver.makeIntVar(lo, most, "n_" + u.key + "_" + t) : solver.makeNumVar(lo, most, "n_" + u.key + "_" + t);
+                up[t] = isWhole ? solver.makeIntVar(0, u.count, "") : solver.makeNumVar(0, u.count, "");
+                down[t] = isWhole ? solver.makeIntVar(0, u.removable ? u.count : 0, "") : solver.makeNumVar(0, u.removable ? u.count : 0, "");
+                MPConstraint flow = fl[t] = solver.makeConstraint(0, 0);
                 flow.setCoefficient(v[t], 1);
                 flow.setCoefficient(v[t - 1], -1);
                 flow.setCoefficient(up[t], -1);
                 flow.setCoefficient(down[t], 1);
                 w[t] = solver.makeNumVar(0, inf, "");
-                MPConstraint c = solver.makeConstraint(-inf, 0);
+                MPConstraint c = ac[t] = solver.makeConstraint(-inf, 0);
                 c.setCoefficient(w[t], 1);
                 c.setCoefficient(v[t - 1], -1);
                 c.setCoefficient(down[t], 1);
             }
-            n.put(u, v);
-            a.put(u, w);
-            b.put(u, up);
-            d.put(u, down);
+            m.n.put(u, v);
+            m.a.put(u, w);
+            m.b.put(u, up);
+            m.d.put(u, down);
+            m.flow.put(u, fl);
+            m.act.put(u, ac);
         }
         //(digging: seconds a span on each item the core unit can dig)
-        Map<String, MPVariable[]> dig = new HashMap<>();
         for(String i : st.dig.keySet()){
             MPVariable[] v = new MPVariable[T + 1];
             for(int t = 1; t <= T; t++) v[t] = solver.makeNumVar(0, L[t], "dig_" + i + "_" + t);
-            dig.put(i, v);
+            m.dig.put(i, v);
         }
         Set<String> res = new TreeSet<>();
         for(Unit u : units){
@@ -586,36 +611,35 @@ public final class Grow{
             res.addAll(u.cost.keySet());
         }
         MPObjective obj = solver.objective();
-        Map<String, MPVariable[]> part = new HashMap<>();
         for(int t = 1; t <= T; t++){
             //the core unit's time
             MPConstraint time = solver.makeConstraint(-inf, L[t]);
             for(Unit u : units){
-                time.setCoefficient(b.get(u)[t], u.seconds / st.buildSpeed);
-                time.setCoefficient(d.get(u)[t], u.seconds / st.buildSpeed);
+                time.setCoefficient(m.b.get(u)[t], u.seconds / st.buildSpeed);
+                time.setCoefficient(m.d.get(u)[t], u.seconds / st.buildSpeed);
             }
-            for(MPVariable[] dg : dig.values()) time.setCoefficient(dg[t], 1);
+            for(MPVariable[] dg : m.dig.values()) time.setCoefficient(dg[t], 1);
             //power
             MPConstraint power = solver.makeConstraint(0, inf);
-            for(Unit u : units) power.setCoefficient(a.get(u)[t], u.power);
+            for(Unit u : units) power.setCoefficient(m.a.get(u)[t], u.power);
             //(the whole standing by the end of the span: no more than the least of every class's share standing)
             MPVariable done = solver.makeNumVar(0, 1, "done_" + t);
             for(var e : classes.entrySet()){
                 MPConstraint c = solver.makeConstraint(-inf, 0);
                 c.setCoefficient(done, need.get(e.getKey()));
-                for(Unit u : e.getValue()) c.setCoefficient(n.get(u)[t], -1);
+                for(Unit u : e.getValue()) c.setCoefficient(m.n.get(u)[t], -1);
                 //(and how much of the class stands, at most what is wanted of it)
                 MPVariable p = solver.makeNumVar(0, need.get(e.getKey()), "");
                 MPConstraint pc = solver.makeConstraint(-inf, 0);
                 pc.setCoefficient(p, 1);
-                for(Unit u : e.getValue()) pc.setCoefficient(n.get(u)[t], -1);
+                for(Unit u : e.getValue()) pc.setCoefficient(m.n.get(u)[t], -1);
                 obj.setCoefficient(p, -L[t] * clsSeconds.get(e.getKey()) / Math.max(1f, total));
-                part.computeIfAbsent(e.getKey(), k -> new MPVariable[T + 1])[t] = p;
+                m.part.computeIfAbsent(e.getKey(), k -> new MPVariable[T + 1])[t] = p;
             }
             //least: the span's length while the whole does not stand, and while building is left, by how much is left;
             //what is taken down, its building lost
             obj.setCoefficient(done, -L[t]);
-            for(Unit u : units) if(u.removable) obj.setCoefficient(d.get(u)[t], L[t] * u.seconds / Math.max(1f, total));
+            for(Unit u : units) if(u.removable) obj.setCoefficient(m.d.get(u)[t], L[t] * u.seconds / Math.max(1f, total));
         }
         //(two machines on ground in one another's way: not both at once)
         for(int i = 0; i < units.size(); i++) for(int j = i + 1; j < units.size(); j++){
@@ -624,8 +648,8 @@ public final class Grow{
             if(x.tiles.length == 0 || y.tiles.length == 0 || !share(x.tiles, y.tiles) && !share(x.tiles, y.lane) && !share(x.lane, y.tiles)) continue;
             for(int t = 1; t <= T; t++){
                 MPConstraint c = solver.makeConstraint(-inf, 1);
-                c.setCoefficient(n.get(x)[t], 1);
-                c.setCoefficient(n.get(y)[t], 1);
+                c.setCoefficient(m.n.get(x)[t], 1);
+                c.setCoefficient(m.n.get(y)[t], 1);
             }
         }
         for(String r : res){
@@ -637,7 +661,7 @@ public final class Grow{
                 MPConstraint made = solver.makeConstraint(0, item ? 0 : inf);
                 for(Unit u : units){
                     float rate = u.rate.getOrDefault(r, 0f);
-                    if(rate != 0f) made.setCoefficient(a.get(u)[t], rate);
+                    if(rate != 0f) made.setCoefficient(m.a.get(u)[t], rate);
                 }
                 if(!item) continue;
                 made.setCoefficient(in, -1);
@@ -649,27 +673,105 @@ public final class Grow{
                 if(prev != null) bal.setCoefficient(prev, -1);
                 bal.setCoefficient(burnt, 1);
                 bal.setCoefficient(in, -L[t]);
-                if(dig.containsKey(r)) bal.setCoefficient(dig.get(r)[t], -st.dig.get(r));
+                if(m.dig.containsKey(r)) bal.setCoefficient(m.dig.get(r)[t], -st.dig.get(r));
                 for(Unit u : units){
                     float c = u.cost.getOrDefault(r, 0f);
                     if(c == 0f) continue;
-                    bal.setCoefficient(b.get(u)[t], c);
-                    bal.setCoefficient(d.get(u)[t], -c * refund);
+                    bal.setCoefficient(m.b.get(u)[t], c);
+                    bal.setCoefficient(m.d.get(u)[t], -c * refund);
                 }
+                m.stock.computeIfAbsent(r, k -> new MPVariable[T + 1])[t] = s;
+                m.bal.computeIfAbsent(r, k -> new MPConstraint[T + 1])[t] = bal;
                 prev = s;
             }
         }
+        //(what is left at the end of the last span, worth so much to what comes after)
+        if(nWorth != null) for(Unit u : units) obj.setCoefficient(m.n.get(u)[T], obj.getCoefficient(m.n.get(u)[T]) + nWorth.getOrDefault(u, 0.0));
+        if(sWorth != null) for(var e : sWorth.entrySet()) if(m.stock.containsKey(e.getKey())) obj.setCoefficient(m.stock.get(e.getKey())[T], obj.getCoefficient(m.stock.get(e.getKey())[T]) + e.getValue());
         obj.setMinimization();
-        solver.setTimeLimit((long)(think * 1000));
-        if(Boolean.getBoolean("bp.solverLog")) solver.enableOutput();
-        MPSolver.ResultStatus status = solver.solve();
-        Map<Unit, Integer> out = new LinkedHashMap<>();
+        return m;
+    }
+
+    void solve(Model m, float think){
+        m.solver.setTimeLimit((long)(think * 1000));
+        //(GLOP's last check of a solution at the precision of the model's own numbers: its rates and stocks span seven
+        //orders of magnitude, the reduced costs come out within a millionth or so of what is exact)
+        if(m.solverName.equals("GLOP")) m.solver.setSolverSpecificParametersAsString("solution_feasibility_tolerance: " + System.getProperty("bp.glopTolerance", "1e-5"));
+        if(Boolean.getBoolean("bp.solverLog")) m.solver.enableOutput();
+        long t0 = System.nanoTime();
+        try{
+            m.status = m.solver.solve();
+        }catch(IllegalArgumentException e){
+            //(a status the binding does not know, as HiGHS may give)
+            m.status = MPSolver.ResultStatus.ABNORMAL;
+            System.out.println("  (the solver ended with a status not known: " + e.getMessage() + ")");
+        }
+        m.seconds = (System.nanoTime() - t0) / 1e9;
+    }
+
+    /**
+     * What each unit standing and each item in the core at the end of the first span is worth to the rest of the plan: the
+     * duals of the rows of the second span they enter (Lagrange): a unit, those of the second span's count and work; an
+     * item, that of the second span's stock (GLOP's duals: what the objective gains as a row's bound grows).
+     */
+    void worth(Model plan, int k, Map<Unit, Double> nWorth, Map<String, Double> sWorth){
+        if(plan.T <= k) return;
+        for(Unit u : units) nWorth.put(u, plan.flow.get(u)[k + 1].dualValue() + plan.act.get(u)[k + 1].dualValue());
+        for(var e : plan.bal.entrySet()) if(e.getValue()[k + 1] != null) sWorth.put(e.getKey(), e.getValue()[k + 1].dualValue());
+    }
+
+    /**
+     * The next step: the whole plan, in shares (an LP), and what each thing left at the end of the first span is worth to
+     * the rest of it; then the first span in whole numbers (a MIP of it alone), what it leaves worth so much. The plan is
+     * planned again every step from what is; only the first span's own choice is in whole numbers.
+     * (-Dbp.schedule=exact: the whole plan as one MIP, whole numbers in the first spans.)
+     */
+    Map<Unit, Integer> next(State st, int spans, float spanSeconds, float think){
+        if(!loaded){
+            Loader.loadNativeLibraries();
+            loaded = true;
+        }
+        int T = spans;
+        float[] L = new float[T + 1];
+        for(int t = 1; t <= T; t++) L[t] = spanSeconds * (1 << ((t - 1) / 2));
+        classes();
         float horizon = 0f;
         for(int t = 1; t <= T; t++) horizon += L[t];
-        System.out.println(String.format(Locale.ROOT, "schedule: %s, %d units, %d spans (%.0f s to %.0f s, %.0f s in all); objective %.3f", status.toString().toLowerCase(), units.size(), T, L[1], L[T], horizon, status == MPSolver.ResultStatus.OPTIMAL || status == MPSolver.ResultStatus.FEASIBLE ? solver.objective().value() : Double.NaN));
-        if(status != MPSolver.ResultStatus.OPTIMAL && status != MPSolver.ResultStatus.FEASIBLE) return out;
+        Map<Unit, Integer> out = new LinkedHashMap<>();
+        Model plan, first;
+        boolean exact = System.getProperty("bp.schedule", "split").equals("exact");
+        if(exact){
+            plan = first = build(st, T, L, Integer.getInteger("bp.wholeSpans", 2), System.getProperty("bp.mip", "SCIP"), null, null);
+            solve(plan, think);
+            System.out.println(String.format(Locale.ROOT, "schedule: %s, %d units, %d spans (%.0f s to %.0f s, %.0f s in all); objective %.3f (%.1f s)", plan.status.toString().toLowerCase(), units.size(), T, L[1], L[T], horizon, plan.objective(), plan.seconds));
+        }else{
+            plan = build(st, T, L, 0, System.getProperty("bp.lp", "GLOP"), null, null);
+            solve(plan, think);
+            //(the near spans planned again in themselves, the first in whole numbers, what they leave worth what the plan
+            //says it is worth to the rest)
+            int near = Math.min(T, Integer.getInteger("bp.nearSpans", 2));
+            Map<Unit, Double> nWorth = new HashMap<>();
+            Map<String, Double> sWorth = new HashMap<>();
+            if(plan.solved()) worth(plan, near, nWorth, sWorth);
+            first = build(st, near, L, 1, System.getProperty("bp.mip", "SCIP"), nWorth, sWorth);
+            if(plan.solved()) solve(first, think);
+            System.out.println(String.format(Locale.ROOT, "schedule: the plan %s, %d units, %d spans (%.0f s to %.0f s, %.0f s in all), objective %.3f (%.1f s); the first span %s (%.1f s)", plan.status.toString().toLowerCase(), units.size(), T, L[1], L[T], horizon, plan.objective(), plan.seconds, first.status == null ? "not planned" : first.status.toString().toLowerCase(), first.seconds));
+            if(Boolean.getBoolean("bp.evalSplit") && first.solved()) evalSplit(st, T, L, first, think);
+            if(Boolean.getBoolean("bp.showFirst") && plan.solved()){
+                //(a test: what the plan in shares builds in the first span, and what the near choice builds)
+                List<String> lp = new ArrayList<>(), mip = new ArrayList<>();
+                for(Unit u : units){
+                    double x = plan.b.get(u)[1].solutionValue(), y = plan.b.get(u)[2].solutionValue();
+                    if(x > 1e-4 || y > 1e-4) lp.add(String.format(Locale.ROOT, "%s %.2f/%.2f", u.key, x, y));
+                    if(first.solved() && first.b.get(u)[1].solutionValue() > 0.5) mip.add(u.key);
+                }
+                System.out.println("  the plan builds in spans 1/2: " + lp);
+                System.out.println("  the near choice builds: " + mip);
+            }
+        }
+        if(!plan.solved() || !first.solved()) return out;
         for(Unit u : units){
-            int add = (int)Math.round(b.get(u)[1].solutionValue()), drop = (int)Math.round(d.get(u)[1].solutionValue());
+            int add = (int)Math.round(first.b.get(u)[1].solutionValue()), drop = (int)Math.round(first.d.get(u)[1].solutionValue());
             //(to build some and take some down of one unit in a span is the same as the difference alone, for less)
             if(add > 0 && drop > 0){
                 System.out.println("  (" + u.key + ": built " + add + " and taken down " + drop + " in one span: only the difference)");
@@ -679,13 +781,13 @@ public final class Grow{
             }
             if(add > 0) out.put(u, add);
             if(drop > 0) takeDown.put(u, drop);
-            if(Boolean.getBoolean("bp.debug") && (add > 0 || drop > 0)) System.out.println(String.format("    %s: had %d, built %d, taken down %d, then %d; works %.2f in span 1, %.2f in span 2", u.key, ledger.committed(u.key), add, drop, Math.round(n.get(u)[1].solutionValue()), a.get(u)[1].solutionValue(), T > 1 ? a.get(u)[2].solutionValue() : 0));
+            if(Boolean.getBoolean("bp.debug") && (add > 0 || drop > 0)) System.out.println(String.format("    %s: had %d, built %d, taken down %d, then %d; works %.2f in span 1", u.key, ledger.committed(u.key), add, drop, Math.round(first.n.get(u)[1].solutionValue()), first.a.get(u)[1].solutionValue()));
         }
         float end = 0f;
         StringBuilder later = new StringBuilder();
         for(int t = 1; t <= T; t++){
             float left = 0f;
-            for(var e : classes.entrySet()) left += clsSeconds.get(e.getKey()) * (need.get(e.getKey()) - (float)part.get(e.getKey())[t].solutionValue());
+            for(var e : classes.entrySet()) left += clsSeconds.get(e.getKey()) * (need.get(e.getKey()) - (float)plan.part.get(e.getKey())[t].solutionValue());
             end += L[t];
             later.append(String.format(" %.0fs:%.0f%%", end, 100f * (1f - left / Math.max(1f, total))));
         }
@@ -693,7 +795,7 @@ public final class Grow{
         if(Boolean.getBoolean("bp.debug")){
             Map<String, Float> want = new TreeMap<>();
             for(var c : classes.entrySet()){
-                float got = (float)part.get(c.getKey())[T].solutionValue();
+                float got = (float)plan.part.get(c.getKey())[T].solutionValue();
                 if(got >= need.get(c.getKey()) - 0.5f) continue;
                 Unit u = c.getValue().get(0);
                 System.out.println("    not by the end: " + c.getKey() + " " + Math.round(got) + "/" + need.get(c.getKey()) + " cost " + u.cost);
@@ -701,25 +803,52 @@ public final class Grow{
             }
             System.out.println("    their cost: " + want);
             for(int t : new int[]{3, 6, 9}){
+                if(t > T) continue;
                 Map<String, Float> made = new TreeMap<>();
-                for(Unit u : units) for(var e : u.rate.entrySet()) if(Vars.content.item(e.getKey()) != null && e.getValue() > 0f && a.get(u)[t].solutionValue() > 1e-6) made.merge(e.getKey(), e.getValue() * (float)a.get(u)[t].solutionValue(), Float::sum);
+                for(Unit u : units) for(var e : u.rate.entrySet()) if(Vars.content.item(e.getKey()) != null && e.getValue() > 0f && plan.a.get(u)[t].solutionValue() > 1e-6) made.merge(e.getKey(), e.getValue() * (float)plan.a.get(u)[t].solutionValue(), Float::sum);
                 System.out.println("    made in span " + t + ", a second: " + made);
             }
             List<String> ways = new ArrayList<>();
             for(Unit u : units) if(!u.required){
                 int most = 0;
-                for(int t = 1; t <= T; t++) most = Math.max(most, (int)Math.round(n.get(u)[t].solutionValue()));
+                for(int t = 1; t <= T; t++) most = Math.max(most, (int)Math.round(plan.n.get(u)[t].solutionValue()));
                 if(most > 0) ways.add(most + " " + u.key);
             }
             System.out.println("    ways up taken: " + ways);
         }
-        for(var e : dig.entrySet()) if(e.getValue()[1].solutionValue() > 1e-3) digFirst.put(e.getKey(), (float)e.getValue()[1].solutionValue());
+        for(var e : first.dig.entrySet()) if(e.getValue()[1].solutionValue() > 1e-3) digFirst.put(e.getKey(), (float)e.getValue()[1].solutionValue());
         //(what the plan expects into the core in the first span, a second: made beyond taken, and dug)
-        for(Unit u : units) for(var e : u.rate.entrySet()) if(Vars.content.item(e.getKey()) != null) expected.merge(e.getKey(), e.getValue() * (float)a.get(u)[1].solutionValue(), Float::sum);
-        for(var e : dig.entrySet()) expected.merge(e.getKey(), st.dig.get(e.getKey()) * (float)e.getValue()[1].solutionValue() / L[1], Float::sum);
+        for(Unit u : units) for(var e : u.rate.entrySet()) if(Vars.content.item(e.getKey()) != null) expected.merge(e.getKey(), e.getValue() * (float)first.a.get(u)[1].solutionValue(), Float::sum);
+        for(var e : first.dig.entrySet()) expected.merge(e.getKey(), st.dig.get(e.getKey()) * (float)e.getValue()[1].solutionValue() / L[1], Float::sum);
         expected.values().removeIf(v -> Math.abs(v) < 1e-3f);
         System.out.println("  expected into the core, a second: " + Recipe.fmt(new LinkedHashMap<>(expected)));
         return out;
+    }
+
+    /**
+     * (A test of the split: the first span as it chose, the rest of the plan in shares, against the whole plan as one MIP,
+     * whole numbers in the first span: what the choice costs by the whole plan's own measure.)
+     */
+    void evalSplit(State st, int T, float[] L, Model first, float think){
+        Model fixed = build(st, T, L, 0, "GLOP", null, null);
+        for(Unit u : units){
+            double nv = Math.round(first.n.get(u)[1].solutionValue()), bv = Math.round(first.b.get(u)[1].solutionValue()), dv = Math.round(first.d.get(u)[1].solutionValue());
+            fixed.n.get(u)[1].setBounds(nv, nv);
+            fixed.b.get(u)[1].setBounds(bv, bv);
+            fixed.d.get(u)[1].setBounds(dv, dv);
+        }
+        solve(fixed, think);
+        //(the exact, once, kept by the step's state: what it costs to know)
+        Model exact = build(st, T, L, 1, "SCIP", null, null);
+        if(Boolean.parseBoolean(System.getProperty("bp.evalExact", "true"))) solve(exact, Float.parseFloat(System.getProperty("bp.evalThink", String.valueOf(think))));
+        else exact.status = MPSolver.ResultStatus.NOT_SOLVED;
+        Set<String> a = new TreeSet<>(), c = new TreeSet<>();
+        for(Unit u : units){
+            long x = Math.round(first.b.get(u)[1].solutionValue()), y = exact.solved() ? Math.round(exact.b.get(u)[1].solutionValue()) : 0;
+            if(x > 0) a.add(x + " " + u.key);
+            if(y > 0) c.add(y + " " + u.key);
+        }
+        System.out.println(String.format(Locale.ROOT, "  split against exact: the split's choice %.3f (%s), the exact %.3f %s (%.1f s), the plan's bound; loss %.4f%%; split builds %s; exact builds %s", fixed.objective(), fixed.status.toString().toLowerCase(), exact.objective(), exact.status.toString().toLowerCase(), exact.seconds, 100 * (fixed.objective() - exact.objective()) / Math.abs(exact.objective()), a, c));
     }
 
     /** (A check: what can ever be had, from the stock and digging, unit by unit as what it costs and takes is had.) */
