@@ -90,8 +90,10 @@ public final class Power{
             add(new V(p.block, p.x0, p.y0, needs(p.block)));
         }
         for(Piece q : pieces){
-            any[b.idx(q.x, q.y)] = 1;
-            if(powered(q.block)) add(new V(q.block, q.x, q.y, false));
+            //(every tile it stands on: a payload conveyor stands on nine about its centre)
+            int s = q.block.size, x0 = Geo.lo(q.x, s), y0 = Geo.lo(q.y, s);
+            for(int y = y0; y < y0 + s; y++) for(int x = x0; x < x0 + s; x++) if(b.in(x, y)) any[b.idx(x, y)] = 1;
+            if(powered(q.block)) add(new V(q.block, x0, y0, false));
         }
         for(Piece q : added){
             any[b.idx(q.x, q.y)] = 1;

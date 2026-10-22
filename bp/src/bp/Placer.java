@@ -191,6 +191,18 @@ public final class Placer{
             }
         }
         port += wants.size() - match(wants, wantPart, cover);
+        //(a payload line can join its maker and a taker only if the conveyors' squares fall in line with both: each hands
+        //on only to the one exactly a square ahead, so their centres keep their place modulo a square from the first,
+        //which stands just ahead of the maker's front, to the last, which lies against the taker; a maker with no taker it
+        //touches or can be in line with counts short)
+        for(Group g : groups){
+            if(!g.payload) continue;
+            for(Body.Part m : g.makers){
+                boolean any = false;
+                for(Body.Part t : g.takers) if(t != m && (Router.touches(m, t, g.res, false) || inLine(m, t, 3))) any = true;
+                if(!any) port += 1;
+            }
+        }
         //(a payload leaves its maker into the square ahead of its front: a conveyor there, or its taker; each tile of
         //that square held by another body counts short)
         for(Group g : groups){
@@ -284,6 +296,44 @@ public final class Placer{
             if(owner[t] == -1 || augment(owner[t], adj)){
                 owner[t] = i;
                 return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether payload conveyors of size s can run from a maker to a taker: the first stands with its centre a step ahead of
+     * the maker's front tile (across, any of three), each next one exactly s ahead of the one before
+     * (PayloadConveyor.onProximityUpdate), the last against a side of the taker the taker takes from, wholly within it
+     * (or at its centre, for a taker of the conveyor's size); so the first's and the last's centres must agree modulo s.
+     */
+    static boolean inLine(Body.Part m, Body.Part t, int s){
+        int[] f = Board.front(m);
+        int d = m.rot, p = (d + 1) % 4;
+        for(int k = -1; k <= 1; k++){
+            int sx = f[0] + Geo.dx(d) * (s / 2) + Geo.dx(p) * k, sy = f[1] + Geo.dy(d) * (s / 2) + Geo.dy(p) * k;
+            for(int e = 0; e < 4; e++){
+                //(the last conveyor hands along e into the taker: its front tile is the taker's first tile that way)
+                int slack = (t.size - s) / 2;
+                if(t.size < s) continue;
+                for(int off = -slack; off <= slack; off++){
+                    int ex, ey;
+                    if(e == 0){
+                        ex = t.x0 - (s / 2 + 1);
+                        ey = t.ay() + off;
+                    }else if(e == 2){
+                        ex = t.x1() + (s / 2 + 1);
+                        ey = t.ay() + off;
+                    }else if(e == 1){
+                        ey = t.y0 - (s / 2 + 1);
+                        ex = t.ax() + off;
+                    }else{
+                        ey = t.y1() + (s / 2 + 1);
+                        ex = t.ax() + off;
+                    }
+                    if(!Board.takesPayloadFrom(t, ex + Geo.dx(e) * (s / 2), ey + Geo.dy(e) * (s / 2))) continue;
+                    if(Math.floorMod(ex - sx, s) == 0 && Math.floorMod(ey - sy, s) == 0) return true;
+                }
             }
         }
         return false;
