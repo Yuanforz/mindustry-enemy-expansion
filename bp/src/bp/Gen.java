@@ -597,7 +597,7 @@ public final class Gen{
                 placer.margin.merge(n.from, 1, Integer::sum);
             }
             //(and about each tile still fought over, the parts against it)
-            Set<Body.Part> about = new HashSet<>();
+            Set<Body.Part> about = new LinkedHashSet<>();
             for(int i : router.fought){
                 int x = i % board.w, y = i / board.w;
                 for(int d = 0; d < 4; d++){

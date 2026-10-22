@@ -776,6 +776,11 @@ public final class Router{
      * line seldom goes far out of its way, and a search of the whole map for each line, each round, is most of the time.
      */
     boolean lay(Net net, Body.Part sink){
+        //(a taker no way could reach, however dear, is not sought: a search of the whole map to find nothing)
+        if(sink != null && net.cls != 3 && !mayReach(net, sink)){
+            walledOff.computeIfAbsent(net, k -> Collections.newSetFromMap(new IdentityHashMap<>())).add(sink);
+            return false;
+        }
         if(sink == null || b.w * b.h <= 64 * 64) return layIn(net, sink, null);
         int x0 = Math.min(net.from.x0, sink.x0), y0 = Math.min(net.from.y0, sink.y0), x1 = Math.max(net.from.x1(), sink.x1()), y1 = Math.max(net.from.y1(), sink.y1());
         for(Piece q : net.pieces){
@@ -1137,6 +1142,66 @@ public final class Router{
         return 10 + nets.size() / 4;
     }
 
+    /**
+     * Whether a line could reach a taker at all, every way the search has allowed and more (a necessary condition, worked
+     * out once a line and taker): over the tiles a piece may stand on, a step or a bridge's hop (of its kind, any length it
+     * spans, over anything), from the tiles about the maker it hands the thing to, to a tile against the taker or a piece
+     * of a line that goes to it. Whether one way of it can be laid is the search's to find.
+     */
+    boolean mayReach(Net net, Body.Part sink){
+        Map<Body.Part, Boolean> of = reachable.computeIfAbsent(net, k -> new IdentityHashMap<>());
+        Boolean known = of.get(sink);
+        if(known != null) return known;
+        boolean got = flood(net, sink);
+        of.put(sink, got);
+        return got;
+    }
+
+    final Map<Net, Map<Body.Part, Boolean>> reachable = new IdentityHashMap<>();
+
+    boolean flood(Net net, Body.Part sink){
+        int n = b.w * b.h;
+        boolean[] seen = new boolean[n];
+        ArrayDeque<Integer> q = new ArrayDeque<>();
+        int hop = net.cls == 2 ? lrange : range;
+        for(int[] t : net.from.around()){
+            if(!b.in(t[0], t[1])) continue;
+            if(sink.covers(t[0], t[1])) return true;
+            int i = b.idx(t[0], t[1]);
+            if(!passable(i) || !Board.out(net.from, t[2]).contains(net.res)) continue;
+            if(!seen[i]){
+                seen[i] = true;
+                q.add(i);
+            }
+        }
+        while(!q.isEmpty()){
+            int i = q.poll(), x = i % b.w, y = i / b.w;
+            for(int e = 0; e < 4; e++){
+                for(int j = 1; j <= Math.max(1, hop); j++){
+                    int nx = x + Geo.dx(e) * j, ny = y + Geo.dy(e) * j;
+                    if(!b.in(nx, ny)) break;
+                    if(sink.covers(nx, ny) && j == 1) return true;
+                    int ni = b.idx(nx, ny);
+                    //(a piece of a line that goes to the taker: it may be joined)
+                    if(j == 1) for(Piece o : at[ni]) if(o.net != net.id && o.block != null && (o.line != null ? o.line.to.contains(sink) : byId.containsKey(o.net) && byId.get(o.net).to.contains(sink))) return true;
+                    //(a step to the next tile, or a hop to a tile further on: then on from there)
+                    if(j == 1 || j >= 2 && hop >= 2){
+                        if(!passable(ni) || seen[ni]) continue;
+                        seen[ni] = true;
+                        q.add(ni);
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /** A tile a piece of a line may stand on (other lines' pieces there or not): no body's part, ground, not held whole. */
+    boolean passable(int i){
+        int x = i % b.w, y = i / b.w;
+        return b.partAt[i] == null && b.floor(x, y) && (b.held == null || !b.held[i]);
+    }
+
     /** Takers a line cannot reach at all (no way, whatever is shared): not sought again. */
     final Map<Net, Set<Body.Part>> walledOff = new IdentityHashMap<>();
 
@@ -1264,6 +1329,10 @@ public final class Router{
         for(int pass = 0; pass < 3 && bad > 0; pass++){
             for(Net net : nets){
                 if(!involved(net)) continue;
+                //(a line with a taker no way reaches is never whole: laid again, it is only put back)
+                boolean hopeless = false;
+                for(Body.Part sink : net.to) if(walledOff.getOrDefault(net, Set.of()).contains(sink)) hopeless = true;
+                if(hopeless) continue;
                 List<Piece> old = new ArrayList<>(net.pieces);
                 Set<Body.Part> oldUnreached = new LinkedHashSet<>(net.unreached);
                 boolean oldDrained = net.drained;

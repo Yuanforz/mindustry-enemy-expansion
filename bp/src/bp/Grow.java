@@ -521,7 +521,7 @@ public final class Grow{
             Loader.loadNativeLibraries();
             loaded = true;
         }
-        MPSolver solver = MPSolver.createSolver("SCIP");
+        MPSolver solver = MPSolver.createSolver(System.getProperty("bp.mip", "HIGHS"));
         double inf = MPSolver.infinity();
         int T = spans;
         float[] L = new float[T + 1];
@@ -661,11 +661,12 @@ public final class Grow{
         }
         obj.setMinimization();
         solver.setTimeLimit((long)(think * 1000));
+        if(Boolean.getBoolean("bp.solverLog")) solver.enableOutput();
         MPSolver.ResultStatus status = solver.solve();
         Map<Unit, Integer> out = new LinkedHashMap<>();
         float horizon = 0f;
         for(int t = 1; t <= T; t++) horizon += L[t];
-        System.out.println(String.format("schedule: %s, %d units, %d spans (%.0f s to %.0f s, %.0f s in all)", status.toString().toLowerCase(), units.size(), T, L[1], L[T], horizon));
+        System.out.println(String.format(Locale.ROOT, "schedule: %s, %d units, %d spans (%.0f s to %.0f s, %.0f s in all); objective %.3f", status.toString().toLowerCase(), units.size(), T, L[1], L[T], horizon, status == MPSolver.ResultStatus.OPTIMAL || status == MPSolver.ResultStatus.FEASIBLE ? solver.objective().value() : Double.NaN));
         if(status != MPSolver.ResultStatus.OPTIMAL && status != MPSolver.ResultStatus.FEASIBLE) return out;
         for(Unit u : units){
             int add = (int)Math.round(b.get(u)[1].solutionValue()), drop = (int)Math.round(d.get(u)[1].solutionValue());
@@ -1182,6 +1183,7 @@ public final class Grow{
     }
 
     public static void main(String[] args){
+        long tBoot = System.nanoTime();
         Game.boot(args[0]);
         String dataDir = args[0], world = args[1], planFile = args[2], ledgerFile = args[3], stateFile = args[4], ordersFile = args[5];
         int spans = args.length > 6 ? Integer.parseInt(args[6]) : 8;
@@ -1190,6 +1192,7 @@ public final class Grow{
         long t0 = System.nanoTime();
         Grow grow = new Grow();
         for(Recipe r : Recipes.all()) grow.recipes.put(r.name, r);
+        long tRecipes = System.nanoTime();
         grow.ledger = Ledger.read(ledgerFile);
         grow.readShapes(new Fi(ledgerFile).sibling("shapes.txt"));
         grow.readPlan(planFile, grow.recipes);
@@ -1200,13 +1203,18 @@ public final class Grow{
         //(units measured as bodies, on the map)
         Gen probe = new Gen(Problem.parse("world " + world + "\n"), dataDir);
         probe.balance = grow.plan;
+        long tWorld = System.nanoTime();
         grow.ways(probe);
+        long tWays = System.nanoTime();
         grow.measure(probe);
         grow.writeShapes();
+        long tMeasure = System.nanoTime();
         grow.ledger.step++;
         grow.occupied(probe.board.w);
         if(Boolean.getBoolean("bp.debug")) grow.reach(st);
         Map<Unit, Integer> step = grow.next(st, spans, spanSeconds, think);
+        long tNext = System.nanoTime();
+        System.out.println(String.format(Locale.ROOT, "  time: boot %.1f s, recipes %.1f s, world %.1f s, ways %.1f s, measured %.1f s, schedule %.1f s", (t0 - tBoot) / 1e9, (tRecipes - t0) / 1e9, (tWorld - tRecipes) / 1e9, (tWays - tWorld) / 1e9, (tMeasure - tWays) / 1e9, (tNext - tMeasure) / 1e9));
         System.out.println(String.format("step %d: %s; digging first %s (%.1f s)", grow.ledger.step, step, grow.digFirst, (System.nanoTime() - t0) / 1e9));
         grow.takeDown();
         if(!grow.removed.isEmpty()) System.out.println("  taken down: " + grow.removed.stream().map(i -> i.unit == null ? i.kind + " " + i.id : i.unit).toList());
