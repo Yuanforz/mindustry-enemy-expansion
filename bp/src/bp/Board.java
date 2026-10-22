@@ -97,6 +97,8 @@ public final class Board{
      * at the first solid tile (BeamDrill.updateFacing, Tile.solid), and units come out of a yard over what is not solid.
      */
     public final boolean[] clear;
+    /** Items that cannot be had now (a base still growing): what is built of them is not laid (null: every item). */
+    public Set<String> lacking;
     /** The goals that go to the core: an item the core takes of these is no harm, of others a loss. */
     public final Set<String> goals = new HashSet<>();
 

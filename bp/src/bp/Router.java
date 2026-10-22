@@ -121,7 +121,10 @@ public final class Router{
 
     float base(Kind k){
         if(k == Kind.leak) return w.tile();
-        return (float)w.cost(blockOf(k));
+        Block bl = blockOf(k);
+        //(a carrier of what cannot be had now is not laid: a base still growing has not every item)
+        if(bl != null && b.lacking != null) for(var st : bl.requirements) if(b.lacking.contains(st.item.name)) return Float.POSITIVE_INFINITY;
+        return (float)w.cost(bl);
     }
 
     final Map<Kind, Float> baseCost = new EnumMap<>(Kind.class);
@@ -966,6 +969,9 @@ public final class Router{
         int bestBad = Integer.MAX_VALUE, since = 0;
         for(rounds = 1; rounds <= maxRounds; rounds++){
             for(Net net : nets){
+                //(after the first round only the lines in what is still fought over, or not whole, are laid again: the
+                //rest stand as they are)
+                if(rounds > 1 && !involved(net)) continue;
                 ripUp(net);
                 Arrays.fill(own, false);
                 net.unreached.clear();

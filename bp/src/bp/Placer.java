@@ -227,13 +227,20 @@ public final class Placer{
                 List<String> given = Board.out(p, t[2]);
                 for(String y : given) if(b.swallows(o, y)) hard += hb(9, 1, p.body, o.body);
                 if(o.body != p.body && Board.isPortCarrier(o) && Board.pieceTakes(Board.asPiece(o), (t[2] + 2) % 4, null, p)) for(String y : given) if(!y.equals(o.config)) hard += hb(10, 1, p.body, o.body);
-                //(a piece of another body's own line against it: what it hands taken into that line, or what that line
-                //hands taken by it; a body's lines are its own)
+                //(a piece of another body's own line against it: what it hands taken into that line, of another thing
+                //(mixed); or what that line hands taken for good by it (as the router weighs a leak: what swallows it, a
+                //port or a line of another thing; a machine that works by it takes only what it holds))
                 if(o.body != p.body && o.piece != null){
                     Board.Piece f = Body.fixed(o);
                     int back = (t[2] + 2) % 4;
-                    if(!given.isEmpty() && Board.pieceTakes(f, back, p.piece != null ? Body.fixed(p) : null, p.piece != null ? null : p)) hard += hb(11, 1, p.body, o.body);
-                    if(Router.has(Board.handsDirs(f), back) && takes(p, f, t[2])) hard += hb(11, 1, p.body, o.body);
+                    if(Board.pieceTakes(f, back, p.piece != null ? Body.fixed(p) : null, p.piece != null ? null : p)) for(String y : given) if(!y.equals(f.res) && (mindustry.Vars.content.item(y) != null ? f.itemCarrier() : f.liquidCarrier())){
+                        hard += hb(11, 1, p.body, o.body);
+                        if(why != null) why.add(p + " of " + p.body.label + " hands " + y + " into " + o.block.name + "@" + o.x0 + "," + o.y0 + " carrying " + f.res);
+                    }
+                    if(Router.has(Board.handsDirs(f), back) && swallows(p, f, t[2])){
+                        hard += hb(11, 1, p.body, o.body);
+                        if(why != null) why.add(o.block.name + "@" + o.x0 + "," + o.y0 + " hands " + f.res + " into " + p + " of " + p.body.label);
+                    }
                 }
             }
         }
@@ -547,17 +554,19 @@ public final class Placer{
         return out;
     }
 
-    /** Whether a part takes what a piece of a line hands it, from its side toward dir. */
-    boolean takes(Body.Part p, Board.Piece from, int dir){
-        if(p.piece != null) return Board.pieceTakes(Body.fixed(p), dir, from, null);
-        if(Board.isPortCarrier(p)) return Board.pieceTakes(Board.asPiece(p), dir, from, null);
-        return b.partTakes(p, from.res) || b.swallows(p, from.res);
+    /** Whether a part takes for good what a piece of a line hands it from its side toward dir: a line or a port of another thing, what swallows it. */
+    boolean swallows(Body.Part p, Board.Piece from, int dir){
+        if(p.piece != null) return !from.res.equals(p.piece.res) && Board.pieceTakes(Body.fixed(p), dir, from, null);
+        if(Board.isPortCarrier(p)) return !from.res.equals(p.config) && Board.pieceTakes(Board.asPiece(p), dir, from, null);
+        return b.swallows(p, from.res);
     }
 
     /** The hard terms by kind, in the order they are counted in evaluate (for the report). */
     final double[] hardBy = new double[16];
 
     double hb(int k, double v, Body one, Body two){
+        //(between what stands already, nothing to ask: it was laid out and checked, and it does not move)
+        if((one == null || one.standing) && (two == null || two.standing)) return 0;
         hardBy[k] += v;
         if(hardWho != null){
             if(one != null) hardWho.add(one);

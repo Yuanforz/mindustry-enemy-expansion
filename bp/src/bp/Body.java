@@ -119,6 +119,8 @@ public final class Body{
     public final boolean fixed;
     /** A block the problem gives standing (the map's core, a source): there already, so not written out again. */
     public boolean given;
+    /** Standing already, as laid out and checked before (a base grown): what is between two such is not asked again. */
+    public boolean standing;
     public int ox, oy, rot;
 
     public Body(int id, String label, boolean fixed){

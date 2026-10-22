@@ -96,18 +96,26 @@ public final class Gen{
                 notes.add("not laid out yet: " + r.name + " stands on ground (" + r.ground + ")");
                 continue;
             }
-            for(int k = 0; k < count; k++){
-                Body body = new Body(id++, r.name, false);
-                //(what a block that is set to make one thing of several is set to: a unit factory's unit, a constructor's
-                //block, the part of the recipe's name after its block's)
-                String config = (r.block instanceof mindustry.world.blocks.units.UnitFactory || r.block instanceof mindustry.world.blocks.payloads.Constructor) && r.name.contains(":") ? r.name.substring(r.name.indexOf(':') + 1) : null;
-                body.add(r.block, 0, 0, 0, r, work / count, config);
-                if(r.heatNeed > 0f) heat(body, r);
-                if(r.block instanceof mindustry.world.blocks.units.UnitAssembler a) assembler(body, r, a);
-                body.put(0, 0, 0);
-                bodies.add(body);
-            }
+            for(int k = 0; k < count; k++) bodies.add(machine(id++, r, work / count));
         }
+    }
+
+    /** One machine as a body: with the heaters that heat it, an assembler with its area and modules. */
+    Body machine(int id, Recipe r, float work){
+        return machine(id, r, work, null);
+    }
+
+    /** One machine as a body, heated (if it needs heat) by heaters of this one kind, or (null) the kinds the plan chose. */
+    Body machine(int id, Recipe r, float work, Recipe heater){
+        Body body = new Body(id, r.name, false);
+        //(what a block that is set to make one thing of several is set to: a unit factory's unit, a constructor's
+        //block, the part of the recipe's name after its block's)
+        String config = (r.block instanceof mindustry.world.blocks.units.UnitFactory || r.block instanceof mindustry.world.blocks.payloads.Constructor) && r.name.contains(":") ? r.name.substring(r.name.indexOf(':') + 1) : null;
+        body.add(r.block, 0, 0, 0, r, work, config);
+        if(r.heatNeed > 0f) heat(body, r, heater);
+        if(r.block instanceof mindustry.world.blocks.units.UnitAssembler a) assembler(body, r, a);
+        body.put(0, 0, 0);
+        return body;
     }
 
     /**
@@ -180,10 +188,13 @@ public final class Gen{
     final Map<Body, Placer.Places> portPlaces = new HashMap<>();
 
     /** Heaters against a machine that needs heat, of the kinds the balance chose for it. */
-    void heat(Body body, Recipe r){
+    void heat(Body body, Recipe r, Recipe only){
         List<Recipe> heaters = new ArrayList<>();
         List<Block> redirectors = new ArrayList<>();
-        for(Object[] m : balance.machines){
+        if(only != null){
+            heaters.add(only);
+            redirectors.addAll(Recipes.conductors());
+        }else for(Object[] m : balance.machines){
             if(m[4] == null) continue;
             String label = (String)m[4];
             Recipe h = (Recipe)m[0];
@@ -224,6 +235,9 @@ public final class Gen{
                 if(p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid && liquid && drained(k) && p.config == null) g.takers.add(p);
                 if(portRate.containsKey(p) && k.equals(p.config)) g.takers.add(p);
             }
+            //(of what stands already, only a maker with some to spare, a taker still short)
+            g.makers.removeIf(p -> spare.containsKey(p) && spare.get(p).getOrDefault(k, 0f) <= 1e-4f);
+            g.takers.removeIf(p -> lacks.containsKey(p) && lacks.get(p).getOrDefault(k, 0f) <= 1e-4f);
             if(g.payload) for(Body.Part t : g.takers) g.buffer.put(t, Math.max(0, (int)batch(t, k) - 1));
             if(!g.makers.isEmpty() && !g.takers.isEmpty()) groups.add(g);
         }
@@ -237,8 +251,12 @@ public final class Gen{
 
     // ------------------------------------------------------------------ 4: who feeds whom
 
+    /** Of parts that stand already (a base grown), what each has to spare and what each still lacks, by thing. */
+    final Map<Body.Part, Map<String, Float>> spare = new HashMap<>(), lacks = new HashMap<>();
+
     /** What a maker gives a second; a source as much as lines from each of its sides carry. */
     float supply(Body.Part p, String res){
+        if(spare.containsKey(p)) return spare.get(p).getOrDefault(res, 0f);
         if(supplyRate.containsKey(p)) return supplyRate.get(p);
         if(p.recipe == null){
             boolean liquid = Vars.content.liquid(res) != null;
@@ -249,6 +267,7 @@ public final class Gen{
     }
 
     float demand(Body.Part p, String res){
+        if(lacks.containsKey(p)) return lacks.get(p).getOrDefault(res, 0f);
         if(portRate.containsKey(p)) return portRate.get(p);
         if(Board.isCore(p)) return balance.delivered.getOrDefault(res, prob.goals.getOrDefault(res, 0f));
         return p.takes(res);
@@ -492,9 +511,9 @@ public final class Gen{
                 unreached++;
                 here.add("not drained: " + n);
             }
-            if(!power.unpowered.isEmpty()) here.add("without power: " + power.unpowered);
+            if(!power.unpowered.isEmpty()) here.add("without power: " + power.unpowered + (powerMade() ? "" : " (nothing makes power yet)"));
             if(!misplaced.isEmpty()) here.add("standing where they may not: " + misplaced);
-            int bad = unreached + router.overused + router.leaks + power.unpowered.size() + misplaced.size();
+            int bad = unreached + router.overused + router.leaks + (powerMade() ? power.unpowered.size() : 0) + misplaced.size();
             System.out.println(String.format("lines: %d, %s after %d rounds (%d tiles shared, %d leaks, %d not reached); power: %d nodes, %d without", nets.size(), clean ? "clean" : "NOT clean", router.rounds, router.overused, router.leaks, unreached, power.added.size(), power.unpowered.size()));
             for(String h : here) System.out.println("    " + h);
             if(bad < bestBad){
@@ -575,11 +594,22 @@ public final class Gen{
      * The layout put down in the game's world and checked by its rules (Check): lines that stop, liquids mixed, blocks
      * without power or short of heat, and every line traced against what it was laid to reach. What is wrong, counted.
      */
+    /** Whether anything laid out makes power (else nothing can be powered yet: a base still growing). */
+    boolean powerMade(){
+        for(Body b : bodies) for(Body.Part p : b.parts) if(Power.makes(p.block)) return true;
+        return false;
+    }
+
     int verify(Spec s, boolean print){
+        return verify(s, print, true);
+    }
+
+    /** What is wrong by the game's rules: the check's own, and (lines) each line laid that does not reach as laid. */
+    int verify(Spec s, boolean print, boolean lines){
         Check check = new Check(new Scratch(s)).run();
         if(print) System.out.print(check.report());
         int wrong = 0;
-        for(Router.Net n : bestNets){
+        if(lines) for(Router.Net n : bestNets){
             Set<String> got = check.reach.getOrDefault((n.cls == 3 ? "payload" : n.res) + " from " + where(n.from), Set.of());
             //(a line from a carrier, a module's port: traced on from it)
             if(n.from.recipe == null && n.from.config != null && n.cls != 3 && (n.from.block instanceof mindustry.world.blocks.distribution.Duct || n.from.block instanceof mindustry.world.blocks.liquid.Conduit)){
@@ -592,7 +622,7 @@ public final class Gen{
             }
         }
         if(print && wrong > 0) for(String d : differ(bestNets)) System.out.println("  DIFFERS: " + d);
-        return wrong + check.jams + check.mixed + check.unpowered + check.cold + check.misplaced;
+        return wrong + check.jams + check.mixed + (powerMade() ? check.unpowered : 0) + check.cold + check.misplaced;
     }
 
     /**
