@@ -72,6 +72,8 @@ public final class Router{
         at = new List[b.w * b.h];
         for(int i = 0; i < at.length; i++) at[i] = new ArrayList<>(1);
         hist = new float[b.w * b.h];
+        itemBridges = new int[b.w * b.h];
+        liquidBridges = new int[b.w * b.h];
         range = Carriers.range(blockOf(Kind.bridgeIn));
         lrange = Carriers.range(blockOf(Kind.lbridgeIn));
     }
@@ -124,13 +126,28 @@ public final class Router{
      * not go (another line, the core for what is no goal), a bridge that would reach it or that it would reach unmeant.
      * partner: for a bridge, the other end (its line's), else null.
      */
+    /** What a part hands out, worked out once: liquids by the side they leave from (0-3), items (4). */
+    final Map<Body.Part, List<String>[]> outsOf = new IdentityHashMap<>();
+
+    @SuppressWarnings("unchecked")
+    List<String>[] outs(Body.Part p){
+        return outsOf.computeIfAbsent(p, k -> {
+            List<String>[] o = new List[5];
+            for(int d = 0; d < 4; d++) o[d] = Board.liquidsOut(k, d);
+            o[4] = Board.itemsOut(k);
+            return o;
+        });
+    }
+
     /** Whether a bridge end reaches another bridge of its kind ahead (DirectionBridge.findLink): it then takes from about it as a start. */
     boolean reachesAhead(Piece q){
         if(q.kind != Kind.bridgeOut && q.kind != Kind.lbridgeOut) return false;
         for(int i = 1; i <= Carriers.range(q.block); i++){
             int nx = q.x + Geo.dx(q.rot) * i, ny = q.y + Geo.dy(q.rot) * i;
             if(!b.in(nx, ny)) return false;
-            for(Piece o : at[b.idx(nx, ny)]) if(o != q && bridgeFamily(o, q)) return true;
+            int ni = b.idx(nx, ny);
+            if((q.kind == Kind.bridgeOut ? itemBridges : liquidBridges)[ni] == 0) continue;
+            for(Piece o : at[ni]) if(o != q && bridgeFamily(o, q)) return true;
         }
         return false;
     }
@@ -155,7 +172,7 @@ public final class Router{
             Body.Part p = b.partAt[n];
             if(p != null){
                 if(Board.pieceTakes(q, dir, null, p)){
-                    List<String> given = q.itemCarrier() ? Board.itemsOut(p) : q.liquidCarrier() ? Board.liquidsOut(p, (dir + 2) % 4) : List.of();
+                    List<String> given = q.itemCarrier() ? outs(p)[4] : q.liquidCarrier() ? outs(p)[(dir + 2) % 4] : List.of();
                     for(String y : given) if(!y.equals(q.res)) c++;
                 }
                 if(has(Board.handsDirs(q), dir) && (q.outs & (1 << dir)) == 0 && q.itemCarrier() && Board.isCore(p) && !b.goals.contains(q.res)) c++;
@@ -177,17 +194,21 @@ public final class Router{
                 for(int i = 1; i <= Carriers.range(q.block); i++){
                     int nx = q.x + Geo.dx(dir) * i, ny = q.y + Geo.dy(dir) * i;
                     if(!b.in(nx, ny)) break;
+                    int ni = b.idx(nx, ny);
+                    if((q.kind == Kind.bridgeIn || q.kind == Kind.bridgeOut ? itemBridges : liquidBridges)[ni] == 0) continue;
                     Piece found = null;
-                    for(Piece o : at[b.idx(nx, ny)]) if(o != q && bridgeFamily(o, q)) found = o;
+                    for(Piece o : at[ni]) if(o != q && bridgeFamily(o, q)) found = o;
                     if(found == null) continue;
                     if(found != partner){
-                        boolean qIn = q.kind == Kind.bridgeIn || q.kind == Kind.lbridgeIn, fIn = found.kind == Kind.bridgeIn || found.kind == Kind.lbridgeIn;
-                        boolean same = found.res.equals(q.res);
-                        //(it reaches this one: of another thing, a mix; of the same, a merge, unless this one stands
-                        //between it and the end of its own hop, which then gets nothing)
-                        if(found.rot == (dir + 2) % 4 && (!same || fIn)) c++;
-                        //(this one reaches it: the same, unless this is the start of a hop and it is not its end)
-                        if(dir == q.rot && (!same || qIn)) c++;
+                        boolean qOut = q.kind == Kind.bridgeOut || q.kind == Kind.lbridgeOut, fOut = found.kind == Kind.bridgeOut || found.kind == Kind.lbridgeOut;
+                        //(it reaches this one, which takes all it hands then: meant only where it is the end of a hop of
+                        //this line just behind this one, the next hop's start, a chain. A bridge reaching another, of the
+                        //same thing or not, takes its line's flow away from where it was laid to go)
+                        boolean chainIn = fOut && found.net == q.net && i == 1 && found.x + Geo.dx(found.rot) == q.x && found.y + Geo.dy(found.rot) == q.y;
+                        if(found.rot == (dir + 2) % 4 && !chainIn) c++;
+                        //(this one reaches it)
+                        boolean chainOut = qOut && found.net == q.net && i == 1 && dir == q.rot;
+                        if(dir == q.rot && !chainOut) c++;
                     }
                     break;
                 }
@@ -211,8 +232,12 @@ public final class Router{
         return blockOf(k).solid;
     }
 
+    /** Laying with what goes wrong forbidden, not priced (the last mending of a few lines). */
+    boolean hard;
+
     float price(Piece q, Piece partner){
         int i = b.idx(q.x, q.y);
+        if(hard && (!at[i].isEmpty() || leaks(q, partner) > 0)) return Float.POSITIVE_INFINITY;
         return cost(q.kind) + hist[i] + pf * (at[i].size() + leaks(q, partner));
     }
 
@@ -230,6 +255,12 @@ public final class Router{
 
     float[] g;
     int[] par, mv, stamp;
+    /** For each state, the tiles of the path to it folded into 64 bits: a tile whose bit is not set is not on the path. */
+    long[] sig;
+
+    static long bit(int tile){
+        return 1L << ((tile * 0x9E3779B1) >>> 26);
+    }
     int now;
 
     /** A move: what is put at the state's tile. type 0 duct, 1 armoured, 2 bridge (j, f), 3 surge, 4 conduit, 5 bridge conduit. */
@@ -244,6 +275,7 @@ public final class Router{
             par = new int[n];
             mv = new int[n];
             stamp = new int[n];
+            sig = new long[n];
         }
     }
 
@@ -298,7 +330,7 @@ public final class Router{
         for(int i = from; i <= to; i++){
             int nx = x + Geo.dx(dir) * i, ny = y + Geo.dy(dir) * i;
             if(!b.in(nx, ny)) return true;
-            for(Piece o : at[b.idx(nx, ny)]) if(liquid ? o.kind == Kind.lbridgeIn || o.kind == Kind.lbridgeOut : o.kind == Kind.bridgeIn || o.kind == Kind.bridgeOut) return false;
+            if((liquid ? liquidBridges : itemBridges)[b.idx(nx, ny)] > 0) return false;
         }
         return true;
     }
@@ -347,6 +379,7 @@ public final class Router{
      * a tile and a direction, so a path could cross itself unless this is asked.
      */
     boolean onPath(int st, int tile){
+        if((sig[st] & bit(tile)) == 0) return false;
         int cur = st;
         while(par[cur] >= 0){
             int parent = par[cur], m = mv[cur];
@@ -443,7 +476,9 @@ public final class Router{
                 Piece r = piece(tapKind, p.x, p.y, p.rot, net.id, net.res);
                 r.from = p.from;
                 r.outs = p.outs | (1 << side);
-                float tap = (router ? 0f : cost(tapKind) - cost(p.kind)) + pf * leaks(r, null);
+                int tapLeaks = leaks(r, null);
+                if(hard && tapLeaks > 0) continue;
+                float tap = (router ? 0f : cost(tapKind) - cost(p.kind)) + pf * tapLeaks;
                 if(b.in(nx, ny) && inPart(nx, ny, sink)){
                     if(tap < bestGoal){
                         bestGoal = tap;
@@ -483,8 +518,24 @@ public final class Router{
                 for(Piece q : ps) if(onPath(st, b.idx(q.x, q.y))) crosses = true;
                 if(!goal && onPath(st, b.idx(nx[0], nx[1]))) crosses = true;
                 if(crosses) continue;
+                //(first what it costs without its leaks, a bound below: most moves end there, a better way to where they
+                //lead being known already)
+                float low = 0f;
+                for(Piece q : ps){
+                    int qi = b.idx(q.x, q.y);
+                    low += cost(q.kind) + hist[qi] + pf * at[qi].size();
+                }
+                if(!hard){
+                    float lowG = g[st] + low;
+                    if(lowG >= bestGoal) continue;
+                    if(!goal){
+                        int ns0 = state(b.idx(nx[0], nx[1]), nx[2], type == 3 ? 2 : 0);
+                        if(stamp[ns0] == now && g[ns0] <= lowG) continue;
+                    }
+                }
                 float c = 0f;
                 for(Piece q : ps) c += price(q, ps.size() == 2 ? ps.get(ps.size() - 1 - ps.indexOf(q)) : null);
+                if(c == Float.POSITIVE_INFINITY) continue;
                 float ng = g[st] + c;
                 if(goal && sink == null) ng += harmAt(net.res, nx[0], nx[1]);
                 if(goal){
@@ -555,16 +606,43 @@ public final class Router{
         g[st] = ng;
         par[st] = parent;
         mv[st] = m;
+        sig[st] = parent >= 0 ? sig[parent] | moveBits(parent, m) : 0L;
         open.add(new long[]{Double.doubleToLongBits(ng + h), st, Double.doubleToLongBits(ng) == 0 ? 0 : 0});
     }
 
+    /** The bits of the tiles a move from a state takes: its pieces and, for a bridge, the tiles its span passes over. */
+    long moveBits(int st, int m){
+        int idx = st / 12;
+        long bits = bit(idx);
+        int type = m & 7;
+        if(type == 2 || type == 5){
+            int e = m >> 3 & 3, j = m >> 5 & 7;
+            int x = idx % b.w, y = idx / b.w;
+            for(int i = 1; i <= j; i++){
+                int nx = x + Geo.dx(e) * i, ny = y + Geo.dy(e) * i;
+                if(b.in(nx, ny)) bits |= bit(b.idx(nx, ny));
+            }
+        }
+        return bits;
+    }
+
+    /** Bridges of items and of liquids on each tile, counted, for finding them along a way fast. */
+    int[] itemBridges, liquidBridges;
+
     void place(Piece q){
-        at[b.idx(q.x, q.y)].add(q);
-        own[b.idx(q.x, q.y)] = true;
+        int i = b.idx(q.x, q.y);
+        at[i].add(q);
+        own[i] = true;
+        if(q.kind == Kind.bridgeIn || q.kind == Kind.bridgeOut) itemBridges[i]++;
+        if(q.kind == Kind.lbridgeIn || q.kind == Kind.lbridgeOut) liquidBridges[i]++;
     }
 
     void unplace(Piece q){
-        at[b.idx(q.x, q.y)].remove(q);
+        int i = b.idx(q.x, q.y);
+        if(at[i].remove(q)){
+            if(q.kind == Kind.bridgeIn || q.kind == Kind.bridgeOut) itemBridges[i]--;
+            if(q.kind == Kind.lbridgeIn || q.kind == Kind.lbridgeOut) liquidBridges[i]--;
+        }
     }
 
     void ripUp(Net net){
@@ -575,10 +653,35 @@ public final class Router{
     // ------------------------------------------------------------------ all lines
 
     /** Lays every line, rounds of rip-up and re-lay, until nothing is fought over or so many rounds: true if clean. */
+    /** Starts from what an earlier laying found fought over (its history), the placing having moved only a little. */
+    public void carry(float[] earlier){
+        if(earlier != null && earlier.length == hist.length) System.arraycopy(earlier, 0, hist, 0, hist.length);
+    }
+
+    public float[] history(){
+        return hist;
+    }
+
+    /** Whether a line is in what is fought over: a piece on or against such a tile, or a taker not reached. */
+    boolean involved(Net net){
+        if(!net.unreached.isEmpty() || net.drain && !net.drained) return true;
+        for(Piece q : net.pieces){
+            if(fought.contains(b.idx(q.x, q.y))) return true;
+            for(int d = 0; d < 4; d++){
+                int nx = q.x + Geo.dx(d), ny = q.y + Geo.dy(d);
+                if(b.in(nx, ny) && fought.contains(b.idx(nx, ny))) return true;
+            }
+        }
+        return false;
+    }
+
     public boolean run(int maxRounds){
         own = new boolean[b.w * b.h];
+        int bestBad = Integer.MAX_VALUE, since = 0;
         for(rounds = 1; rounds <= maxRounds; rounds++){
             for(Net net : nets){
+                //(after the first rounds, only the lines in what is fought over are laid again)
+                if(rounds > 3 && !involved(net)) continue;
                 ripUp(net);
                 Arrays.fill(own, false);
                 net.unreached.clear();
@@ -611,7 +714,13 @@ public final class Router{
             fought.clear();
             fought.addAll(bad);
             if(bad.isEmpty() && unreached == 0) return true;
-            if(Boolean.getBoolean("bp.debug") && rounds == maxRounds) for(int i = 0; i < at.length; i++) if(at[i].size() > 1){
+            //(no better for a while: what is left is the placing's to mend)
+            int nowBad = bad.size() + unreached;
+            if(nowBad < bestBad){
+                bestBad = nowBad;
+                since = rounds;
+            }else if(rounds - since >= 40) break;
+            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || rounds - since >= 40)) for(int i = 0; i < at.length; i++) if(at[i].size() > 1){
                 StringBuilder who = new StringBuilder();
                 for(Piece o : at[i]) who.append(" ").append(o).append("/").append(o.res).append("#").append(o.net);
                 int x = i % b.w, y = i / b.w;
@@ -624,7 +733,7 @@ public final class Router{
                 }
                 System.out.println("  shared " + x + "," + y + " hist " + hist[i] + ":" + who + " | about:" + around);
             }
-            if(Boolean.getBoolean("bp.debug") && rounds == maxRounds) for(Net net : nets) for(Piece q : net.pieces){
+            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || rounds - since >= 40)) for(Net net : nets) for(Piece q : net.pieces){
                 int l = leaks(q, partner(net, q));
                 if(l == 0) continue;
                 StringBuilder why = new StringBuilder();
@@ -642,8 +751,74 @@ public final class Router{
             for(int i : bad) hist[i] += 1f;
             pf = Math.min(pf * 1.3f, 50f);
         }
-        rounds = maxRounds;
-        return false;
+        rounds = Math.min(rounds, maxRounds);
+        return mend();
+    }
+
+    /** Counts what is still wrong: tiles with two blocks, leaks, takers not reached; fills fought. */
+    int count(){
+        overused = 0;
+        leaks = 0;
+        fought.clear();
+        for(int i = 0; i < at.length; i++) if(at[i].size() > 1){
+            overused++;
+            fought.add(i);
+        }
+        for(Net net : nets) for(Piece q : net.pieces){
+            int l = leaks(q, partner(net, q));
+            if(l > 0){
+                leaks += l;
+                fought.add(b.idx(q.x, q.y));
+            }
+        }
+        int unreached = 0;
+        for(Net net : nets) unreached += net.unreached.size() + (net.drain && !net.drained ? 1 : 0);
+        return overused + leaks + unreached;
+    }
+
+    /**
+     * The last mending: each line still in what is fought over taken up and laid again with every tile of another line
+     * and every leak forbidden, kept if it is laid whole, put back as it was if not; a few passes.
+     */
+    boolean mend(){
+        int bad = count();
+        for(int pass = 0; pass < 3 && bad > 0; pass++){
+            for(Net net : nets){
+                if(!involved(net)) continue;
+                List<Piece> old = new ArrayList<>(net.pieces);
+                Set<Body.Part> oldUnreached = new LinkedHashSet<>(net.unreached);
+                boolean oldDrained = net.drained;
+                ripUp(net);
+                Arrays.fill(own, false);
+                net.unreached.clear();
+                hard = true;
+                boolean whole = true;
+                List<Body.Part> order = new ArrayList<>(net.to);
+                order.sort(Comparator.comparingInt(p -> gap(p, net.from)));
+                for(Body.Part sink : order){
+                    if(touches(net.from, sink, net.res, net.cls == 2)) continue;
+                    if(!lay(net, sink)){
+                        whole = false;
+                        break;
+                    }
+                }
+                if(whole && net.drain) whole = net.drained = lay(net, null);
+                hard = false;
+                if(!whole){
+                    ripUp(net);
+                    for(Piece q : old){
+                        net.pieces.add(q);
+                        place(q);
+                    }
+                    net.unreached.clear();
+                    net.unreached.addAll(oldUnreached);
+                    net.drained = oldDrained;
+                }
+                bad = count();
+                if(bad == 0) break;
+            }
+        }
+        return bad == 0;
     }
 
     /** Bridge reaches between a piece and the rest of its own line (leaks() asks the same of all lines). */

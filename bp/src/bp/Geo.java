@@ -1,7 +1,5 @@
 package bp;
 
-import arc.math.geom.*;
-
 /**
  * Where a block stands, as the game counts it: a block of size s put at (x, y) covers x - (s-1)/2 to x + s/2 (and the same
  * for y); rotation 0 faces +x, 1 +y, 2 -x, 3 -y.
@@ -23,12 +21,14 @@ public final class Geo{
         return low + (size - 1) / 2;
     }
 
+    static final int[] DX = {1, 0, -1, 0}, DY = {0, 1, 0, -1};
+
     public static int dx(int rot){
-        return Geometry.d4x(rot);
+        return DX[rot];
     }
 
     public static int dy(int rot){
-        return Geometry.d4y(rot);
+        return DY[rot];
     }
 
     /** The rotation from one tile to a neighbour (-1 if not a neighbour). */

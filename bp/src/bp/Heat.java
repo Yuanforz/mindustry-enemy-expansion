@@ -119,13 +119,17 @@ public final class Heat{
             for(int i : l) e.add(x[i]);
             m.addLessOrEqual(e, 1);
         }
-        LinearExprBuilder covered = LinearExpr.newBuilder();
-        int around = 0;
-        for(int i = 0; i < s; i++) for(int[] t : new int[][]{{s, i}, {-1, i}, {i, s}, {i, -1}}){
-            around++;
-            for(int c : onTile.getOrDefault(key(t[0], t[1]), List.of())) covered.add(x[c]);
+        //tiles against the machine for its lines: free, and the tile out beyond free too, so that a line can come to it (a
+        //free tile closed in by heaters on three sides is a pocket only one line reaches, and that one only if nothing
+        //stands beyond it)
+        LinearExprBuilder open = LinearExpr.newBuilder();
+        for(int i = 0; i < s; i++) for(int[] t : new int[][]{{s, i, 1, 0}, {-1, i, -1, 0}, {i, s, 0, 1}, {i, -1, 0, -1}}){
+            BoolVar port = m.newBoolVar("port");
+            for(int c : onTile.getOrDefault(key(t[0], t[1]), List.of())) m.addImplication(port, x[c].not());
+            for(int c : onTile.getOrDefault(key(t[0] + t[2], t[1] + t[3]), List.of())) m.addImplication(port, x[c].not());
+            open.add(port);
         }
-        m.addLessOrEqual(covered, around - ports);
+        m.addGreaterOrEqual(open, ports);
         //a heater that takes or gives anything (fuel, power, a liquid it makes) keeps as many tiles against it free as it
         //has lines, and one for a node, for them to reach it by
         for(int i = 0; i < n; i++){

@@ -290,17 +290,23 @@ public final class Gen{
         Spec best = null;
         int bestBad = Integer.MAX_VALUE;
         Map<Body, int[]> bestAt = new HashMap<>();
+        float[] history = null;
         List<String> bestNotes = new ArrayList<>();
-        for(int attempt = 0; attempt < 8; attempt++){
+        for(int attempt = 0; attempt < Integer.getInteger("bp.attempts", 8); attempt++){
             //(the first placing from anywhere; after it, mending: from where things are, cool, so that what was laid well
             //stays and the room asked for is found about the places fought over)
             int steps = (attempt == 0 ? 4000 : 1500) * Math.max(4, placer.movable.size());
+            long tp = System.nanoTime();
             placer.run(steps, attempt == 0, attempt == 0 ? 1.0 : 0.05);
+            long tr = System.nanoTime();
             System.out.println(String.format("placing %d: cost %.1f (%d bodies, %d steps)", attempt, placer.cost, bodies.size(), steps));
             List<Router.Net> nets = nets();
             Router router = new Router(board, nets, prob.perTile, prob.perItem);
+            router.carry(history);
             boolean clean = router.run(80);
+            long tw = System.nanoTime();
             Power power = new Power(board, bodies, router.all(), prob.freePower, prob.perTile, prob.perItem).run();
+            System.out.println(String.format("  time: placing %.1f s, lines %.1f s, power %.1f s", (tr - tp) / 1e9, (tw - tr) / 1e9, (System.nanoTime() - tw) / 1e9));
             List<String> here = new ArrayList<>();
             int unreached = 0;
             for(Router.Net n : nets) if(!n.unreached.isEmpty()){
@@ -340,6 +346,16 @@ public final class Gen{
                 }
             }
             for(Body.Part p : about) placer.margin.merge(p, 1, Integer::sum);
+            //(the mending moves those most, and the next laying starts from what this one found fought over)
+            placer.focus.clear();
+            for(Body.Part p : about) placer.focus.add(p.body);
+            for(Router.Net n : nets){
+                for(Body.Part p : n.unreached){
+                    placer.focus.add(p.body);
+                    placer.focus.add(n.from.body);
+                }
+            }
+            history = router.history();
             placer.wCrowd *= 1.3f;
         }
         notes.addAll(bestNotes);
@@ -372,9 +388,56 @@ public final class Gen{
         }catch(Exception e){
             System.out.println("could not draw: " + e);
         }
-        System.out.print(new Check(new Scratch(s)).run().report());
+        Check check = new Check(new Scratch(s)).run();
+        System.out.print(check.report());
+        //(what the lines were laid for, against what the game's rules say they do)
+        int wrong = 0;
+        for(Router.Net n : gen.bestNets){
+            Set<String> got = check.reach.getOrDefault(n.res + " from " + where(n.from), Set.of());
+            for(Body.Part t : n.to) if(!got.contains(where(t))){
+                wrong++;
+                System.out.println("  NOT AS LAID: " + n.res + " from " + where(n.from) + " does not reach " + where(t) + " (it reaches " + got + ")");
+            }
+        }
+        System.out.println("  as laid: " + (wrong == 0 ? "every line reaches what it was laid to" : wrong + " takers not reached"));
+        if(wrong > 0) for(String d : differ(gen.bestNets)) System.out.println("  DIFFERS: " + d);
         System.out.println(drawn(s));
         System.exit(0);
+    }
+
+    /**
+     * Where the game's rules part from the router's for the lines laid (the world as last loaded, the layout's): each
+     * piece asked what the game hands its thing to, against what the router meant it to hand to.
+     */
+    static List<String> differ(List<Router.Net> nets){
+        List<String> out = new ArrayList<>();
+        for(Router.Net n : nets){
+            boolean liquid = Vars.content.liquid(n.res) != null;
+            for(int i = 0; i < n.pieces.size(); i++){
+                Piece q = n.pieces.get(i);
+                if(q.block == null || q.kind == Kind.bridgeIn || q.kind == Kind.lbridgeIn) continue;
+                mindustry.gen.Building c = Vars.world.build(q.x, q.y);
+                if(c == null || c.block != q.block){
+                    out.add(n.res + ": " + q + " is not there (" + (c == null ? "nothing" : c.block.name) + ")");
+                    continue;
+                }
+                List<mindustry.gen.Building> to = liquid ? Check.liquidTo(c, Vars.content.liquid(n.res)) : Check.handsTo(c, Vars.content.item(n.res));
+                for(int d = 0; d < 4; d++){
+                    if((q.outs & (1 << d)) == 0) continue;
+                    mindustry.gen.Building meant = Vars.world.build(q.x + Geo.dx(d), q.y + Geo.dy(d));
+                    if(meant != null && !to.contains(meant)){
+                        List<String> got = new ArrayList<>();
+                        for(var o : to) got.add(Scratch.where(o));
+                        out.add(n.res + " (line " + n.id + "): " + q + " was to hand " + d + " to " + Scratch.where(meant) + ", the game hands to " + got);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    static String where(Body.Part p){
+        return p.block.name + "@" + p.ax() + "," + p.ay();
     }
 
     /** The layout drawn in characters, top row first (a letter for each block, by its name's first letter). */

@@ -91,7 +91,6 @@ public final class Board{
      * at the first solid tile (BeamDrill.updateFacing, Tile.solid), and units come out of a yard over what is not solid.
      */
     public final boolean[] clear;
-    final Map<String, boolean[]> valid = new HashMap<>();
     /** The goals that go to the core: an item the core takes of these is no harm, of others a loss. */
     public final Set<String> goals = new HashSet<>();
 
@@ -140,22 +139,33 @@ public final class Board{
     }
 
     /** Whether a block can stand with its lowest corner here, so turned, on the bare map (the game's Build.validPlace). */
+    final Map<Block, boolean[][]> validBy = new IdentityHashMap<>();
+
     public boolean canStand(Block b, int x0, int y0, int rot){
+        if(x0 < 0 || y0 < 0 || x0 + b.size > w || y0 + b.size > h) return false;
         int ax = Geo.at(x0, b.size), ay = Geo.at(y0, b.size);
-        if(!in(x0, y0) || !in(x0 + b.size - 1, y0 + b.size - 1)) return false;
         //(only blocks whose standing depends on their turn are asked by turn: drills facing ore)
         int r = b.rotate && (b instanceof BeamDrill || b instanceof WallCrafter) ? rot : 0;
-        boolean[] v = valid.computeIfAbsent(b.name + "/" + r, k -> {
-            boolean[] out = new boolean[w * h];
-            for(int y = 0; y < h; y++) for(int x = 0; x < w; x++) out[idx(x, y)] = mindustry.world.Build.validPlace(b, Scratch.team, x, y, r, false, false);
-            return out;
-        });
+        boolean[][] byRot = validBy.computeIfAbsent(b, k -> new boolean[4][]);
+        boolean[] v = byRot[r];
+        if(v == null){
+            v = byRot[r] = new boolean[w * h];
+            for(int y = 0; y < h; y++) for(int x = 0; x < w; x++) v[idx(x, y)] = mindustry.world.Build.validPlace(b, Scratch.team, x, y, r, false, false);
+        }
         return v[idx(ax, ay)];
     }
 
     /** Whether a one-tile carrier can stand here (floor, not deep, no wall). */
+    boolean[] floorOk;
+
     public boolean floor(int x, int y){
-        return in(x, y) && canStand(carriers.of(Carriers.Role.duct).get(0), x, y, 0);
+        if(!in(x, y)) return false;
+        if(floorOk == null){
+            floorOk = new boolean[w * h];
+            Block duct = carriers.of(Carriers.Role.duct).get(0);
+            for(int yy = 0; yy < h; yy++) for(int xx = 0; xx < w; xx++) floorOk[idx(xx, yy)] = canStand(duct, xx, yy, 0);
+        }
+        return floorOk[idx(x, y)];
     }
 
     public void putParts(Collection<Body> bodies){

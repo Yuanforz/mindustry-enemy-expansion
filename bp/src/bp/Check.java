@@ -36,6 +36,8 @@ public final class Check{
     final Scratch world;
     public final List<String> lines = new ArrayList<>();
     public int jams, unpowered, cold, mixed;
+    /** Where each thing made reaches: "thing from block@x,y" to the blocks it ends in. */
+    public final Map<String, Set<String>> reach = new HashMap<>();
 
     public Check(Scratch world){
         this.world = world;
@@ -206,6 +208,8 @@ public final class Check{
                     s.append(to.isEmpty() ? "" : "; ").append("STOPS at ").append(String.join(", ", stops));
                 }
                 lines.add(s.toString());
+                Set<String> got = reach.computeIfAbsent(item.name + " from " + Scratch.where(b), k -> new HashSet<>());
+                for(Building e : ends) got.add(Scratch.where(e));
             }
         }
         //lines that carry more than one item: whichever comes first to what takes only the other holds the line
@@ -293,6 +297,7 @@ public final class Check{
                 }
                 List<String> to = new ArrayList<>();
                 for(Building e : ends) to.add(Scratch.where(e));
+                reach.computeIfAbsent(liquid.name + " from " + Scratch.where(b), k -> new HashSet<>()).addAll(to);
                 lines.add(String.format("liquid %s from %s -> %s%s", liquid.name, Scratch.where(b), to.isEmpty() ? "nowhere" : String.join(", ", to), stops.isEmpty() ? "" : "; ENDS at " + String.join(", ", stops)));
             }
         }

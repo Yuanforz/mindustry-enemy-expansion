@@ -38,15 +38,30 @@ public final class Plot{
         return new Color(0x3f7fbf);
     }
 
+    /** Short names, one for each block, made longer where two would be the same. */
+    static final Map<String, String> names = new HashMap<>();
+
     static String abbrev(String name){
+        String got = names.get(name);
+        if(got != null) return got;
         String[] w = name.split("-");
-        StringBuilder s = new StringBuilder();
-        for(String x : w) if(!x.isEmpty()) s.append(Character.toUpperCase(x.charAt(0)));
-        return s.length() > 3 ? s.substring(0, 3) : s.toString();
+        for(int len = 1; len <= name.length(); len++){
+            StringBuilder s = new StringBuilder();
+            for(int i = 0; i < w.length; i++) if(!w[i].isEmpty()) s.append(i == 0 ? w[i].substring(0, Math.min(len, w[i].length())) : w[i].substring(0, 1));
+            String a = s.substring(0, 1).toUpperCase() + s.substring(1);
+            if(a.length() > 4) a = a.substring(0, 4);
+            if(!names.containsValue(a)){
+                names.put(name, a);
+                return a;
+            }
+        }
+        names.put(name, name);
+        return name;
     }
 
     public static void draw(Board board, List<Body> bodies, List<Router.Net> nets, List<Piece> power, String title, File out) throws IOException{
-        int w = board.w, h = board.h, keyW = 230;
+        int w = board.w, h = board.h, keyW = 300;
+        names.clear();
         BufferedImage img = new BufferedImage(w * T + keyW, Math.max(h * T, 400) + 30, BufferedImage.TYPE_INT_RGB);
         Graphics2D g = img.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);

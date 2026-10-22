@@ -42,10 +42,12 @@ public final class Placer{
     final List<Group> groups;
     final Map<Body, Places> places = new HashMap<>();
     final Random rng;
-    public float wHard = 1000f, wPort = 30f, wCrowd = 2f, wWire = 1f, wYield = 50f;
+    public float wHard = 1000f, wPort = 30f, wCrowd = Float.parseFloat(System.getProperty("bp.crowd", "8")), wWire = 1f, wYield = 50f;
     /** Free tiles wanted about a part beyond its lines (raised where lines could not be laid). */
     public final Map<Body.Part, Integer> margin = new HashMap<>();
     public double cost;
+    /** Bodies to be moved most (about what the lines fought over): chosen for a move most of the time. */
+    public final Set<Body> focus = new HashSet<>();
 
     public Placer(Board b, List<Body> bodies, List<Group> groups, long seed){
         this.b = b;
@@ -165,6 +167,23 @@ public final class Placer{
             }
         }
         port += wants.size() - match(wants, wantPart, cover);
+        //(a free tile handed different things by the blocks about it takes only a carrier that faces away from all but
+        //one of them: little use to any line; each thing more handed into it counts as a line end short)
+        Map<Integer, Set<String>> handed = new HashMap<>();
+        for(Body body : bodies) for(Body.Part p : body.parts){
+            List<String> items = Board.itemsOut(p);
+            for(int[] t : p.around()){
+                if(!b.in(t[0], t[1])) continue;
+                int i = b.idx(t[0], t[1]);
+                if(cover[i] != 0) continue;
+                List<String> liquids = Board.liquidsOut(p, t[2]);
+                if(items.isEmpty() && liquids.isEmpty()) continue;
+                Set<String> got = handed.computeIfAbsent(i, k -> new HashSet<>());
+                got.addAll(items);
+                got.addAll(liquids);
+            }
+        }
+        for(Set<String> got : handed.values()) if(got.size() > 1) port += got.size() - 1;
         for(int i = 0; i < w * h; i++){
             float over = crowd[i] + cover[i] - 1f;
             if(over > 0f) crowding += over;
@@ -291,7 +310,7 @@ public final class Placer{
         int span = Math.max(b.w, b.h);
         for(int s = 0; s < steps; s++){
             double frac = (double)s / steps, t = t0 * Math.pow(t1 / t0, frac);
-            Body body = movable.get(rng.nextInt(movable.size()));
+            Body body = pick();
             int ox = body.ox, oy = body.oy, r = body.rot;
             Body other = null;
             int px = 0, py = 0, pr = 0;
@@ -330,6 +349,19 @@ public final class Placer{
         for(var e : bestAt.entrySet()) e.getKey().put(e.getValue()[0], e.getValue()[1], e.getValue()[2]);
         refresh();
         cost = evaluate();
+    }
+
+    List<Body> focused = new ArrayList<>();
+
+    Body pick(){
+        if(!focus.isEmpty() && rng.nextInt(10) < 7){
+            if(focused.size() != focus.size()){
+                focused.clear();
+                for(Body x : focus) if(!x.fixed) focused.add(x);
+            }
+            if(!focused.isEmpty()) return focused.get(rng.nextInt(focused.size()));
+        }
+        return movable.get(rng.nextInt(movable.size()));
     }
 
     Map<Body, int[]> snapshot(){
