@@ -36,6 +36,7 @@ public final class Modular{
         final List<Object[]> ports = new ArrayList<>();
         double cost;
         float seconds;
+        int problems;
     }
 
     Modular(Problem prob, String dataDir){
@@ -62,7 +63,7 @@ public final class Modular{
         for(int i = 0; i < n; i++){
             Object[] m = ms.get(i);
             Recipe r = (Recipe)m[0];
-            if(m[4] != null) continue;
+            if(m[4] != null || r.ground != Recipe.Ground.none) continue;
             String p = product(r);
             if(byProduct.containsKey(p)) union(parent, i, byProduct.get(p));
             else byProduct.put(p, i);
@@ -81,7 +82,8 @@ public final class Modular{
             for(String k : a.out.keySet()) if(Board.isPayload(k) && c.in.containsKey(k)) union(parent, i, j);
         }
         Map<Integer, List<Object[]>> groups = new LinkedHashMap<>();
-        for(int i = 0; i < n; i++) groups.computeIfAbsent(find(parent, i), k -> new ArrayList<>()).add(ms.get(i));
+        //(machines on ground are not cut into modules: each stands on its place)
+        for(int i = 0; i < n; i++) if(((Recipe)ms.get(i)[0]).ground == Recipe.Ground.none) groups.computeIfAbsent(find(parent, i), k -> new ArrayList<>()).add(ms.get(i));
         return new ArrayList<>(groups.values());
     }
 
@@ -143,7 +145,7 @@ public final class Modular{
         int side = (int)Math.ceil(Math.sqrt(area)) + 3;
         Module best = null;
         int bestBad = Integer.MAX_VALUE;
-        for(int attempt = 0; attempt < 8; attempt++){
+        for(int attempt = 0; attempt < 4; attempt++){
             int w = side, h = side;
             Problem mp = Problem.parse("module " + w + " " + h + "\n" + text);
             mp.name = name;
@@ -166,7 +168,7 @@ public final class Modular{
             if(gen.problems == 0) break;
             side = (int)Math.ceil(side * 1.15f);
         }
-        if(bestBad > 0) notes.add(name + ": its module kept " + bestBad + " problems");
+        if(best != null) best.problems = bestBad;
         return best;
     }
 
@@ -184,39 +186,22 @@ public final class Modular{
         for(Body.Part p : portParts){
             boolean in = p.body.label.startsWith("in ");
             String res = p.config == null ? "power" : p.config;
-            int rot = -1;
-            if(in && !res.equals("power")){
-                //(pointing in, to what took from the source: the first piece of its line, or the machine it fed)
-                for(Router.Net net : gen.bestNets) if(net.from == p){
-                    if(!net.pieces.isEmpty()){
-                        Piece q = net.pieces.get(0);
-                        rot = Geo.dir(p.ax(), p.ay(), q.x, q.y);
-                    }else for(Body.Part t : net.to) for(int[] a : p.around()) if(t.covers(a[0], a[1])) rot = a[2];
-                    if(rot >= 0) break;
-                }
-            }else if(!in){
-                //(pointing out of the module)
-                for(int d = 0; d < 4; d++){
-                    int nx = p.ax() + Geo.dx(d), ny = p.ay() + Geo.dy(d);
-                    if(nx < 0 || ny < 0 || nx >= w || ny >= h || !gen.board.floor(nx, ny)){
-                        rot = d;
-                        break;
-                    }
-                }
-            }
+            //(turned as it was laid out: an input pointing in, an output pointing off the module)
+            int rot = res.equals("power") ? -1 : p.rot;
             float rate = in ? 0f : gen.portRate.getOrDefault(p, 0f);
-            //(what in the module hands into the port's tile, by the side it is on)
-            boolean fromBehindOnly = true;
-            if(!in && rot >= 0) for(int d = 0; d < 4; d++){
+            //(the port's carrier armoured only where a machine in the module would hand it, from a side, what is not
+            //its thing: a plain one takes from behind and from its sides, an armoured one from a side only what a duct
+            //pointing into it hands (Duct.acceptItem); else plain, the cheaper)
+            boolean armour = false;
+            if(rot >= 0 && Vars.content.item(res) != null) for(int d = 0; d < 4; d++){
+                if(d == rot) continue;
                 int nx = p.ax() + Geo.dx(d), ny = p.ay() + Geo.dy(d);
                 if(!gen.board.in(nx, ny)) continue;
-                boolean pushes = false;
                 Body.Part o = gen.board.partAt[gen.board.idx(nx, ny)];
-                if(o != null && o != p && Board.out(o, (d + 2) % 4).contains(res)) pushes = true;
-                for(Router.Net net : gen.bestNets) for(Piece q : net.pieces) if(q.block != null && q.x == nx && q.y == ny && q.x + Geo.dx(q.rot) == p.ax() && q.y + Geo.dy(q.rot) == p.ay()) pushes = true;
-                if(pushes && d != (rot + 2) % 4) fromBehindOnly = false;
+                //(another port is a carrier then, handing on only ahead, into the module or out of it)
+                if(o != null && o != p && !portParts.contains(o)) for(String y : Board.itemsOut(o)) if(!y.equals(res)) armour = true;
             }
-            m.ports.add(new Object[]{in, res, p.ax(), p.ay(), rot, rate, in || fromBehindOnly});
+            m.ports.add(new Object[]{in, res, p.ax(), p.ay(), rot, rate, armour});
         }
         for(Body.Part p : m.parts) m.cost += gen.weights.cost(p.block);
         for(Piece q : m.pieces) m.cost += gen.weights.cost(q.block);
@@ -232,38 +217,130 @@ public final class Modular{
         long t1 = System.nanoTime();
         List<List<Object[]>> groups = cut();
         System.out.println(String.format("plan in %.1f s: %d machines in %d modules", (t1 - t0) / 1e9, whole.balance.machines.size(), groups.size()));
-        List<Module> modules = new ArrayList<>();
-        int k = 0;
-        for(List<Object[]> g : groups){
-            String name = product((Recipe)g.get(0)[0]).replace(':', '-') + "-" + k++;
-            Module m = module(g, name);
-            if(m != null) modules.add(m);
+        List<Object[]> pairs = build(groups);
+        System.out.println(String.format("modules in %.1f s", (System.nanoTime() - t1) / 1e9));
+        Spec s = composeFitting(pairs, new ArrayList<>(), seed);
+        System.out.println(String.format("all in %.1f s", (System.nanoTime() - t0) / 1e9));
+        return s;
+    }
+
+    /**
+     * The modules and the bodies besides put together; a module that will not stand where it can be put (on ground it
+     * cannot stand on, over another...) cut in two and the halves laid out, and put together again; a few times.
+     */
+    Spec composeFitting(List<Object[]> pairs, List<Body> extra, long seed){
+        for(int round = 0; ; round++){
+            Spec s = compose(pairs, extra, seed);
+            Set<Integer> misfits = new HashSet<>();
+            for(Body b : last.misplacedKept) if(b.id >= 1000 && b.id - 1000 < pairs.size()) misfits.add(b.id - 1000);
+            if(misfits.isEmpty() || round >= 4) return s;
+            List<Object[]> next = new ArrayList<>();
+            boolean cut = false;
+            for(int i = 0; i < pairs.size(); i++){
+                Object[] pr = pairs.get(i);
+                @SuppressWarnings("unchecked")
+                List<Object[]> g = (List<Object[]>)pr[0];
+                List<Object[]>[] halves = misfits.contains(i) ? halve(g) : null;
+                if(halves == null){
+                    next.add(pr);
+                    continue;
+                }
+                String name = ((Module)pr[1]).name;
+                System.out.println("module " + name + " does not fit: cut in two");
+                buildOne(halves[0], name + "a", next);
+                buildOne(halves[1], name + "b", next);
+                cut = true;
+            }
+            if(!cut) return s;
+            pairs = next;
         }
-        long t2 = System.nanoTime();
-        System.out.println(String.format("modules in %.1f s", (t2 - t1) / 1e9));
-        //the modules as bodies on the map
+    }
+
+    /**
+     * Each group laid out as a module; a group whose module will not lay out clean cut in two, each half laid out in turn
+     * (and so on): the modules as small as they must be to lay out clean. Pairs of {group, module}.
+     */
+    List<Object[]> build(List<List<Object[]>> groups){
+        List<Object[]> out = new ArrayList<>();
+        int k = 0;
+        for(List<Object[]> g : groups) buildOne(g, product((Recipe)g.get(0)[0]).replace(':', '-').replace('~', 'x') + "-" + k++, out);
+        return out;
+    }
+
+    void buildOne(List<Object[]> g, String name, List<Object[]> out){
+        Module m = module(g, name);
+        if(m != null && m.problems > 0){
+            List<Object[]>[] halves = halve(g);
+            if(halves != null){
+                System.out.println("module " + name + " cut in two");
+                buildOne(halves[0], name + "a", out);
+                buildOne(halves[1], name + "b", out);
+                return;
+            }
+            notes.add(name + ": its module kept " + m.problems + " problems");
+        }
+        out.add(new Object[]{g, m});
+    }
+
+    /** A group in two halves, by its machines (each kind's count split, its work with it); null if it is one machine. */
+    @SuppressWarnings("unchecked")
+    static List<Object[]>[] halve(List<Object[]> g){
+        int machines = 0;
+        for(Object[] m : g) if(m[4] == null) machines += (Integer)m[1];
+        if(machines <= 1) return null;
+        List<Object[]> a = new ArrayList<>(), b = new ArrayList<>();
+        boolean toA = true;
+        for(Object[] m : g){
+            int count = (Integer)m[1];
+            float work = (Float)m[2];
+            int ca = count / 2, cb = count / 2;
+            if(count % 2 == 1){
+                if(toA) ca++;
+                else cb++;
+                toA = !toA;
+            }
+            if(ca > 0) a.add(new Object[]{m[0], ca, work * ca / count, m[3], m[4]});
+            if(cb > 0) b.add(new Object[]{m[0], cb, work * cb / count, m[3], m[4]});
+        }
+        if(a.stream().noneMatch(m -> m[4] == null) || b.stream().noneMatch(m -> m[4] == null)) return null;
+        return new List[]{a, b};
+    }
+
+    /**
+     * The modules put on the map as whole bodies, with bodies besides (machines fixed on their places, blocks put down
+     * once), and the lines between them laid: what each module's ports, each body besides, the map's sources and the core
+     * make and take, shared out by the least carrying.
+     */
+    Spec compose(List<Object[]> pairs, List<Body> extra, long seed){
         Gen top = new Gen(prob, dataDir);
         top.balance = whole.balance;
         int id = 0;
         for(Spec.Place p : prob.fixed){
             Block bl = Vars.content.block(p.block());
             Body body = new Body(id++, p.block(), true);
+            body.given = true;
             body.add(bl, 0, 0, p.rotation(), null, 1f, p.config());
             body.put(Geo.lo(p.x(), bl.size), Geo.lo(p.y(), bl.size), 0);
             top.bodies.add(body);
             if(Board.isCore(body.main())) top.core = body.main();
         }
+        Set<Body.Part> outside = new HashSet<>();
+        for(Body b : extra){
+            top.bodies.add(b);
+            outside.addAll(b.parts);
+        }
         Map<Body.Part, String> inPorts = new HashMap<>();
-        Map<Body.Part, Float> inRate = new HashMap<>();
-        for(Module m : modules){
-            Body body = new Body(id++, m.name, false);
-            for(Body.Part p : m.parts){
-                Body.Part q = body.add(p.block, p.x0, p.y0, p.rot, p.recipe, p.work, p.config);
-            }
-            for(Piece q : m.pieces){
-                Body.Part part = body.add(q.block, Geo.lo(q.x, q.block.size), Geo.lo(q.y, q.block.size), q.rot, null, 1f, null);
-            }
-            Map<String, Float> net = null;
+        for(int gi = 0; gi < pairs.size(); gi++){
+            Module m = (Module)pairs.get(gi)[1];
+            @SuppressWarnings("unchecked")
+            List<Object[]> group = (List<Object[]>)pairs.get(gi)[0];
+            if(m == null) continue;
+            Body body = new Body(1000 + gi, m.name, false);
+            for(Body.Part p : m.parts) body.add(p.block, p.x0, p.y0, p.rot, p.recipe, p.work, p.config).yield = p.yield;
+            for(Piece q : m.pieces) body.add(q.block, Geo.lo(q.x, q.block.size), Geo.lo(q.y, q.block.size), q.rot, null, 1f, null).piece = q;
+            Map<String, Float> net = net(group);
+            Map<String, Integer> portsOf = new HashMap<>();
+            for(Object[] port : m.ports) if((Boolean)port[0]) portsOf.merge((String)port[1], 1, Integer::sum);
             for(Object[] port : m.ports){
                 boolean in = (Boolean)port[0];
                 String res = (String)port[1];
@@ -274,53 +351,61 @@ public final class Modular{
                 }
                 if(rot < 0) continue;
                 boolean liquid = Vars.content.liquid(res) != null;
-                //(an input port armoured, so that nothing about it in the module hands it anything: it takes from behind,
-                //from outside; an output port too, where all that hands it its thing is behind it)
+                //(a port armoured where something about it in the module would hand it what is not its thing)
                 boolean armour = (Boolean)port[6];
                 Block carrier = top.carriers.cheapest(liquid ? Carriers.Role.conduit : armour ? Carriers.Role.armored : Carriers.Role.duct, top.weights);
                 Body.Part part = body.add(carrier, x, y, rot, null, 1f, res);
+                outside.add(part);
                 if(in){
                     inPorts.put(part, res);
+                    top.portRate.put(part, -net.getOrDefault(res, 0f) / portsOf.get(res));
                 }else top.supplyRate.put(part, (Float)port[5]);
             }
             body.put(0, 0, 0);
             top.bodies.add(body);
         }
-        //what each module's inputs take: its share of the plan's flows into its group
-        for(int gi = 0; gi < groups.size() && gi < modules.size(); gi++){
-            Map<String, Float> net = net(groups.get(gi));
-            Body body = top.bodies.get(prob.fixed.size() + gi);
-            for(Body.Part p : body.parts) if(inPorts.containsKey(p)){
-                String res = inPorts.get(p);
-                long same = body.parts.stream().filter(o -> res.equals(inPorts.get(o))).count();
-                top.portRate.put(p, -net.getOrDefault(res, 0f) / same);
+        //what is made and taken between the bodies: by ports, by the bodies besides, by the map's sources, the core
+        Set<String> res = new LinkedHashSet<>();
+        for(Body b : top.bodies) for(Body.Part p : b.parts){
+            if(p.config != null && Vars.content.block(p.config) == null) res.add(p.config);
+            if(outside.contains(p) && p.recipe != null){
+                res.addAll(p.recipe.at(p.yield).out.keySet());
+                res.addAll(p.recipe.at(p.yield).in.keySet());
             }
         }
-        //lines between the modules: who makes what for whom
-        Set<String> res = new LinkedHashSet<>();
-        for(Body b : top.bodies) for(Body.Part p : b.parts) if(p.config != null && Vars.content.block(p.config) == null) res.add(p.config);
+        res.addAll(prob.goals.keySet());
         for(String r : res){
             boolean item = Vars.content.item(r) != null, liquid = Vars.content.liquid(r) != null;
             if(!item && !liquid) continue;
             Placer.Group g = new Placer.Group(r, liquid);
             for(Body b : top.bodies) for(Body.Part p : b.parts){
                 boolean source = (p.block instanceof ItemSource || p.block instanceof LiquidSource) && r.equals(p.config);
-                if(source || top.supplyRate.containsKey(p) && r.equals(p.config)) g.makers.add(p);
-                if(inPorts.containsKey(p) && r.equals(inPorts.get(p)) || Board.isCore(p) && item && prob.goals.containsKey(r)) g.takers.add(p);
+                boolean port = top.supplyRate.containsKey(p) && r.equals(p.config);
+                boolean machine = outside.contains(p) && p.recipe != null && p.makes(r) > 1e-6f;
+                if(source || port || machine) g.makers.add(p);
+                if(inPorts.containsKey(p) && r.equals(inPorts.get(p)) || outside.contains(p) && p.recipe != null && p.takes(r) > 1e-6f || Board.isCore(p) && item && prob.goals.containsKey(r)) g.takers.add(p);
             }
             if(!g.makers.isEmpty() && !g.takers.isEmpty()) top.groups.add(g);
         }
-        //(the core takes what the plan delivers of the goals; a module's output is what its port gives)
-        System.out.println(String.format("%d modules on the map; %d things between them", modules.size(), top.groups.size()));
+        System.out.println(String.format("%d modules and %d bodies besides on the map; %d things between them", pairs.size(), extra.size(), top.groups.size()));
         Spec s = top.layOut(seed);
+        String dump = System.getProperty("bp.dumpAt");
+        if(dump != null){
+            int[] r = Arrays.stream(dump.split(",")).mapToInt(Integer::parseInt).toArray();
+            for(Body b : top.bodies) for(Body.Part p : b.parts) if(p.ax() >= r[0] && p.ax() <= r[2] && p.ay() >= r[1] && p.ay() <= r[3]) System.out.println("  dump part " + p.block.name + "@" + p.ax() + "," + p.ay() + " rot " + p.rot + " body " + b.label + (b.fixed ? " fixed" : "") + (p.config != null ? " config " + p.config : ""));
+            for(Router.Net n : top.bestNets) for(Piece q : n.pieces) if(q.x >= r[0] && q.x <= r[2] && q.y >= r[1] && q.y <= r[3]) System.out.println("  dump piece " + q + " net " + n.id + " " + n.res + " from " + n.from + " to " + n.to);
+        }
         top.notes.addAll(notes);
         for(String n : top.notes) System.out.println("  note: " + n);
-        System.out.println(String.format("all in %.1f s", (System.nanoTime() - t0) / 1e9));
         last = top;
         return s;
     }
 
     Gen last;
+
+    static long key(int x, int y){
+        return ((long)x << 32) | (y & 0xffffffffL);
+    }
 
     public static void main(String[] args){
         Game.boot(args[0]);

@@ -201,8 +201,8 @@ public final class Balance{
                     c.setCoefficient(a, 1);
                     c.setCoefficient(n, -1);
                     vars.add(new Object[]{r, n, a, y, r.at(y), null});
-                    if(tiles != null && i < tiles.size()) placeVars.add(new Object[]{n, tiles.get(i), r.name, i});
-                    else placeVars.add(new Object[]{n, new int[][]{new int[0], new int[0]}, r.name, i});
+                    if(tiles != null && i < tiles.size()) placeVars.add(new Object[]{n, tiles.get(i), r.name, i, a});
+                    else placeVars.add(new Object[]{n, new int[][]{new int[0], new int[0]}, r.name, i, a});
                     List<Float> pc = placeCost.get(r.name);
                     if(pc != null && i < pc.size() && pc.get(i) > 0f) extraCost.put(n, pc.get(i));
                 }
@@ -467,7 +467,7 @@ public final class Balance{
         }
         for(var e : drawn.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.drawn.put(e.getKey(), (float)e.getValue().solutionValue());
         for(var e : shorts.entrySet()) if(e.getValue().solutionValue() > 1e-4) out.unmet.put(e.getKey(), (float)e.getValue().solutionValue());
-        for(Object[] pv : placeVars) if(((MPVariable)pv[0]).solutionValue() > 0.5) out.placesTaken.add(new Object[]{pv[2], pv[3], (int)Math.round(((MPVariable)pv[0]).solutionValue())});
+        for(Object[] pv : placeVars) if(((MPVariable)pv[0]).solutionValue() > 0.5) out.placesTaken.add(new Object[]{pv[2], pv[3], (int)Math.round(((MPVariable)pv[0]).solutionValue()), (float)((MPVariable)pv[4]).solutionValue()});
         if(powerSource != null && powerSource.solutionValue() > 1e-6) out.drawn.put("power", (float)powerSource.solutionValue());
         for(var e : delivered.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.delivered.put(e.getKey(), (float)e.getValue().solutionValue());
         for(var e : spilt.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.spilt.put(e.getKey(), (float)e.getValue().solutionValue());

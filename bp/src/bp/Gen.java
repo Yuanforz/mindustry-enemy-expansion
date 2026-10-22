@@ -78,6 +78,7 @@ public final class Gen{
         for(Spec.Place p : prob.fixed){
             Block bl = Vars.content.block(p.block());
             Body body = new Body(id++, p.block(), true);
+            body.given = true;
             Recipe r = null;
             body.add(bl, 0, 0, p.rotation(), r, 1f, p.config());
             body.put(Geo.lo(p.x(), bl.size), Geo.lo(p.y(), bl.size), 0);
@@ -157,16 +158,20 @@ public final class Gen{
             Placer.Places places = new Placer.Places();
             //(its edge: the tiles a block can stand on with a neighbour that is off the module or no ground to build on;
             //the game keeps the outermost tiles of a world unbuildable)
+            //(turned as the carrier will be: an input fed from off the module behind it, pointing in; an output pointing
+            //off the module)
             for(int x = 0; x < w; x++) for(int y = 0; y < h; y++){
                 if(!board.floor(x, y)) continue;
-                boolean edge = false;
-                for(int d = 0; d < 4; d++) if(!board.floor(x + Geo.dx(d), y + Geo.dy(d))) edge = true;
-                if(!edge) continue;
-                places.at.add(new int[]{x, y, 0});
-                places.yields.add(0f);
-                places.lanes.add(new int[0]);
+                for(int d = 0; d < 4; d++){
+                    if(board.floor(x + Geo.dx(d), y + Geo.dy(d))) continue;
+                    places.at.add(new int[]{x, y, power ? 0 : p.in() ? (d + 2) % 4 : d});
+                    places.yields.add(0f);
+                    places.lanes.add(new int[0]);
+                    if(power) break;
+                }
             }
-            body.put(places.at.get(0)[0], places.at.get(0)[1], 0);
+            part.port = !power;
+            body.put(places.at.get(0)[0], places.at.get(0)[1], places.at.get(0)[2]);
             portPlaces.put(body, places);
             bodies.add(body);
         }
@@ -203,6 +208,7 @@ public final class Gen{
             if(p.recipe != null){
                 res.addAll(p.recipe.in.keySet());
                 res.addAll(p.recipe.out.keySet());
+                res.addAll(p.recipe.perYield.keySet());
                 res.addAll(p.recipe.fixedIn.keySet());
                 res.addAll(p.recipe.fixedOut.keySet());
             }
@@ -425,7 +431,7 @@ public final class Gen{
         s.rows.addAll(prob.ground.rows);
         s.seconds = prob.seconds;
         s.places.addAll(prob.fixed);
-        for(Body body : bodies) if(!body.fixed) for(Body.Part p : body.parts) s.places.add(new Spec.Place(p.block.name, p.ax(), p.ay(), p.rot, p.block.configurable && !(p.block instanceof mindustry.world.blocks.sandbox.ItemVoid || p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid) ? p.config : null));
+        for(Body body : bodies) if(!body.given) for(Body.Part p : body.parts) s.places.add(new Spec.Place(p.block.name, p.ax(), p.ay(), p.rot, p.block.configurable && !(p.block instanceof mindustry.world.blocks.sandbox.ItemVoid || p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid) ? p.config : null));
         for(Piece q : router.all()) s.places.add(new Spec.Place(q.block.name, q.x, q.y, q.rot, null));
         if(power != null) for(Piece q : power.added) s.places.add(new Spec.Place(q.block.name, q.x, q.y, q.rot, null));
         return s;
@@ -443,6 +449,9 @@ public final class Gen{
     final Map<Body.Part, Float> supplyRate = new HashMap<>();
 
     /** The topology: the bodies placed, the lines laid, power; the best of the tries kept (bodies put back where it had them). */
+    /** Of the layout kept, the bodies that stand where they may not. */
+    Set<Body> misplacedKept = Set.of();
+
     Spec layOut(long seed){
         long t0 = System.nanoTime();
         Placer placer = new Placer(board, bodies, groups, seed);
@@ -462,6 +471,10 @@ public final class Gen{
             board.putClear(bodies);
             long tr = System.nanoTime();
             System.out.println(String.format("placing %d: cost %.1f (%d bodies, %d steps)", attempt, placer.cost, bodies.size(), steps));
+            if(placer.cost >= placer.wHard && Boolean.getBoolean("bp.debug")) System.out.println("  " + placer.explain());
+            //(bodies that stand where they may not: on ground they cannot stand on, over another, against what they hand
+            //into unmeant)
+            Set<Body> misplaced = placer.cost >= placer.wHard ? placer.hardBodies() : Set.of();
             List<Router.Net> nets = nets();
             Router router = new Router(board, nets, weights);
             router.carry(history);
@@ -480,7 +493,8 @@ public final class Gen{
                 here.add("not drained: " + n);
             }
             if(!power.unpowered.isEmpty()) here.add("without power: " + power.unpowered);
-            int bad = unreached + router.overused + router.leaks + power.unpowered.size();
+            if(!misplaced.isEmpty()) here.add("standing where they may not: " + misplaced);
+            int bad = unreached + router.overused + router.leaks + power.unpowered.size() + misplaced.size();
             System.out.println(String.format("lines: %d, %s after %d rounds (%d tiles shared, %d leaks, %d not reached); power: %d nodes, %d without", nets.size(), clean ? "clean" : "NOT clean", router.rounds, router.overused, router.leaks, unreached, power.added.size(), power.unpowered.size()));
             for(String h : here) System.out.println("    " + h);
             if(bad < bestBad){
@@ -489,6 +503,7 @@ public final class Gen{
                 bestNotes = here;
                 bestNets = nets;
                 bestPower = power.added;
+                misplacedKept = misplaced;
                 bestAt.clear();
                 for(Body body : bodies) bestAt.put(body, new int[]{body.ox, body.oy, body.rot});
             }
@@ -577,7 +592,7 @@ public final class Gen{
             }
         }
         if(print && wrong > 0) for(String d : differ(bestNets)) System.out.println("  DIFFERS: " + d);
-        return wrong + check.jams + check.mixed + check.unpowered + check.cold;
+        return wrong + check.jams + check.mixed + check.unpowered + check.cold + check.misplaced;
     }
 
     /**

@@ -149,6 +149,26 @@ public final class Heat{
         }
         LinearExprBuilder obj = LinearExpr.newBuilder();
         for(int i = 0; i < n; i++) obj.addTerm(x[i], Math.round(cost(cands.get(i).block, w) * 1000));
+        //(and its extent, the half round of the square it takes, at the price of a tile a unit: the body is placed whole,
+        //a sprawling one finds less room)
+        int lo = 0, hi = s - 1;
+        for(Cand c : cands){
+            lo = Math.min(lo, Math.min(c.x0, c.y0));
+            hi = Math.max(hi, Math.max(c.x0, c.y0) + c.block.size - 1);
+        }
+        IntVar minX = m.newIntVar(lo, 0, "minX"), minY = m.newIntVar(lo, 0, "minY"), maxX = m.newIntVar(s - 1, hi, "maxX"), maxY = m.newIntVar(s - 1, hi, "maxY");
+        for(int i = 0; i < n; i++){
+            Cand c = cands.get(i);
+            m.addLessOrEqual(minX, c.x0).onlyEnforceIf(x[i]);
+            m.addLessOrEqual(minY, c.y0).onlyEnforceIf(x[i]);
+            m.addGreaterOrEqual(maxX, c.x0 + c.block.size - 1).onlyEnforceIf(x[i]);
+            m.addGreaterOrEqual(maxY, c.y0 + c.block.size - 1).onlyEnforceIf(x[i]);
+        }
+        long unit = Math.round(w.tile() * 1000);
+        obj.addTerm(maxX, unit);
+        obj.addTerm(minX, -unit);
+        obj.addTerm(maxY, unit);
+        obj.addTerm(minY, -unit);
         m.minimize(obj);
         CpSolver solver = new CpSolver();
         solver.getParameters().setMaxTimeInSeconds(20);

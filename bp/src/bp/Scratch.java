@@ -61,6 +61,8 @@ public final class Scratch{
                 built.add(null);
                 continue;
             }
+            //(where the game lets it be built: ground it stands on, nothing in the way; a core is given)
+            if(!(block instanceof mindustry.world.blocks.storage.CoreBlock) && !mindustry.world.Build.validPlace(block, team, p.x(), p.y(), p.rotation(), false, false)) problems.add("CANNOT BE BUILT: " + p.block() + " at " + p.x() + "," + p.y());
             tile.setNet(block, team, p.rotation());
             built.add(tile.build);
         }

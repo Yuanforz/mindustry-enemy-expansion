@@ -146,7 +146,7 @@ public final class Power{
 
     boolean freeTile(int i){
         int x = i % b.w, y = i / b.w;
-        return any[i] == 0 && !b.clear[i] && b.floor(x, y) && b.canStand(node, x, y, 0);
+        return any[i] == 0 && !b.clear[i] && (b.held == null || !b.held[i]) && b.floor(x, y) && b.canStand(node, x, y, 0);
     }
 
     /** What a node on a free tile would join: the blocks with power it touches (unless both only use power) or beams to. */

@@ -45,7 +45,7 @@ public final class Placer{
     final List<Group> groups;
     final Map<Body, Places> places = new HashMap<>();
     final Random rng;
-    public float wHard = 1000f, wPort = 30f, wCrowd = Float.parseFloat(System.getProperty("bp.crowd", "8")), wWire = 1f, wYield = 50f;
+    public float wHard = 1000f, wPort = Float.parseFloat(System.getProperty("bp.port", "30")), wCrowd = Float.parseFloat(System.getProperty("bp.crowd", "8")), wWire = 1f, wYield = 50f;
     /** Free tiles wanted about a part beyond its lines (raised where lines could not be laid). */
     public final Map<Body.Part, Integer> margin = new HashMap<>();
     public double cost;
@@ -68,6 +68,8 @@ public final class Placer{
 
     int[] cover;
     float[] crowd;
+    /** Which part covers each tile as the bodies stand now (the last of them, where two do). */
+    Body.Part[] partAt;
 
     static int gap(Body.Part a, Body.Part c){
         int dx = Math.max(0, Math.max(c.x0 - a.x1() - 1, a.x0 - c.x1() - 1)), dy = Math.max(0, Math.max(c.y0 - a.y1() - 1, a.y0 - c.y1() - 1));
@@ -79,44 +81,78 @@ public final class Placer{
         if(cover == null){
             cover = new int[w * h];
             crowd = new float[w * h];
+            partAt = new Body.Part[w * h];
         }
         Arrays.fill(cover, 0);
         Arrays.fill(crowd, 0f);
+        Arrays.fill(partAt, null);
         double hard = 0, wire = 0, port = 0, crowding = 0, yield = 0;
         boolean[] lane = new boolean[w * h];
         //(the areas bodies keep clear: none of two exclusive bodies over one another)
         int[] zone = new int[w * h];
+        for(Body body : bodies) for(int i : body.clearTiles) lane[i] = true;
         for(Body body : bodies) for(int[] r : body.clearWorld){
             for(int y = r[1]; y <= r[3]; y++) for(int x = r[0]; x <= r[2]; x++){
                 if(!b.in(x, y)){
-                    if(body.exclusive) hard += 0.2;
+                    if(body.exclusive) hard += hb(0, 0.2, body, null);
                     continue;
                 }
                 int i = b.idx(x, y);
                 lane[i] = true;
-                if(body.exclusive && zone[i]++ > 0) hard += 1;
+                if(body.exclusive && zone[i]++ > 0) hard += hb(1, 1, body, null);
             }
         }
         for(var e : places.entrySet()){
             Places p = e.getValue();
             int k = index(e.getKey(), p);
             if(k < 0){
-                hard += 1;
+                hard += hb(2, 1, e.getKey(), null);
                 continue;
             }
             yield += Math.max(0f, p.need - p.yields.get(k));
             for(int t : p.lanes.get(k)) lane[t] = true;
         }
         for(Body body : bodies) for(Body.Part p : body.parts){
-            if(!body.fixed && !(p.block.size == 1 && p.block.buildVisibility == mindustry.world.meta.BuildVisibility.sandboxOnly ? b.floor(p.x0, p.y0) : b.canStand(p.block, p.x0, p.y0, p.rot))) hard += 1;
+            if(!body.fixed && !(p.block.size == 1 && p.block.buildVisibility == mindustry.world.meta.BuildVisibility.sandboxOnly ? b.floor(p.x0, p.y0) : b.canStand(p.block, p.x0, p.y0, p.rot))){
+                hard += hb(3, 1, body, null);
+                if(why != null) why.add("cannot stand: " + p.block.name + "@" + p.x0 + "," + p.y0 + " rot " + p.rot + " of " + body.label);
+            }
             for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++){
                 if(!b.in(x, y)){
-                    hard += 1;
+                    hard += hb(4, 1, body, null);
                     continue;
                 }
                 int i = b.idx(x, y);
-                if(cover[i]++ > 0) hard += 1;
-                if(p.block.solid && (lane[i] || b.clear[i])) hard += 1;
+                if(cover[i]++ > 0) hard += hb(5, 1, body, partAt[i] == null ? null : partAt[i].body);
+                partAt[i] = p;
+                if(p.block.solid && (lane[i] || b.clear[i])) hard += hb(6, 1, body, null);
+            }
+        }
+        //(the ground a body holds whole: no block of another body on it; where nothing stands, taken, so that no line
+        //is wanted there. Two bodies may hold the same empty ground)
+        for(Body body : bodies) for(int[] r : body.holdWorld) for(int y = r[1]; y <= r[3]; y++) for(int x = r[0]; x <= r[2]; x++){
+            if(!b.in(x, y)) continue;
+            int i = b.idx(x, y);
+            Body.Part o = partAt[i];
+            if(o != null && o.body != body){
+                hard += hb(7, 1, body, o.body);
+                if(why != null) why.add("on held ground of " + body.label + ": " + o.block.name + "@" + o.x0 + "," + o.y0 + " of " + o.body.label);
+            }
+            else if(o == null) cover[i] = 1;
+        }
+        //(a bridge of one body reaching one of another's, the first of its kind ahead within its range, as the game
+        //links them (DirectionBridge.findLink): what the one carries handed into the other's line)
+        for(Body body : bodies) for(Body.Part p : body.parts){
+            if(!(p.block instanceof mindustry.world.blocks.distribution.DirectionBridge)) continue;
+            int range = Carriers.range(p.block);
+            for(int i = 1; i <= range; i++){
+                int x = p.x0 + Geo.dx(p.rot) * i, y = p.y0 + Geo.dy(p.rot) * i;
+                if(!b.in(x, y)) break;
+                Body.Part o = partAt[b.idx(x, y)];
+                if(o != null && o.block == p.block){
+                    if(o.body != body) hard += hb(8, 1, body, o.body);
+                    break;
+                }
             }
         }
         //the lines: each taker to its nearest maker and each maker to its nearest taker
@@ -182,12 +218,23 @@ public final class Placer{
                 wants.add(new int[]{gi, makes && !takes && g.payload ? 2 : makes && !takes ? 1 : 0});
                 wantPart.add(p);
             }
-            //(a maker of what the core should not have, against the core)
+            //(a maker of what the core should not have, against the core; a maker against another body's port (a carrier
+            //on a module's edge) that takes from that side what it hands that is not the port's: mixed into its line)
             for(int[] t : p.around()){
                 if(!b.in(t[0], t[1])) continue;
-                Body.Part o = b.partAt[b.idx(t[0], t[1])];
+                Body.Part o = partAt[b.idx(t[0], t[1])];
                 if(o == null) continue;
-                for(String y : Board.out(p, t[2])) if(b.swallows(o, y)) hard += 1;
+                List<String> given = Board.out(p, t[2]);
+                for(String y : given) if(b.swallows(o, y)) hard += hb(9, 1, p.body, o.body);
+                if(o.body != p.body && Board.isPortCarrier(o) && Board.pieceTakes(Board.asPiece(o), (t[2] + 2) % 4, null, p)) for(String y : given) if(!y.equals(o.config)) hard += hb(10, 1, p.body, o.body);
+                //(a piece of another body's own line against it: what it hands taken into that line, or what that line
+                //hands taken by it; a body's lines are its own)
+                if(o.body != p.body && o.piece != null){
+                    Board.Piece f = Body.fixed(o);
+                    int back = (t[2] + 2) % 4;
+                    if(!given.isEmpty() && Board.pieceTakes(f, back, p.piece != null ? Body.fixed(p) : null, p.piece != null ? null : p)) hard += hb(11, 1, p.body, o.body);
+                    if(Router.has(Board.handsDirs(f), back) && takes(p, f, t[2])) hard += hb(11, 1, p.body, o.body);
+                }
             }
         }
         port += wants.size() - match(wants, wantPart, cover);
@@ -259,6 +306,15 @@ public final class Placer{
             int d = want[1] == 1 ? p.rot : (p.rot + 2) % 4;
             int x = p.x0 + Geo.dx(d), y = p.y0 + Geo.dy(d);
             if(b.in(x, y) && cover[b.idx(x, y)] == 0 && b.floor(x, y)) out.add(b.idx(x, y));
+            return out;
+        }
+        //(a module's port as the module is laid out: an input hands on only ahead; an output takes from about it but
+        //ahead, off the module)
+        if(want[0] >= 0 && p.port){
+            for(int[] t : p.around()){
+                if(!b.in(t[0], t[1]) || cover[b.idx(t[0], t[1])] != 0 || !b.floor(t[0], t[1])) continue;
+                if(want[1] == 1 ? t[2] == p.rot : t[2] != p.rot) out.add(b.idx(t[0], t[1]));
+            }
             return out;
         }
         //(what a maker hands out, only on the sides it hands it out of)
@@ -391,6 +447,25 @@ public final class Placer{
             return;
         }
         if(start) for(Body body : movable) putAnywhere(body);
+        //(one body to place, on ground small enough to try it everywhere: tried so, the best the start)
+        if(start && movable.size() == 1 && !places.containsKey(movable.get(0)) && (long)b.w * b.h * 4 <= 40000){
+            Body body = movable.get(0);
+            double bestC = Double.MAX_VALUE;
+            int[] bestP = null;
+            for(int r = 0; r < 4; r++){
+                int[] e = body.extent(r);
+                for(int y = -e[1] - 1; y + e[3] <= b.h; y++) for(int x = -e[0] - 1; x + e[2] <= b.w; x++){
+                    body.put(x, y, r);
+                    refresh();
+                    double c = evaluate();
+                    if(c < bestC){
+                        bestC = c;
+                        bestP = new int[]{x, y, r};
+                    }
+                }
+            }
+            body.put(bestP[0], bestP[1], bestP[2]);
+        }
         refresh();
         cost = evaluate();
         //(how far a move goes in cost, at the start: the temperature at which most moves are taken)
@@ -472,9 +547,48 @@ public final class Placer{
         return out;
     }
 
+    /** Whether a part takes what a piece of a line hands it, from its side toward dir. */
+    boolean takes(Body.Part p, Board.Piece from, int dir){
+        if(p.piece != null) return Board.pieceTakes(Body.fixed(p), dir, from, null);
+        if(Board.isPortCarrier(p)) return Board.pieceTakes(Board.asPiece(p), dir, from, null);
+        return b.partTakes(p, from.res) || b.swallows(p, from.res);
+    }
+
+    /** The hard terms by kind, in the order they are counted in evaluate (for the report). */
+    final double[] hardBy = new double[16];
+
+    double hb(int k, double v, Body one, Body two){
+        hardBy[k] += v;
+        if(hardWho != null){
+            if(one != null) hardWho.add(one);
+            if(two != null) hardWho.add(two);
+        }
+        return v;
+    }
+
+    Set<Body> hardWho;
+
+    /** The bodies that break what may not be broken, where they stand now: on ground they cannot stand on, over another... */
+    public Set<Body> hardBodies(){
+        hardWho = new HashSet<>();
+        evaluate();
+        Set<Body> out = hardWho;
+        hardWho = null;
+        return out;
+    }
+
+    List<String> why;
+
     /** The cost in parts, for the report. */
     public String explain(){
+        java.util.Arrays.fill(hardBy, 0);
+        why = new ArrayList<>();
         double c = evaluate();
-        return String.format("placing cost %.1f", c);
+        String reasons = String.join("; ", why);
+        why = null;
+        StringBuilder s = new StringBuilder(String.format("placing cost %.1f; hard by kind:", c));
+        for(int i = 0; i < hardBy.length; i++) if(hardBy[i] > 0) s.append(" ").append(i).append("=").append(hardBy[i]);
+        if(!reasons.isEmpty()) s.append(" (").append(reasons).append(")");
+        return s.toString();
     }
 }

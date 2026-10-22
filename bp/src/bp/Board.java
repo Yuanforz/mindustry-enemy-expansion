@@ -50,7 +50,9 @@ public final class Board{
     /** A block the routing puts down. */
     public static final class Piece{
         public Kind kind;
-        public final int x, y, rot;
+        public final int x, y;
+        /** Its turn (a duct turned into a router faces the way it was fed). */
+        public int rot;
         public final int net;
         public final String res;
         /** For a surge conveyor: 0 the loading dock, 1 between, 2 the last. */
@@ -59,6 +61,8 @@ public final class Board{
         public int from = -1, outs;
         /** The game's block it is (of the kind, as Carriers found them). */
         public Block block;
+        /** A piece of a body's own line (a module's), standing: of no line being laid, never taken up. */
+        public boolean fixed;
 
         public Piece(Kind kind, Block block, int x, int y, int rot, int net, String res){
             this.kind = kind;
@@ -150,6 +154,12 @@ public final class Board{
 
     public boolean canStand(Block b, int x0, int y0, int rot){
         if(x0 < 0 || y0 < 0 || x0 + b.size > w || y0 + b.size > h) return false;
+        //(an assembler's module stands only against its assembler built (UnitAssemblerModule.canPlaceOn), which the
+        //layout puts there with it: on the bare ground, only its ground asked)
+        if(b instanceof mindustry.world.blocks.units.UnitAssemblerModule){
+            for(int y = y0; y < y0 + b.size; y++) for(int x = x0; x < x0 + b.size; x++) if(!floor(x, y)) return false;
+            return true;
+        }
         int ax = Geo.at(x0, b.size), ay = Geo.at(y0, b.size);
         //(only blocks whose standing depends on their turn are asked by turn: drills facing ore)
         int r = b.rotate && (b instanceof BeamDrill || b instanceof WallCrafter) ? rot : 0;
@@ -175,10 +185,17 @@ public final class Board{
         return floorOk[idx(x, y)];
     }
 
-    /** Marks the ground the bodies keep clear (their areas) as no place for a solid block. */
+    /** Ground a body holds whole (a module's square): no line goes there. */
+    public boolean[] held;
+
+    /** Marks the ground the bodies keep clear (their areas) as no place for a solid block, and what they hold whole. */
     public void putClear(Collection<Body> bodies){
+        if(held == null) held = new boolean[w * h];
+        Arrays.fill(held, false);
+        for(Body b : bodies) for(int[] r : b.holdWorld) for(int y = Math.max(0, r[1]); y <= Math.min(h - 1, r[3]); y++) for(int x = Math.max(0, r[0]); x <= Math.min(w - 1, r[2]); x++) held[idx(x, y)] = true;
         Arrays.fill(clear, false);
         for(Body b : bodies) for(int[] r : b.clearWorld) for(int y = Math.max(0, r[1]); y <= Math.min(h - 1, r[3]); y++) for(int x = Math.max(0, r[0]); x <= Math.min(w - 1, r[2]); x++) clear[idx(x, y)] = true;
+        for(Body b : bodies) for(int i : b.clearTiles) clear[i] = true;
     }
 
     public void putParts(Collection<Body> bodies){
@@ -200,6 +217,8 @@ public final class Board{
         if(p.recipe == null && p.config != null && (p.block instanceof mindustry.world.blocks.distribution.Duct || p.block instanceof Conduit)){
             return dir == p.rot ? List.of(p.config) : List.of();
         }
+        //(a module's input port as the module is laid out: its thing only ahead, as the carrier it stands for)
+        if(p.port) return dir == p.rot && (p.block instanceof ItemSource || p.block instanceof LiquidSource) ? List.of(p.config) : List.of();
         List<String> items = itemsOut(p), liquids = liquidsOut(p, dir);
         if(liquids.isEmpty()) return items;
         if(items.isEmpty()) return liquids;
@@ -216,7 +235,9 @@ public final class Board{
             return out;
         }
         if(p.recipe == null) return out;
+        //(what it makes at work, and what a machine on ground makes by its yield, a drill's ore)
         for(String k : p.recipe.out.keySet()) if(Vars.content.item(k) != null) out.add(k);
+        for(String k : p.recipe.perYield.keySet()) if(Vars.content.item(k) != null && !out.contains(k)) out.add(k);
         for(String k : p.recipe.fixedOut.keySet()) if(Vars.content.item(k) != null && !out.contains(k)) out.add(k);
         return out;
     }
@@ -237,6 +258,7 @@ public final class Board{
             return out;
         }
         for(String k : p.recipe.out.keySet()) if(Vars.content.liquid(k) != null) out.add(k);
+        for(String k : p.recipe.perYield.keySet()) if(Vars.content.liquid(k) != null && !out.contains(k)) out.add(k);
         return out;
     }
 
@@ -280,6 +302,17 @@ public final class Board{
     }
 
     /** Whether a part is a block that holds and hands items as a duct does (for an armoured duct's sides). */
+    /** A carrier that stands as a part of a body: a module's port, its thing its config. */
+    public static boolean isPortCarrier(Body.Part p){
+        return p.recipe == null && p.config != null && (p.block instanceof mindustry.world.blocks.distribution.Duct || p.block instanceof Conduit);
+    }
+
+    /** A carrier standing as a part, as a piece of a line (to ask what it takes from where). */
+    public static Piece asPiece(Body.Part p){
+        Kind k = p.block instanceof mindustry.world.blocks.distribution.Duct d ? (d.armored ? Kind.armored : Kind.duct) : Kind.conduit;
+        return new Piece(k, p.block, p.x0, p.y0, p.rot, -1, p.config);
+    }
+
     static boolean ductLike(Piece q){
         return q.kind == Kind.duct || q.kind == Kind.armored || q.kind == Kind.bridgeIn || q.kind == Kind.bridgeOut;
     }
@@ -325,7 +358,9 @@ public final class Board{
             case conduit:
                 if(dir == q.rot) return false;
                 if(dir == back) return true;
-                return src != null && src.liquidCarrier();
+                //(an armoured conduit takes from its sides only what a conduit or a bridge hands it, ArmoredConduit)
+                if(!(q.block instanceof ArmoredConduit)) return true;
+                return src != null && (src.kind == Kind.conduit || src.kind == Kind.lbridgeIn || src.kind == Kind.lbridgeOut);
             default:
                 return false;
         }

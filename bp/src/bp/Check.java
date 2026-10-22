@@ -36,6 +36,8 @@ public final class Check{
     final Scratch world;
     public final List<String> lines = new ArrayList<>();
     public int jams, unpowered, cold, mixed;
+    /** Blocks the game would not let be built where they stand, or not known. */
+    public int misplaced;
     /** Where each thing made reaches: "thing from block@x,y" to the blocks it ends in. */
     public final Map<String, Set<String>> reach = new HashMap<>();
 
@@ -433,6 +435,7 @@ public final class Check{
 
     public Check run(){
         lines.addAll(world.problems);
+        misplaced = world.problems.size();
         payloads();
         items();
         liquids();
@@ -442,7 +445,7 @@ public final class Check{
     }
 
     public String report(){
-        StringBuilder s = new StringBuilder(String.format("CHECK %s: %d lines that stop, %d mixed liquids, %d without power, %d short of heat%n", world.spec.name, jams, mixed, unpowered, cold));
+        StringBuilder s = new StringBuilder(String.format("CHECK %s: %d lines that stop, %d mixed liquids, %d without power, %d short of heat, %d that cannot be built%n", world.spec.name, jams, mixed, unpowered, cold, misplaced));
         for(String l : lines) s.append("  ").append(l).append('\n');
         return s.toString();
     }
