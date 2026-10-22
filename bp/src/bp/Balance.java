@@ -31,6 +31,18 @@ public final class Balance{
     public final Map<String, Float> runAtLeast = new LinkedHashMap<>();
     /** The power to have to spare at the least, a second. */
     public float powerSurplus = 0f;
+    /**
+     * For each place, the tiles it stands on and the tiles its beams pass over (by recipe name, as places): no two places
+     * chosen stand on one tile, nor one on another's beam (Sites).
+     */
+    public final Map<String, List<int[][]>> placeTiles = new HashMap<>();
+    /** How many machines a place may hold (by recipe name, as places; absent: one): a kind of ground to be made, as many as wanted. */
+    public final Map<String, List<Integer>> placeMax = new HashMap<>();
+    /** What using a place costs besides its machine (by recipe name, as places): a place that is not there yet, made. */
+    public final Map<String, List<Float>> placeCost = new HashMap<>();
+    /** The place chosen for each machine on ground, as the result has them (recipe name and place index). */
+    final List<Object[]> placeVars = new ArrayList<>();
+    final Map<MPVariable, Float> extraCost = new HashMap<>();
     /** Places for machines on ground, each with its yield, by recipe name (a recipe on ground with no place is not used). */
     public final Map<String, List<Float>> places = new HashMap<>();
 
@@ -40,6 +52,8 @@ public final class Balance{
         /** Machines: recipe, how many, how much they work in all (in machines at full speed), and its yield for ground ones. */
         public final List<Object[]> machines = new ArrayList<>();
         public final LinkedHashMap<String, Float> drawn = new LinkedHashMap<>(), delivered = new LinkedHashMap<>(), spilt = new LinkedHashMap<>();
+        /** The places taken by machines on ground: recipe name and the place's index among that recipe's places. */
+        public final List<Object[]> placesTaken = new ArrayList<>();
         /** Elastic: what fell short of what was asked, by goal (and "run block"). */
         public final LinkedHashMap<String, Float> unmet = new LinkedHashMap<>();
         public float powerMade, powerUsed, heatMade, heatNeeded, area;
@@ -138,6 +152,8 @@ public final class Balance{
      */
     public boolean elastic;
     public float shortPrice = 1e5f;
+    /** How long the solver may think, in seconds. */
+    public float seconds = Float.parseFloat(System.getProperty("bp.balanceSeconds", "60"));
     MPObjective objective;
     final Map<String, MPVariable> shorts = new LinkedHashMap<>();
 
@@ -155,6 +171,8 @@ public final class Balance{
 
     public Result solve(){
         shorts.clear();
+        placeVars.clear();
+        extraCost.clear();
         linkSeen.clear();
         if(!loaded){
             Loader.loadNativeLibraries();
@@ -174,13 +192,41 @@ public final class Balance{
                 vars.add(new Object[]{r, n, a, null, r.at(1f), null});
             }else{
                 List<Float> ps = places.getOrDefault(r.name, List.of());
+                List<int[][]> tiles = placeTiles.get(r.name);
                 for(int i = 0; i < ps.size(); i++){
                     float y = ps.get(i);
-                    MPVariable n = solver.makeIntVar(0, 1, "n_" + r.name + "_" + i), a = solver.makeNumVar(0, inf, "a_" + r.name + "_" + i);
+                    List<Integer> mx = placeMax.get(r.name);
+                    MPVariable n = solver.makeIntVar(0, mx != null && i < mx.size() ? mx.get(i) : 1, "n_" + r.name + "_" + i), a = solver.makeNumVar(0, inf, "a_" + r.name + "_" + i);
                     MPConstraint c = solver.makeConstraint(-inf, 0);
                     c.setCoefficient(a, 1);
                     c.setCoefficient(n, -1);
                     vars.add(new Object[]{r, n, a, y, r.at(y), null});
+                    if(tiles != null && i < tiles.size()) placeVars.add(new Object[]{n, tiles.get(i), r.name, i});
+                    else placeVars.add(new Object[]{n, new int[][]{new int[0], new int[0]}, r.name, i});
+                    List<Float> pc = placeCost.get(r.name);
+                    if(pc != null && i < pc.size() && pc.get(i) > 0f) extraCost.put(n, pc.get(i));
+                }
+            }
+        }
+        //places on ground: one machine to a tile, and none on another's beam
+        if(!placeVars.isEmpty()){
+            Map<Integer, List<MPVariable>> onTile = new HashMap<>();
+            Map<Integer, List<MPVariable>> beamOver = new HashMap<>();
+            for(Object[] pv : placeVars){
+                int[][] t = (int[][])pv[1];
+                for(int i : t[0]) onTile.computeIfAbsent(i, k -> new ArrayList<>()).add((MPVariable)pv[0]);
+                for(int i : t[1]) beamOver.computeIfAbsent(i, k -> new ArrayList<>()).add((MPVariable)pv[0]);
+            }
+            for(var e : onTile.entrySet()){
+                List<MPVariable> on = e.getValue();
+                if(on.size() > 1){
+                    MPConstraint c = solver.makeConstraint(-inf, 1);
+                    for(MPVariable v : on) c.setCoefficient(v, 1);
+                }
+                for(MPVariable beam : beamOver.getOrDefault(e.getKey(), List.of())){
+                    MPConstraint c = solver.makeConstraint(-inf, 1);
+                    c.setCoefficient(beam, 1);
+                    for(MPVariable v : on) if(v != beam) c.setCoefficient(v, 1);
                 }
             }
         }
@@ -341,6 +387,12 @@ public final class Balance{
         }
         //power: made (or supplied) at least what is used
         MPConstraint power = solver.makeConstraint(powerSurplus, inf, "power");
+        if(elastic && powerSurplus > 0f){
+            //(power to spare short, a unit of it priced as a unit of any other goal over its own size)
+            MPVariable sh = solver.makeNumVar(0, powerSurplus, "short_power");
+            power.setCoefficient(sh, 1);
+            shorts.put("power to spare", sh);
+        }
         //(blocks to be at work: the work of all their machines together at least so much)
         for(var e : runAtLeast.entrySet()){
             MPConstraint c = solver.makeConstraint(e.getValue(), inf, "run_" + e.getKey());
@@ -388,8 +440,11 @@ public final class Balance{
             }
             for(var e : goals.entrySet()) if(delivered.containsKey(e.getKey())) obj.setCoefficient(delivered.get(e.getKey()), -1.0 / Math.max(1e-9, e.getValue()));
         }
-        for(MPVariable sh : shorts.values()) obj.setCoefficient(sh, shortPrice);
+        for(var e : shorts.entrySet()) obj.setCoefficient(e.getValue(), e.getKey().equals("power to spare") ? shortPrice / Math.max(1f, powerSurplus) : shortPrice);
+        for(var e : extraCost.entrySet()) obj.setCoefficient(e.getKey(), obj.getCoefficient(e.getKey()) + e.getValue());
         obj.setMinimization();
+        //(a time to think in: the best found by then, if the proof of the best takes longer)
+        solver.setTimeLimit((long)(seconds * 1000));
         MPSolver.ResultStatus status = solver.solve();
         Result out = new Result();
         out.status = status.toString().toLowerCase();
@@ -412,6 +467,7 @@ public final class Balance{
         }
         for(var e : drawn.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.drawn.put(e.getKey(), (float)e.getValue().solutionValue());
         for(var e : shorts.entrySet()) if(e.getValue().solutionValue() > 1e-4) out.unmet.put(e.getKey(), (float)e.getValue().solutionValue());
+        for(Object[] pv : placeVars) if(((MPVariable)pv[0]).solutionValue() > 0.5) out.placesTaken.add(new Object[]{pv[2], pv[3], (int)Math.round(((MPVariable)pv[0]).solutionValue())});
         if(powerSource != null && powerSource.solutionValue() > 1e-6) out.drawn.put("power", (float)powerSource.solutionValue());
         for(var e : delivered.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.delivered.put(e.getKey(), (float)e.getValue().solutionValue());
         for(var e : spilt.entrySet()) if(e.getValue().solutionValue() > 1e-6) out.spilt.put(e.getKey(), (float)e.getValue().solutionValue());

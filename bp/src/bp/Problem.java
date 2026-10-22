@@ -71,6 +71,7 @@ public final class Problem{
             if(section.isEmpty()){
                 switch(w[0]){
                     case "map", "fixed" -> section = w[0];
+                    case "world" -> p.ground.world = w[1];
                     case "goal" -> p.goals.put(w[1], Float.parseFloat(w[2]));
                     case "power" -> p.freePower = w[1].equals("free");
                     case "module" -> {

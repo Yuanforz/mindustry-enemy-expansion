@@ -26,6 +26,11 @@ public final class Spec{
     public final List<Place> places = new ArrayList<>();
     public float seconds = 60f;
     public String name = "";
+    /** A map saved by the game (.msav) whose ground this is, instead of rows of characters; its size once loaded. */
+    public String world;
+    public int worldW, worldH;
+    /** The player's cores the saved map had, before its buildings were taken away: block x y. */
+    public final List<Place> worldCores = new ArrayList<>();
 
     public record Place(String block, int x, int y, int rotation, String config){
         @Override
@@ -35,13 +40,14 @@ public final class Spec{
     }
 
     public int width(){
+        if(world != null) return worldW;
         int w = 0;
         for(String r : rows) w = Math.max(w, r.length());
         return w;
     }
 
     public int height(){
-        return rows.size();
+        return world != null ? worldH : rows.size();
     }
 
     /** The character at a tile (x right, y up). */
@@ -71,6 +77,7 @@ public final class Spec{
                 String[] w = line.trim().split("\\s+");
                 if(w[0].equals("map") || w[0].equals("place")) section = w[0];
                 else if(w[0].equals("seconds")) s.seconds = Float.parseFloat(w[1]);
+                else if(w[0].equals("world")) s.world = w[1];
                 continue;
             }
             if(section.equals("map")) s.rows.add(line);
@@ -84,7 +91,7 @@ public final class Spec{
 
     /** The map and the layout written back, as a spec file reads. */
     public String write(){
-        StringBuilder b = new StringBuilder("map\n");
+        StringBuilder b = new StringBuilder(world != null ? "world " + world + "\nmap\n" : "map\n");
         for(String r : rows) b.append(r).append('\n');
         b.append("end\nplace\n");
         for(Place p : places) b.append(p).append('\n');

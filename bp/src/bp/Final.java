@@ -93,8 +93,48 @@ public final class Final{
         return most;
     }
 
+    /**
+     * The final form on a saved map: no raw thing given, all of it dug, pumped, crushed or drawn from the map's places,
+     * the nearest so many full places of each recipe on ground to the core weighed (Sites).
+     */
+    public static Balance onWorld(String dataDir, String world, float surplus, int keep){
+        Problem prob = Problem.parse("world " + world + "\n");
+        Gen gen = new Gen(prob, dataDir);
+        Spec.Place core = prob.fixed.isEmpty() ? null : prob.fixed.get(0);
+        int cx = core == null ? gen.board.w / 2 : core.x(), cy = core == null ? gen.board.h / 2 : core.y();
+        Balance bal = plan(surplus, Set.of(), Map.of());
+        long t0 = System.nanoTime();
+        Map<Recipe, List<Sites.Site>> sites = new Sites(gen.board).find(bal.recipes, cx, cy, keep);
+        int n = 0;
+        for(var e : sites.entrySet()){
+            List<Float> ys = new ArrayList<>();
+            List<int[][]> ts = new ArrayList<>();
+            for(Sites.Site st : e.getValue()){
+                ys.add(st.yield());
+                ts.add(new int[][]{st.body(), st.lane()});
+            }
+            bal.places.put(e.getKey().name, ys);
+            bal.placeTiles.put(e.getKey().name, ts);
+            n += ys.size();
+        }
+        lastSites = sites;
+        System.out.println(String.format("  %s: %dx%d, core at %d,%d; %d full places of %d recipes on ground found in %.1f s", world, gen.board.w, gen.board.h, cx, cy, n, sites.size(), (System.nanoTime() - t0) / 1e9));
+        for(var e : sites.entrySet()) if(e.getValue().isEmpty()) System.out.println("    none on this map at full: " + e.getKey().name);
+        return bal;
+    }
+
+    static Map<Recipe, List<Sites.Site>> lastSites;
+
     public static void main(String[] args){
         Game.boot(args[0]);
+        if(args[1].equals("world")){
+            Balance bal = onWorld(args[0], args[2], Float.parseFloat(args[3]), args.length > 4 ? Integer.parseInt(args[4]) : 6);
+            long t0 = System.nanoTime();
+            Balance.Result r = bal.solve();
+            System.out.println(r.toString().lines().filter(l -> !l.startsWith("  to the core")).reduce("", (a, c) -> a + c + "\n"));
+            System.out.println(String.format("  solved in %.1f s", (System.nanoTime() - t0) / 1e9));
+            System.exit(0);
+        }
         float surplus = Float.parseFloat(args[1]);
         Set<String> raws = new HashSet<>(Arrays.asList(args[2].split(",")));
         Map<String, List<Float>> places = new HashMap<>();

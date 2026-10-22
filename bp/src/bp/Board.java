@@ -101,14 +101,19 @@ public final class Board{
     public Board(Spec ground, Carriers carriers){
         this.ground = ground;
         this.carriers = carriers;
+        //(the bare map in the game's world, for asking where a block can stand)
+        Spec bare = new Spec();
+        bare.rows.addAll(ground.rows);
+        bare.world = ground.world;
+        new Scratch(bare);
+        ground.worldW = bare.worldW;
+        ground.worldH = bare.worldH;
+        ground.worldCores.clear();
+        ground.worldCores.addAll(bare.worldCores);
         w = ground.width();
         h = ground.height();
         partAt = new Body.Part[w * h];
         clear = new boolean[w * h];
-        //(the bare map in the game's world, for asking where a block can stand)
-        Spec bare = new Spec();
-        bare.rows.addAll(ground.rows);
-        new Scratch(bare);
         solidGround = new boolean[w * h];
         floorAt = new mindustry.world.blocks.environment.Floor[w * h];
         for(int y = 0; y < h; y++) for(int x = 0; x < w; x++){

@@ -46,6 +46,10 @@ public final class Gen{
         carriers = new Carriers(dataDir);
         board = new Board(prob.ground, carriers);
         board.goals.addAll(prob.goals.keySet());
+        //(a saved map's own cores of the player, standing where they were, if the problem names none)
+        boolean hasCore = false;
+        for(Spec.Place p : prob.fixed) if(Vars.content.block(p.block()) instanceof mindustry.world.blocks.storage.CoreBlock) hasCore = true;
+        if(!hasCore) prob.fixed.addAll(prob.ground.worldCores);
     }
 
     // ------------------------------------------------------------------ 1-2: the balance and the bodies

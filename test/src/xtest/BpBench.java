@@ -123,6 +123,8 @@ public class BpBench{
         }
         int h = rows.size(), w = 0;
         for(String r : rows) w = Math.max(w, r.length());
+        String worldFile = null;
+        for(String raw : file.readString().split("\n")) if(raw.trim().startsWith("world ")) worldFile = raw.trim().substring(6).trim();
         final int width = w, height = h;
 
         //the world: the characters as floors, walls and ores, and the rules of a sandbox on Erekir
@@ -135,7 +137,13 @@ public class BpBench{
         rules.infiniteResources = true;
         rules.coreIncinerates = true;
         Vars.state.rules = rules;
-        Vars.world.loadGenerator(width, height, tiles -> {
+        if(worldFile != null){
+            //(a map saved by the game: its ground, every building on it taken away; the layout's own blocks go down next)
+            mindustry.io.SaveIO.load(new Fi(worldFile));
+            Vars.state.rules = rules;
+            for(Tile t : Vars.world.tiles) if(t.build != null && t.isCenter()) t.setBlock(Blocks.air);
+            for(Unit u : Groups.unit.copy(new Seq<>())) u.remove();
+        }else Vars.world.loadGenerator(width, height, tiles -> {
             for(int y = 0; y < height; y++){
                 String r = rows.get(height - 1 - y);
                 for(int x = 0; x < width; x++){

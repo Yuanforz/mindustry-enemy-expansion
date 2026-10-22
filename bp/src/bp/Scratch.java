@@ -35,7 +35,17 @@ public final class Scratch{
         rules.staticFog = false;
         rules.infiniteResources = true;
         Vars.state.rules = rules;
-        Vars.world.loadGenerator(width, height, tiles -> {
+        if(spec.world != null){
+            //(a map saved by the game: its ground, every building on it taken away)
+            mindustry.io.SaveIO.load(new arc.files.Fi(spec.world));
+            spec.worldCores.clear();
+            for(Tile t : Vars.world.tiles) if(t.build instanceof mindustry.world.blocks.storage.CoreBlock.CoreBuild c && t.isCenter() && c.team == Vars.state.rules.defaultTeam) spec.worldCores.add(new Spec.Place(c.block.name, t.x, t.y, 0, null));
+            Vars.state.rules = rules;
+            for(Tile t : Vars.world.tiles) if(t.build != null && t.isCenter()) t.setBlock(Blocks.air);
+            for(var u : mindustry.gen.Groups.unit.copy(new arc.struct.Seq<>())) u.remove();
+            spec.worldW = Vars.world.width();
+            spec.worldH = Vars.world.height();
+        }else Vars.world.loadGenerator(width, height, tiles -> {
             for(int y = 0; y < height; y++) for(int x = 0; x < width; x++){
                 char c = spec.at(x, y);
                 tiles.set(x, y, new Tile(x, y, Spec.floorOf(c), Spec.oreOf(c), Spec.wallOf(c)));
