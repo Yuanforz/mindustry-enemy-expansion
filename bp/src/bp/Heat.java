@@ -37,12 +37,12 @@ public final class Heat{
         };
     }
 
-    static double cost(Block b, float perTile, float perItem){
-        return Carriers.cost(b, perTile, perItem);
+    static double cost(Block b, Weights w){
+        return w.cost(b);
     }
 
     /** The best arrangement, or null if none gives the need. ports: tiles against the machine to be left free. */
-    public static List<Put> arrange(Recipe machine, List<Recipe> heaters, List<Block> redirectors, float perTile, float perItem, int ports){
+    public static List<Put> arrange(Recipe machine, List<Recipe> heaters, List<Block> redirectors, Weights w, int ports){
         if(!loaded){
             Loader.loadNativeLibraries();
             loaded = true;
@@ -137,8 +137,8 @@ public final class Heat{
             int lines = c.recipe == null ? 0 : lines(c.recipe);
             if(lines == 0) continue;
             LinearExprBuilder free = LinearExpr.newBuilder();
-            int w = c.block.size;
-            for(int k = 0; k < w; k++) for(int[] t : new int[][]{{c.x0 + w, c.y0 + k}, {c.x0 - 1, c.y0 + k}, {c.x0 + k, c.y0 + w}, {c.x0 + k, c.y0 - 1}}){
+            int ws = c.block.size;
+            for(int k = 0; k < ws; k++) for(int[] t : new int[][]{{c.x0 + ws, c.y0 + k}, {c.x0 - 1, c.y0 + k}, {c.x0 + k, c.y0 + ws}, {c.x0 + k, c.y0 - 1}}){
                 if(overlapsMachine(t[0], t[1], 1, s)) continue;
                 BoolVar f = m.newBoolVar("free" + i);
                 //(free: nothing chosen stands on it)
@@ -148,7 +148,7 @@ public final class Heat{
             m.addGreaterOrEqual(free, LinearExpr.term(x[i], lines));
         }
         LinearExprBuilder obj = LinearExpr.newBuilder();
-        for(int i = 0; i < n; i++) obj.addTerm(x[i], Math.round(cost(cands.get(i).block, perTile, perItem) * 1000));
+        for(int i = 0; i < n; i++) obj.addTerm(x[i], Math.round(cost(cands.get(i).block, w) * 1000));
         m.minimize(obj);
         CpSolver solver = new CpSolver();
         solver.getParameters().setMaxTimeInSeconds(20);

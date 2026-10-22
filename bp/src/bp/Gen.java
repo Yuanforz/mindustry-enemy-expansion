@@ -36,8 +36,11 @@ public final class Gen{
     List<Piece> bestPower = new ArrayList<>();
     int problems;
 
+    final Weights weights;
+
     Gen(Problem prob, String dataDir){
         this.prob = prob;
+        weights = new Weights(prob.perTile, prob.perItem, prob.perSecond);
         carriers = new Carriers(dataDir);
         board = new Board(prob.ground, carriers);
         board.goals.addAll(prob.goals.keySet());
@@ -107,7 +110,7 @@ public final class Gen{
         for(String k : r.in.keySet()) if(Vars.content.item(k) != null || Vars.content.liquid(k) != null) ports++;
         for(String k : r.out.keySet()) if(Vars.content.item(k) != null || Vars.content.liquid(k) != null) ports++;
         if(r.powerUse > 0f || r.powerOut > 0f) ports++;
-        List<Heat.Put> puts = Heat.arrange(r, heaters, redirectors, prob.perTile, prob.perItem, ports);
+        List<Heat.Put> puts = Heat.arrange(r, heaters, redirectors, weights, ports);
         if(puts == null){
             notes.add("no arrangement of heaters for " + r.name + " with " + heaters.size() + " kinds of heater");
             return;
@@ -151,7 +154,7 @@ public final class Gen{
     float supply(Body.Part p, String res){
         if(p.recipe == null){
             boolean liquid = Vars.content.liquid(res) != null;
-            Block line = carriers.cheapest(liquid ? Carriers.Role.conduit : Carriers.Role.duct, prob.perTile, prob.perItem);
+            Block line = carriers.cheapest(liquid ? Carriers.Role.conduit : Carriers.Role.duct, weights);
             return p.around().size() * carriers.rate.get(line);
         }
         return p.makes(res);
@@ -165,11 +168,11 @@ public final class Gen{
     List<Router.Net> nets(){
         List<Router.Net> nets = new ArrayList<>();
         int id = 0;
-        float duct = carriers.rate.get(carriers.cheapest(Carriers.Role.duct, prob.perTile, prob.perItem));
-        Block surgeBlock = carriers.cheapest(Carriers.Role.surge, prob.perTile, prob.perItem);
+        float duct = carriers.rate.get(carriers.cheapest(Carriers.Role.duct, weights));
+        Block surgeBlock = carriers.cheapest(Carriers.Role.surge, weights);
         float surge = surgeBlock == null ? 0f : carriers.rate.get(surgeBlock);
-        double ductCost = Carriers.cost(carriers.cheapest(Carriers.Role.duct, prob.perTile, prob.perItem), prob.perTile, prob.perItem);
-        double surgeCost = surgeBlock == null ? Double.MAX_VALUE : Carriers.cost(surgeBlock, prob.perTile, prob.perItem);
+        double ductCost = weights.cost(carriers.cheapest(Carriers.Role.duct, weights));
+        double surgeCost = surgeBlock == null ? Double.MAX_VALUE : weights.cost(surgeBlock);
         for(Placer.Group g : groups){
             List<Body.Part> ms = g.makers, ts = g.takers;
             //(the transportation problem: least rate times gap, each taker's need met, no maker past what it makes)
@@ -301,11 +304,11 @@ public final class Gen{
             long tr = System.nanoTime();
             System.out.println(String.format("placing %d: cost %.1f (%d bodies, %d steps)", attempt, placer.cost, bodies.size(), steps));
             List<Router.Net> nets = nets();
-            Router router = new Router(board, nets, prob.perTile, prob.perItem);
+            Router router = new Router(board, nets, weights);
             router.carry(history);
             boolean clean = router.run(80);
             long tw = System.nanoTime();
-            Power power = new Power(board, bodies, router.all(), prob.freePower, prob.perTile, prob.perItem).run();
+            Power power = new Power(board, bodies, router.all(), prob.freePower, weights).run();
             System.out.println(String.format("  time: placing %.1f s, lines %.1f s, power %.1f s", (tr - tp) / 1e9, (tw - tr) / 1e9, (System.nanoTime() - tw) / 1e9));
             List<String> here = new ArrayList<>();
             int unreached = 0;

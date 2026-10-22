@@ -48,11 +48,22 @@ read off its code (v160.7), its numbers off its objects, nothing written in by h
   nodes do not.
 - Surge conveyor (StackConveyor, outputRouter off): the first tile of a line takes from behind and the sides from
   anything, the rest take nothing; the last hands ahead; a line of one tile loads nothing.
-- A bridge end that reaches another bridge ahead within range links on, and then takes from about it like a start.
+- A bridge end that reaches another bridge ahead within range links on, and then takes from about it like a start; all
+  it carries goes to that bridge, past the pieces between and away from where its line was laid to go: wrong, unless it
+  is a chain into the next hop's start just ahead on its own line. (Several bridges into one, a merge, is good play but
+  wants lines with more than one maker, not modelled yet.)
+- A bridge end of a liquid does not leak (moveLiquidForward(false)): a drain must end in a conduit.
 - Neoplasm on the ground: puddles cap at 70, spread 0.3 a tick to each neighbour, go under blocks, turn the water of
   blocks next to them into neoplasm.
 - The flux reactor grows unstable and blows up within seconds when short of cyanogen at its heat; a layout that feeds it
   must be whole.
+
+## Checked as laid
+
+After laying, every line is traced by the game's rules (Check, the game's acceptItem and friends on the layout put down)
+and what each line reaches is compared with what it was laid to reach; where they part, each piece is asked what the
+game hands its thing to against what the router meant (`DIFFERS:` lines), which is where the router's model of the
+rules is wrong. The router's model and the game's rules must agree before a layout is trusted.
 
 ## The bench
 

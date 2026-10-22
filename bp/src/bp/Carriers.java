@@ -64,23 +64,17 @@ public final class Carriers{
     }
 
     /** The one of a role the weights price lowest (null if there is none). */
-    public Block cheapest(Role r, float perTile, float perItem){
+    public Block cheapest(Role r, Weights w){
         Block best = null;
         double bc = Double.MAX_VALUE;
         for(Block b : of(r)){
-            double c = cost(b, perTile, perItem);
+            double c = w.cost(b);
             if(c < bc){
                 bc = c;
                 best = b;
             }
         }
         return best;
-    }
-
-    public static double cost(Block b, float perTile, float perItem){
-        int items = 0;
-        for(var st : b.requirements) items += st.amount;
-        return perTile * b.size * b.size + perItem * items;
     }
 
     public static int range(Block b){

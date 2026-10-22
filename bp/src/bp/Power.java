@@ -43,15 +43,15 @@ public final class Power{
     int[] vAt, any;
     int[] parent;
 
-    public Power(Board b, List<Body> bodies, List<Piece> pieces, boolean free, float perTile, float perItem){
+    public Power(Board b, List<Body> bodies, List<Piece> pieces, boolean free, Weights w){
         this.b = b;
         this.bodies = bodies;
         this.pieces = pieces;
         this.free = free;
-        node = b.carriers.cheapest(Carriers.Role.node, perTile, perItem);
-        source = b.carriers.cheapest(Carriers.Role.powerSource, perTile, perItem);
-        nodeCost = (float)Carriers.cost(node, perTile, perItem);
-        sourceCost = source == null ? Float.MAX_VALUE : (float)Carriers.cost(source, perTile, perItem);
+        node = b.carriers.cheapest(Carriers.Role.node, w);
+        source = b.carriers.cheapest(Carriers.Role.powerSource, w);
+        nodeCost = (float)w.cost(node);
+        sourceCost = source == null ? Float.MAX_VALUE : (float)w.cost(source);
     }
 
     static boolean powered(Block bl){

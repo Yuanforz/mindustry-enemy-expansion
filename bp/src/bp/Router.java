@@ -52,7 +52,7 @@ public final class Router{
 
     final Board b;
     public final List<Net> nets;
-    final float perTile, perItem;
+    final Weights w;
     final List<Piece>[] at;
     final float[] hist;
     float pf = 0.5f;
@@ -64,11 +64,10 @@ public final class Router{
     public final Set<Integer> fought = new HashSet<>();
 
     @SuppressWarnings("unchecked")
-    public Router(Board b, List<Net> nets, float perTile, float perItem){
+    public Router(Board b, List<Net> nets, Weights w){
         this.b = b;
         this.nets = nets;
-        this.perTile = perTile;
-        this.perItem = perItem;
+        this.w = w;
         at = new List[b.w * b.h];
         for(int i = 0; i < at.length; i++) at[i] = new ArrayList<>(1);
         hist = new float[b.w * b.h];
@@ -80,7 +79,7 @@ public final class Router{
 
     /** The block of a kind the lines use: the one the weights price lowest. */
     Block blockOf(Kind k){
-        return blocks.computeIfAbsent(k, kk -> b.carriers.cheapest(kk.role, perTile, perItem));
+        return blocks.computeIfAbsent(k, kk -> b.carriers.cheapest(kk.role, w));
     }
 
     final Map<Kind, Block> blocks = new EnumMap<>(Kind.class);
@@ -90,8 +89,8 @@ public final class Router{
     }
 
     float base(Kind k){
-        if(k == Kind.leak) return perTile;
-        return (float)Carriers.cost(blockOf(k), perTile, perItem);
+        if(k == Kind.leak) return w.tile();
+        return (float)w.cost(blockOf(k));
     }
 
     final Map<Kind, Float> baseCost = new EnumMap<>(Kind.class);
@@ -451,7 +450,7 @@ public final class Router{
         now++;
         int w = b.w;
         PriorityQueue<long[]> open = new PriorityQueue<>((p, q) -> Double.compare(Double.longBitsToDouble(p[0]), Double.longBitsToDouble(q[0])));
-        float hmin = net.cls == 0 ? Math.min(cost(Kind.duct), 2f * cost(Kind.bridgeIn) / (range + 1)) : net.cls == 1 ? cost(Kind.surge) : Math.min(cost(Kind.conduit), 2f * cost(Kind.lbridgeIn) / (lrange + 1));
+        float hmin = net.cls == 0 ? Math.min(cost(Kind.duct), (2f * cost(Kind.bridgeIn) + this.w.tile() * (range - 1)) / (range + 1)) : net.cls == 1 ? cost(Kind.surge) : Math.min(cost(Kind.conduit), (2f * cost(Kind.lbridgeIn) + this.w.tile() * (lrange - 1)) / (lrange + 1));
         //starts: the tiles about the maker it hands the thing to
         Body.Part from = net.from;
         for(int[] t : from.around()){
@@ -525,6 +524,7 @@ public final class Router{
                     int qi = b.idx(q.x, q.y);
                     low += cost(q.kind) + hist[qi] + pf * at[qi].size();
                 }
+                if(type == 2 || type == 5) low += this.w.tile() * (j - 1);
                 if(!hard){
                     float lowG = g[st] + low;
                     if(lowG >= bestGoal) continue;
@@ -536,6 +536,9 @@ public final class Router{
                 float c = 0f;
                 for(Piece q : ps) c += price(q, ps.size() == 2 ? ps.get(ps.size() - 1 - ps.indexOf(q)) : null);
                 if(c == Float.POSITIVE_INFINITY) continue;
+                //(a bridge's span is ground spent too: what it passes over is left in scraps no machine fits, and no other
+                //bridge of its kind may stand in line with it)
+                if(type == 2 || type == 5) c += this.w.tile() * (j - 1);
                 float ng = g[st] + c;
                 if(goal && sink == null) ng += harmAt(net.res, nx[0], nx[1]);
                 if(goal){
@@ -680,8 +683,6 @@ public final class Router{
         int bestBad = Integer.MAX_VALUE, since = 0;
         for(rounds = 1; rounds <= maxRounds; rounds++){
             for(Net net : nets){
-                //(after the first rounds, only the lines in what is fought over are laid again)
-                if(rounds > 3 && !involved(net)) continue;
                 ripUp(net);
                 Arrays.fill(own, false);
                 net.unreached.clear();
