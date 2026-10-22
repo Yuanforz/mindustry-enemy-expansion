@@ -54,6 +54,66 @@ public final class Router{
         }
     }
 
+    /**
+     * A line that stands already (a base grown): the thing it carries, its takers, how much it carries now (its own and
+     * what lines run on into it) and at most (its slowest carrier). A new line may run on into it as into a line laid.
+     */
+    public static final class Standing{
+        public final int id;
+        public final String res;
+        public final List<Body.Part> to = new ArrayList<>();
+        public float load, cap;
+
+        public Standing(int id, String res){
+            this.id = id;
+            this.res = res;
+        }
+
+        /** Of items, to the core alone. */
+        public boolean coreBound(){
+            if(to.isEmpty() || mindustry.Vars.content.item(res) == null) return false;
+            for(Body.Part t : to) if(!Board.isCore(t)) return false;
+            return true;
+        }
+
+        /** Whether it carries to that taker alone. */
+        public boolean onlyTo(Body.Part sink){
+            return to.size() == 1 && to.get(0) == sink;
+        }
+    }
+
+    /** A line of items to the core alone: the core takes every item, so on such a line any item goes where it is to go. */
+    static boolean coreBound(Net n){
+        if(n == null || n.drain || n.to.isEmpty() || n.cls == 3 || mindustry.Vars.content.item(n.res) == null) return false;
+        for(Body.Part t : n.to) if(!Board.isCore(t)) return false;
+        return true;
+    }
+
+    boolean coreBound(Piece p){
+        if(p.line != null) return p.line.coreBound();
+        if(p.fixed) return false;
+        return coreBound(byId.get(p.net));
+    }
+
+    /**
+     * Whether what one piece hands another goes where it was to go: any items on lines to the core alone; else the same
+     * thing, and where a line that stands is one of them, to the same takers (what one hands a line that stands goes on
+     * where that one goes).
+     */
+    boolean same(Piece a, Piece c){
+        if(a.itemCarrier() && c.itemCarrier() && coreBound(a) && coreBound(c)) return true;
+        if(!a.res.equals(c.res)) return false;
+        if(a.line == null && c.line == null) return true;
+        List<Body.Part> ta = takers(a), tc = takers(c);
+        return ta != null && tc != null && ta.size() == tc.size() && ta.containsAll(tc);
+    }
+
+    List<Body.Part> takers(Piece p){
+        if(p.line != null) return p.line.to;
+        Net n = p.fixed ? null : byId.get(p.net);
+        return n == null ? null : n.to;
+    }
+
     final Board b;
     public final List<Net> nets;
     final Weights w;
@@ -222,8 +282,8 @@ public final class Router{
             for(Piece o : at[n]){
                 if(o.net == q.net || !family(o, q)) continue;
                 //(a body's own piece hands and takes nothing of a line laid about it, of its thing or another: its
-                //lines are its own)
-                boolean other = o.fixed || !o.res.equals(q.res);
+                //lines are its own. A line that stands is a line as any other)
+                boolean other = o.fixed && o.line == null || !same(o, q);
                 if(has(Board.handsDirs(o), (dir + 2) % 4) && Board.pieceTakes(q, dir, o, null) && other) c++;
                 if(has(Board.handsDirs(q), dir) && Board.pieceTakes(taking(o), (dir + 2) % 4, q, null) && other) c++;
                 //(a surge line hands its stack on to whatever surge conveyor it points at, taking or not)
@@ -257,6 +317,7 @@ public final class Router{
                         //this line just behind this one, the next hop's start, a chain. A bridge reaching another, of the
                         //same thing or not, takes its line's flow away from where it was laid to go)
                         boolean chainIn = fOut && found.net == q.net && i == 1 && found.x + Geo.dx(found.rot) == q.x && found.y + Geo.dy(found.rot) == q.y;
+                        //(of whatever lines: a bridge reached takes nothing more from that side, DirectionBridge.occupied)
                         if(found.rot == (dir + 2) % 4 && !chainIn) c++;
                         //(this one reaches it)
                         boolean chainOut = qOut && found.net == q.net && i == 1 && dir == q.rot;
@@ -608,48 +669,82 @@ public final class Router{
     final Map<Integer, Net> byId = new HashMap<>();
 
     /**
-     * A piece on a tile of another line carrying the same thing to the same taker that takes from this piece: a line that
-     * reaches the taker, itself or through lines it joined in turn (a tree of lines gathering into one taker), every
-     * piece joined on the way still standing; what then runs on its end, all the lines gathered, within what one of its
-     * carriers carries.
+     * A piece on a tile of another line, taking from this piece, that carries the same to the same taker (one thing, or
+     * items to the core alone): of a line laid that reaches the taker, itself or through lines it joined in turn (a tree
+     * of lines gathering into one taker), every piece joined on the way still standing; or of a line that stands. What
+     * then runs on its end, all the lines gathered, within what one of its carriers carries; into a line that stands,
+     * within what it carries at most, less what it carries now.
      */
     Piece joinAt(Net net, Body.Part sink, int x, int y, Piece last){
         if(!b.in(x, y) || net.cls == 1) return null;
         int dir = Geo.dir(x, y, last.x, last.y);
+        if(dir < 0) return null;
         for(Piece o : at[b.idx(x, y)]){
-            if(o.net == net.id || !o.res.equals(net.res) || o.block == null || !family(o, last)) continue;
+            if(o.net == net.id || o.block == null || !family(o, last) || !Board.pieceTakes(o, dir, last, null)) continue;
+            if(o.line != null){
+                //(a line that stands, to this taker alone: what is handed it goes nowhere else)
+                if(!(coreBound(net) && o.line.coreBound() || o.res.equals(net.res) && o.line.onlyTo(sink))) continue;
+                if(o.line.load + into(o.line, sink) + flowTo(net, sink) > o.line.cap + 1e-4f) continue;
+                return o;
+            }
+            if(o.fixed) continue;
             Net other = byId.get(o.net);
-            if(other == null || !other.to.contains(sink)) continue;
+            if(other == null || !other.to.contains(sink) || !(o.res.equals(net.res) || coreBound(net) && coreBound(other))) continue;
             Net root = root(other, sink, net);
             if(root == null) continue;
-            if(gathered(root, sink) + flowTo(net, sink) > carries(net) + 1e-4f) continue;
-            if(dir >= 0 && Board.pieceTakes(o, dir, last, null)) return o;
+            if(gathered(root, sink) + flowTo(net, sink) > carries(root) + 1e-4f) continue;
+            Standing end = standingEnd(root, sink);
+            if(end != null && end.load + into(end, sink) + flowTo(net, sink) > end.cap + 1e-4f) continue;
+            return o;
         }
         return null;
     }
 
-    /** The line a line's way to a taker ends in, following what it joined (null: not reached, or through the line asked). */
+    /**
+     * The line laid that a line's way to a taker ends in, following what it joined: the one that reaches the taker, or runs
+     * on into a line that stands (null: not reached, or through the line asked).
+     */
     Net root(Net n, Body.Part sink, Net not){
         for(int k = 0; k <= nets.size(); k++){
             if(n == null || n == not || n.unreached.contains(sink)) return null;
             Piece j = n.joins.get(sink);
-            if(j == null) return n;
+            if(j == null || j.line != null) return n;
             if(!at[b.idx(j.x, j.y)].contains(j)) return null;
             n = byId.get(j.net);
         }
         return null;
     }
 
+    /** The line that stands a root runs on into, toward a taker (null: none). */
+    static Standing standingEnd(Net root, Body.Part sink){
+        Piece j = root.joins.get(sink);
+        return j == null ? null : j.line;
+    }
+
     /** What runs into a taker on the end of a line: its own and all the lines gathered into it (worked out once a lay). */
     float gathered(Net root, Body.Part sink){
         return gatheredOf.computeIfAbsent(root, r -> {
             float f = r.flow();
-            for(Net n : nets) if(n != r && n.res.equals(r.res) && n.joins.containsKey(sink) && root(n, sink, null) == r) f += flowTo(n, sink);
+            for(Net n : nets) if(n != r && n.joins.containsKey(sink) && root(n, sink, null) == r) f += flowTo(n, sink);
+            return f;
+        });
+    }
+
+    /** What the lines laid bring into a line that stands, toward a taker (worked out once a lay). */
+    float into(Standing s, Body.Part sink){
+        return intoOf.computeIfAbsent(s, k -> {
+            float f = 0f;
+            for(Net n : nets){
+                if(!n.joins.containsKey(sink)) continue;
+                Net r = root(n, sink, null);
+                if(r != null && standingEnd(r, sink) == s) f += flowTo(n, sink);
+            }
             return f;
         });
     }
 
     final Map<Net, Float> gatheredOf = new HashMap<>();
+    final Map<Standing, Float> intoOf = new HashMap<>();
 
     static float flowTo(Net n, Body.Part sink){
         int i = n.to.indexOf(sink);
@@ -658,6 +753,11 @@ public final class Router{
 
     /** What one carrier of a line's kind carries a second (as measured, Carriers). */
     float carries(Net n){
+        if(n.cls == 1){
+            Block sb = blockOf(Kind.surge);
+            Float r = sb == null ? null : b.carriers.rate.get(sb);
+            if(r != null) return r;
+        }
         Block bl = blockOf(n.cls == 2 ? Kind.conduit : Kind.duct);
         Float r = bl == null ? null : b.carriers.rate.get(bl);
         return r == null ? Float.MAX_VALUE : r;
@@ -727,6 +827,7 @@ public final class Router{
         ensure();
         now++;
         gatheredOf.clear();
+        intoOf.clear();
         int w = b.w;
         PriorityQueue<long[]> open = new PriorityQueue<>((p, q) -> Double.compare(Double.longBitsToDouble(p[0]), Double.longBitsToDouble(q[0])));
         float hmin = net.cls == 0 ? Math.min(cost(Kind.duct), (2f * cost(Kind.bridgeIn) + this.w.tile() * (range - 1)) / (range + 1)) : net.cls == 1 ? cost(Kind.surge) : Math.min(cost(Kind.conduit), (2f * cost(Kind.lbridgeIn) + this.w.tile() * (lrange - 1)) / (lrange + 1));
@@ -805,14 +906,17 @@ public final class Router{
                     if(!open(x, y, solid(type == 2 ? Kind.bridgeIn : Kind.lbridgeIn)) || !open(ux, uy, solid(type == 2 ? Kind.bridgeOut : Kind.lbridgeOut))) continue;
                     if(!clearOfBridges(x, y, e, 1, j - 1, type == 5)) continue;
                 }
-                if(!goal && !open(nx[0], nx[1], false)) continue;
-                List<Piece> ps = pieces(net, st, m, goal);
-                //(or into another line of the same thing going to the same taker, from a side it takes from: a merge)
+                //(or into another line carrying the same to the same taker, from a side it takes from: a merge; a line
+                //that stands is joined so, its tiles no way for anything else)
                 Piece join = null;
-                if(!goal && sink != null && type != 3){
+                List<Piece> ps = null;
+                if(!goal && sink != null && type != 3 && b.in(nx[0], nx[1]) && !at[b.idx(nx[0], nx[1])].isEmpty()){
+                    ps = pieces(net, st, m, false);
                     join = joinAt(net, sink, nx[0], nx[1], ps.get(ps.size() - 1));
                     if(join != null) goal = true;
                 }
+                if(!goal && !open(nx[0], nx[1], false)) continue;
+                if(ps == null) ps = pieces(net, st, m, goal);
                 //(not over the path itself: asked of every move only when the cheapest way found crossed itself, which a
                 //way of least cost does not, a loop of it costing more than none)
                 if(strict){
@@ -1034,7 +1138,7 @@ public final class Router{
     }
 
     /** Takers a line cannot reach at all (no way, whatever is shared): not sought again. */
-    final Set<Long> walledOff = new HashSet<>();
+    final Map<Net, Set<Body.Part>> walledOff = new IdentityHashMap<>();
 
     public boolean run(int maxRounds){
         own = new boolean[b.w * b.h];
@@ -1056,13 +1160,13 @@ public final class Router{
                     if(touches(net.from, sink, net.res, net.cls == 2)) continue;
                     //(a taker no way reaches, other lines' tiles allowed, no way reaches in any round: what stands in the
                     //way does not move while lines are laid)
-                    if(walledOff.contains(net.id * 100000L + System.identityHashCode(sink))){
+                    if(walledOff.getOrDefault(net, Set.of()).contains(sink)){
                         net.unreached.add(sink);
                         continue;
                     }
                     if(!(net.cls == 3 ? layPayload(net, sink) : lay(net, sink))){
                         net.unreached.add(sink);
-                        if(net.cls != 3 && net.pieces.isEmpty()) walledOff.add(net.id * 100000L + System.identityHashCode(sink));
+                        if(net.cls != 3 && net.pieces.isEmpty()) walledOff.computeIfAbsent(net, k -> Collections.newSetFromMap(new IdentityHashMap<>())).add(sink);
                     }
                 }
                 if(net.drain) net.drained = lay(net, null);
@@ -1087,13 +1191,13 @@ public final class Router{
             fought.clear();
             fought.addAll(bad);
             if(bad.isEmpty() && unreached == 0) return true;
-            //(no better for a while: what is left is the placing's to mend)
             int nowBad = bad.size() + unreached;
             if(nowBad < bestBad){
                 bestBad = nowBad;
                 since = rounds;
-            }else if(rounds - since >= patience()) break;
-            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || rounds - since >= patience())) for(int i = 0; i < at.length; i++) if(at[i].size() > 1){
+            }
+            boolean stop = rounds - since >= patience();
+            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || stop)) for(int i = 0; i < at.length; i++) if(at[i].size() > 1){
                 StringBuilder who = new StringBuilder();
                 for(Piece o : at[i]) who.append(" ").append(o).append("/").append(o.res).append("#").append(o.net);
                 int x = i % b.w, y = i / b.w;
@@ -1106,7 +1210,7 @@ public final class Router{
                 }
                 System.out.println("  shared " + x + "," + y + " hist " + hist[i] + ":" + who + " | about:" + around);
             }
-            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || rounds - since >= patience())) for(Net net : nets) for(Piece q : net.pieces){
+            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || stop)) for(Net net : nets) for(Piece q : net.pieces){
                 int l = leaks(q, partner(net, q));
                 if(l == 0) continue;
                 StringBuilder why = new StringBuilder();
@@ -1119,6 +1223,8 @@ public final class Router{
                 }
                 System.out.println("  leak " + l + " at " + q + " (" + q.res + " #" + q.net + " role " + q.role + "):" + why);
             }
+            //(no better for a while: what is left is the placing's to mend)
+            if(stop) break;
             //(the price of sharing grows slowly and stops growing, so that what has been fought over, the history, comes to
             //decide: PathFinder's present and history costs)
             for(int i : bad) hist[i] += 1f;

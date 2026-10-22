@@ -245,8 +245,11 @@ public final class Grow{
                     else for(ItemStack st : c.requirements) u.cost.merge(st.item.name, st.amount * line, Float::sum);
                     u.seconds += c.buildTime / 60f * line;
                 }
-                if(perNode != null && Power.needs(p.block)) for(var e : perNode.entrySet()) u.cost.merge(e.getKey(), e.getValue(), Float::sum);
             }
+            //(power nodes, what they have cost so far a thing that uses power)
+            boolean usesPower = false;
+            for(Body.Part p : b.parts) if(Power.needs(p.block)) usesPower = true;
+            if(perNode != null && usesPower) for(var e : perNode.entrySet()) u.cost.merge(e.getKey(), e.getValue(), Float::sum);
         }
     }
 
@@ -339,6 +342,13 @@ public final class Grow{
         final List<Object[]> flows = new ArrayList<>();
         /** The lines a line runs on into, joining them (it stands only as long as they do). */
         final Set<Integer> via = new TreeSet<>();
+        /**
+         * What a body keeps clear of solid blocks, on the map: areas (lowest corner, highest corner) and single tiles (a
+         * drill's beams); whether none of another such body's areas may lie over its own.
+         */
+        final List<int[]> clear = new ArrayList<>();
+        final List<Integer> lane = new ArrayList<>();
+        boolean exclusive;
     }
 
     static final class Ledger{
@@ -346,11 +356,13 @@ public final class Grow{
         /** Places found not to be had among what stands (a step's layout could not put them there). */
         final Set<String> avoid = new TreeSet<>();
         int step;
+        /** The id the next thing committed gets: ids are never given twice (a thing given back keeps its id from use). */
+        int next = 1;
 
         int nextId(){
-            int m = 0;
-            for(Inst i : insts) m = Math.max(m, i.id);
-            return m + 1;
+            int m = next;
+            for(Inst i : insts) m = Math.max(m, i.id + 1);
+            return m;
         }
 
         Inst get(int id){
@@ -386,7 +398,11 @@ public final class Grow{
             int machines = 0;
             for(Inst i : insts){
                 if(i.kind.equals("nodes")) for(Object[] p : i.parts) for(ItemStack st : Vars.content.block((String)p[0]).requirements) c.merge(st.item.name, (float)st.amount, Float::sum);
-                else if(!i.kind.equals("line")) machines++;
+                else if(!i.kind.equals("line")){
+                    boolean uses = false;
+                    for(Object[] p : i.parts) if(Power.needs(Vars.content.block((String)p[0]))) uses = true;
+                    if(uses) machines++;
+                }
             }
             if(machines == 0 || c.isEmpty()) return null;
             for(var e : c.entrySet()) e.setValue(e.getValue() / machines);
@@ -412,6 +428,7 @@ public final class Grow{
                 String[] w = line.trim().split("\\s+");
                 switch(w[0]){
                     case "step" -> l.step = Integer.parseInt(w[1]);
+                    case "next" -> l.next = Integer.parseInt(w[1]);
                     case "avoid" -> l.avoid.add(w[1].replace('|', ' '));
                     case "inst" -> {
                         cur = new Inst();
@@ -426,6 +443,11 @@ public final class Grow{
                     case "piece" -> cur.pieces.add(new Object[]{w[1], w[2], Integer.parseInt(w[3]), Integer.parseInt(w[4]), Integer.parseInt(w[5]), Integer.parseInt(w[6]), Integer.parseInt(w[7]), Integer.parseInt(w[8]), w[9]});
                     case "flow" -> cur.flows.add(new Object[]{w[1], Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4]), Integer.parseInt(w[5]), Float.parseFloat(w[6])});
                     case "via" -> cur.via.add(Integer.parseInt(w[1]));
+                    case "clear" -> cur.clear.add(new int[]{Integer.parseInt(w[1]), Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4])});
+                    case "lane" -> {
+                        for(String t : w[1].split(",")) if(!t.isEmpty()) cur.lane.add(Integer.parseInt(t));
+                    }
+                    case "exclusive" -> cur.exclusive = true;
                     default -> {
                     }
                 }
@@ -434,7 +456,7 @@ public final class Grow{
         }
 
         void write(String file){
-            StringBuilder s = new StringBuilder("# what the grown base has committed, step by step\nstep " + step + "\n");
+            StringBuilder s = new StringBuilder("# what the grown base has committed, step by step\nstep " + step + "\nnext " + nextId() + "\n");
             for(String a : avoid) s.append("avoid ").append(a.replace(' ', '|')).append('\n');
             for(Inst i : insts){
                 s.append(String.format(Locale.ROOT, "inst %d %s %s %s%n", i.id, i.kind, i.unit == null ? "-" : i.unit.replace(' ', '|'), i.removed ? "removed" : i.built ? "built" : "committed"));
@@ -442,6 +464,9 @@ public final class Grow{
                 for(Object[] q : i.pieces) s.append(String.format(Locale.ROOT, "piece %s %s %d %d %d %d %d %d %s%n", q));
                 for(Object[] f : i.flows) s.append(String.format(Locale.ROOT, "flow %s %d %d %d %d %.6f%n", f));
                 for(int v : i.via) s.append("via ").append(v).append('\n');
+                for(int[] c : i.clear) s.append(String.format(Locale.ROOT, "clear %d %d %d %d%n", c[0], c[1], c[2], c[3]));
+                if(!i.lane.isEmpty()) s.append("lane ").append(String.join(",", i.lane.stream().map(String::valueOf).toList())).append('\n');
+                if(i.exclusive) s.append("exclusive\n");
             }
             new Fi(file).writeString(s.toString());
         }
@@ -511,9 +536,12 @@ public final class Grow{
         for(Unit u : units) if(need.getOrDefault(u.cls, 0) > 0) classes.computeIfAbsent(u.cls, k -> new ArrayList<>()).add(u);
         Map<String, Float> clsSeconds = new HashMap<>();
         for(var e : classes.entrySet()){
-            float sec = Float.MAX_VALUE;
-            for(Unit u : e.getValue()) sec = u.heater == null && u.recipe != null && u.recipe.heatNeed > 0f ? u.seconds : Math.min(sec, u.seconds);
-            clsSeconds.put(e.getKey(), sec);
+            float least = Float.MAX_VALUE, planned = -1f;
+            for(Unit u : e.getValue()){
+                least = Math.min(least, u.seconds);
+                if(u.heater == null && u.recipe != null && u.recipe.heatNeed > 0f) planned = u.seconds;
+            }
+            clsSeconds.put(e.getKey(), planned >= 0f ? planned : least);
         }
         float total = 0f;
         for(var e : classes.entrySet()) total += clsSeconds.get(e.getKey()) * need.get(e.getKey());
@@ -797,13 +825,29 @@ public final class Grow{
             }
         }
         //what is committed, fixed
-        Map<Integer, Map<String, Float>> outOf = new HashMap<>(), into = new HashMap<>();
-        //(what goes to the core is what is left: a maker hands it to whatever line will take it, so what it sends the core
-        //is still to be had by a taker that lacks it, a new line from it taking its share)
+        Map<Integer, Map<String, Float>> outOf = new HashMap<>(), into = new HashMap<>(), most = new HashMap<>();
+        Map<Integer, Map<String, Integer>> coreLinks = new HashMap<>();
+        //(what goes to the core is not counted as handed: what a maker sends the core may still go to a taker that lacks
+        //it, a new line from it taking its share as the maker hands round (Gen.nets); its lines to the core, how many: one
+        //for all where it stands against the core)
+        //(of flows between what is there: one to or from a thing given back or taken down carries nothing)
+        Set<Integer> there = new HashSet<>();
+        Set<String> touchingCore = new HashSet<>();
+        there.add(0);
+        for(Inst i : ledger.insts) if(!i.removed) there.add(i.id);
         for(Inst i : ledger.insts) if(!i.removed) for(Object[] f : i.flows){
-            if((Integer)f[3] != 0) outOf.computeIfAbsent((Integer)f[1] * 1000 + (Integer)f[2], k -> new HashMap<>()).merge((String)f[0], (Float)f[5], Float::sum);
+            if(!there.contains((Integer)f[1]) || !there.contains((Integer)f[3])) continue;
+            int key = (Integer)f[1] * 1000 + (Integer)f[2];
+            if((Integer)f[3] != 0){
+                outOf.computeIfAbsent(key, k -> new HashMap<>()).merge((String)f[0], (Float)f[5], Float::sum);
+                most.computeIfAbsent(key, k -> new HashMap<>()).merge((String)f[0], (Float)f[5], Math::max);
+            }else if(!i.pieces.isEmpty() || !touchingCore.contains(key + "|" + f[0])){
+                coreLinks.computeIfAbsent(key, k -> new HashMap<>()).merge((String)f[0], 1, Integer::sum);
+                if(i.pieces.isEmpty()) touchingCore.add(key + "|" + f[0]);
+            }
             into.computeIfAbsent((Integer)f[3] * 1000 + (Integer)f[4], k -> new HashMap<>()).merge((String)f[0], (Float)f[5], Float::sum);
         }
+        Map<Inst, Body> lineBodies = new LinkedHashMap<>();
         for(Inst i : ledger.insts){
             if(i.removed) continue;
             Body body = new Body(100000 + i.id, i.unit == null ? i.kind : i.unit, true);
@@ -827,8 +871,12 @@ public final class Grow{
             }
             if(body.parts.isEmpty()) continue;
             body.standing = true;
+            for(int[] c : i.clear) body.clearLocal.add(c.clone());
+            body.clearTiles.addAll(i.lane);
+            body.exclusive = i.exclusive;
             body.put(0, 0, 0);
             g.bodies.add(body);
+            if(i.kind.equals("line")) lineBodies.put(i, body);
             //(what each of its parts has to spare, still lacks)
             for(int k = 0; k < body.parts.size(); k++){
                 Body.Part p = body.parts.get(k);
@@ -845,7 +893,28 @@ public final class Grow{
                 }
                 g.spare.put(p, sp);
                 g.lacks.put(p, lk);
+                g.coreLinks.put(p, coreLinks.getOrDefault(i.id * 1000 + k, Map.of()));
+                g.fedMost.put(p, most.getOrDefault(i.id * 1000 + k, Map.of()));
             }
+        }
+        //(each line that stands: what it carries to whom, how much now (its own and the lines that run on into it) and at
+        //most, so that a new line may run on into it)
+        Map<Long, Body.Part> partOf = new HashMap<>();
+        for(var e : whose.entrySet()) partOf.put((long)e.getValue()[0] * 1000 + e.getValue()[1], e.getKey());
+        Map<Integer, List<Inst>> runInto = new HashMap<>();
+        for(Inst i : lineBodies.keySet()) for(int v : i.via) runInto.computeIfAbsent(v, k -> new ArrayList<>()).add(i);
+        for(var e : lineBodies.entrySet()){
+            Inst i = e.getKey();
+            String res = i.flows.isEmpty() ? i.pieces.isEmpty() ? null : (String)i.pieces.get(0)[8] : (String)i.flows.get(0)[0];
+            if(res == null) continue;
+            Router.Standing line = new Router.Standing(i.id, res);
+            for(Object[] f : i.flows){
+                Body.Part t = partOf.get((long)(Integer)f[3] * 1000 + (Integer)f[4]);
+                if(t != null && !line.to.contains(t)) line.to.add(t);
+            }
+            line.cap = lineRate(i, g);
+            line.load = load(i, runInto, new HashSet<>());
+            e.getValue().line = line;
         }
         //(the final form's places not yet standing nor in this step: held, no line or block of the step on them)
         Body hold = new Body(id++, "places held", true);
@@ -885,49 +954,61 @@ public final class Grow{
             for(String r : p.recipe.at(p.yield).out.keySet()) if(Vars.content.item(r) != null) made.merge(r, g.supply(p, r), Float::sum);
             for(String r : p.recipe.fixedOut.keySet()) if(Vars.content.item(r) != null) made.merge(r, g.supply(p, r), Float::sum);
             for(String r : p.recipe.at(p.yield).in.keySet()) if(Vars.content.item(r) != null) made.merge(r, -g.demand(p, r), Float::sum);
+            //(what a maker with a line to the core has to spare goes there already)
+            for(String r : g.coreLinks.getOrDefault(p, Map.of()).keySet()) made.merge(r, -g.supply(p, r), Float::sum);
         }
         prob.goals.clear();
         for(var e : made.entrySet()) if(e.getValue() > 1e-3f){
             prob.goals.put(e.getKey(), e.getValue());
             g.board.goals.add(e.getKey());
         }
-        Balance.Result toCore = new Balance.Result();
-        toCore.solved = true;
-        toCore.machines.addAll(plan.machines);
-        toCore.delivered.putAll(prob.goals);
-        g.balance = toCore;
+        Balance.Result goals = new Balance.Result();
+        goals.solved = true;
+        goals.machines.addAll(plan.machines);
+        goals.delivered.putAll(prob.goals);
+        g.balance = goals;
         g.groups();
         System.out.println(String.format("step %d: %d new bodies among %d committed; %d things between them; to the core %s", ledger.step, fresh.size(), ledger.insts.size(), g.groups.size(), Recipe.fmt(new LinkedHashMap<>(prob.goals))));
         Spec s = g.layOut(seed);
         s.name = prob.name;
         s.world = world;
-        //(a line between what stands only, that could not be laid: not laid now, tried again at a later step; what is
-        //new is not held up by it)
-        List<Router.Net> notNow = new ArrayList<>();
+        //(what is wrong of the step's own: lines laid over one another or leaking (every line laid is new), a new body
+        //where it may not stand or without power, a line to or from one not laid, a drain not laid. What stood wrong
+        //before (a machine still without power) does not hold the step up, and a line between what stands that could not
+        //be laid is left for a later step: the game's rules, before against after, see that the step makes nothing worse)
+        Set<String> freshAt = new HashSet<>();
+        for(Body b : fresh.keySet()) for(Body.Part p : b.parts) freshAt.add(p.block.name + "@" + p.x0 + "," + p.y0);
+        Set<Body> trouble = new HashSet<>();
+        int own = g.overusedKept + g.leaksKept;
+        for(Body b : g.misplacedKept) if(fresh.containsKey(b)){
+            own++;
+            trouble.add(b);
+        }
+        List<String> later = new ArrayList<>();
         for(Router.Net n : g.bestNets){
-            if(n.unreached.isEmpty()) continue;
-            boolean standingOnly = n.from.body.standing;
-            for(Body.Part t : n.to) if(!t.body.standing) standingOnly = false;
-            if(standingOnly) notNow.add(n);
-        }
-        if(!notNow.isEmpty()){
-            Set<String> gone = new HashSet<>();
-            for(Router.Net n : notNow) for(Piece q : n.pieces) if(q.block != null) gone.add(q.block.name + "@" + q.x + "," + q.y);
-            s.places.removeIf(p -> gone.contains(p.block() + "@" + p.x() + "," + p.y()));
-            g.bestNets.removeAll(notNow);
-            g.problems -= notNow.stream().mapToInt(n -> n.unreached.size()).sum();
-            System.out.println("  not laid now (between what stands): " + notNow);
-        }
-        int bad = g.verify(s, false);
-        System.out.println(String.format("  laid out; %s", bad == 0 ? "clean by the game's rules" : bad + " things wrong by the game's rules" + (before > 0 ? " (" + before + " before it)" : "")));
-        if(g.problems > 0 || bad > before){
-            //(what of the step stands where it may not, or a line to or from it could not be laid: left out, the rest
-            //laid out again)
-            Set<Body> trouble = new HashSet<>(g.misplacedKept);
-            for(Router.Net n : g.bestNets) if(!n.unreached.isEmpty()){
+            for(Body.Part t : n.unreached){
+                if(n.from.body.standing && t.body.standing){
+                    later.add(n.res + " " + Gen.where(n.from) + " to " + Gen.where(t));
+                    continue;
+                }
+                own++;
                 trouble.add(n.from.body);
-                for(Body.Part t : n.unreached) trouble.add(t.body);
+                trouble.add(t.body);
             }
+            if(n.drain && !n.drained){
+                own++;
+                trouble.add(n.from.body);
+            }
+        }
+        for(String u : g.unpoweredKept) if(freshAt.contains(u)){
+            own++;
+            for(Body b : fresh.keySet()) for(Body.Part p : b.parts) if(u.equals(p.block.name + "@" + p.x0 + "," + p.y0)) trouble.add(b);
+        }
+        if(!later.isEmpty()) System.out.println("  not laid now (between what stands): " + later);
+        int bad = g.verify(s, false);
+        System.out.println(String.format("  laid out; %d of the step's own wrong; %s", own, bad == 0 ? "clean by the game's rules" : bad + " things wrong by the game's rules" + (before > 0 ? " (" + before + " before it)" : "")));
+        if(own > 0 || bad > before){
+            //(what of the step is in it: left out, the rest laid out again)
             for(Body b : fresh.keySet()) if(trouble.contains(b)) drop.merge(fresh.get(b), 1, Integer::sum);
             if(drop.isEmpty()) g.verify(s, true);
             return false;
@@ -943,6 +1024,9 @@ public final class Grow{
                 i.parts.add(new Object[]{p.block.name, p.x0, p.y0, p.rot, p.recipe == null ? null : p.recipe.name, p.work, p.yield, p.block.configurable ? p.config : null});
                 whose.put(p, new int[]{i.id, k});
             }
+            for(int[] c : b.clearWorld) i.clear.add(c.clone());
+            i.lane.addAll(b.clearTiles);
+            i.exclusive = b.exclusive;
             ledger.insts.add(i);
         }
         int lid = ledger.nextId();
@@ -956,13 +1040,18 @@ public final class Grow{
             int[] from = whose.get(net.from);
             for(int k = 0; k < net.to.size(); k++){
                 int[] to = whose.get(net.to.get(k));
-                if(from == null || to == null) continue;
+                if(from == null || to == null || net.unreached.contains(net.to.get(k))) continue;
                 i.flows.add(new Object[]{net.res, from[0], from[1], to[0], to[1], k < net.flows.size() ? net.flows.get(k) : 0f});
             }
-            ledger.insts.add(i);
+            //(a line that came to nothing, left for a later step)
+            if(!i.pieces.isEmpty() || !i.flows.isEmpty()) ledger.insts.add(i);
         }
-        //(a line that joins another runs on into it)
+        //(a line that joins another runs on into it, laid now or standing)
         for(Router.Net net : g.bestNets) for(Piece q : net.joins.values()){
+            if(q.line != null){
+                ofNet.get(net.id).via.add(q.line.id);
+                continue;
+            }
             Inst joined = ofNet.get(q.net);
             if(joined != null) ofNet.get(net.id).via.add(joined.id);
         }
@@ -976,6 +1065,28 @@ public final class Grow{
         return true;
     }
 
+    /** What a line carries a second: its own flows, and what the lines that run on into it carry. */
+    static float load(Inst line, Map<Integer, List<Inst>> runInto, Set<Integer> seen){
+        if(!seen.add(line.id)) return 0f;
+        float f = 0f;
+        for(Object[] fl : line.flows) f += (Float)fl[5];
+        for(Inst m : runInto.getOrDefault(line.id, List.of())) f += load(m, runInto, seen);
+        return f;
+    }
+
+    /**
+     * What a line carries at most a second: its slowest carrier's (as measured, Carriers); a maker against its taker,
+     * no line between, hands it all it makes.
+     */
+    static float lineRate(Inst line, Gen g){
+        float r = Float.POSITIVE_INFINITY;
+        for(Object[] q : line.pieces){
+            Float c = g.carriers.rate.get(Vars.content.block((String)q[1]));
+            if(c != null) r = Math.min(r, c);
+        }
+        return r;
+    }
+
     final Map<String, Recipe> recipes = new HashMap<>();
     State state;
 
@@ -983,13 +1094,19 @@ public final class Grow{
     void release(State st){
         Set<Inst> back = new LinkedHashSet<>();
         for(Inst i : ledger.insts) if(!i.removed && !i.built && !st.begun.contains(i.id)) back.add(i);
-        //(not a line that a line kept runs on into, nor what it joins in turn)
+        //(not a line that a line kept runs on into, nor what it joins in turn; nor what a line kept carries from or to:
+        //the line is there for it)
         boolean more = true;
         while(more){
             more = false;
             for(Inst i : ledger.insts){
                 if(back.contains(i) || i.removed) continue;
-                for(int v : i.via){
+                Set<Integer> keep = new HashSet<>(i.via);
+                for(Object[] f : i.flows){
+                    keep.add((Integer)f[1]);
+                    keep.add((Integer)f[3]);
+                }
+                for(int v : keep){
                     Inst into = ledger.get(v);
                     if(into != null && back.remove(into)) more = true;
                 }
@@ -1037,8 +1154,11 @@ public final class Grow{
         }
     }
 
-    /** What the core unit is to build, thing by thing, block by block (centre and turn, as the game puts it). */
-    void orders(String file, int from){
+    /**
+     * What the core unit is to build, thing by thing, block by block (centre and turn, as the game puts it): what the
+     * step takes down, then all that is committed and not built yet, what was given before (and kept) first.
+     */
+    void orders(String file){
         StringBuilder s = new StringBuilder("# what to take down, then what to build next, in order\n");
         for(Inst i : removed){
             s.append("remove ").append(i.id).append(' ').append(i.kind).append(' ').append(i.unit == null ? "-" : i.unit.replace(' ', '|')).append('\n');
@@ -1049,7 +1169,7 @@ public final class Grow{
             for(Object[] q : i.pieces) s.append(String.format(Locale.ROOT, "block %s %d %d %d -%n", q[1], q[2], q[3], q[4]));
         }
         for(Inst i : ledger.insts){
-            if(i.id < from || i.removed) continue;
+            if(i.removed || i.built) continue;
             s.append("inst ").append(i.id).append(' ').append(i.kind).append(' ').append(i.unit == null ? "-" : i.unit.replace(' ', '|')).append('\n');
             for(Object[] p : i.parts){
                 Block bl = Vars.content.block((String)p[0]);
@@ -1088,24 +1208,35 @@ public final class Grow{
         if(Boolean.getBoolean("bp.debug")) grow.reach(st);
         Map<Unit, Integer> step = grow.next(st, spans, spanSeconds, think);
         System.out.println(String.format("step %d: %s; digging first %s (%.1f s)", grow.ledger.step, step, grow.digFirst, (System.nanoTime() - t0) / 1e9));
-        int from = grow.ledger.nextId();
         grow.takeDown();
         if(!grow.removed.isEmpty()) System.out.println("  taken down: " + grow.removed.stream().map(i -> i.unit == null ? i.kind + " " + i.id : i.unit).toList());
+        boolean wanted = !step.isEmpty(), laid = false;
         for(int round = 0; !step.isEmpty(); round++){
             grow.drop.clear();
             grow.whose.clear();
-            if(grow.layOut(dataDir, world, step, grow.ledger.step)) break;
+            if(grow.layOut(dataDir, world, step, grow.ledger.step)){
+                laid = true;
+                break;
+            }
             if(grow.drop.isEmpty() || round >= 3){
                 System.out.println("  NOT laid out clean: committed nothing");
                 break;
             }
             System.out.println("  left out: " + grow.drop.entrySet().stream().map(e -> e.getValue() + " " + e.getKey().key).toList());
-            for(Unit u : grow.drop.keySet()) if(u.site != null) grow.ledger.avoid.add(u.key);
+            //(a way up's place found not to be had is left for good, there being others; a place the final form has is
+            //tried again at a later step)
+            for(Unit u : grow.drop.keySet()) if(u.site != null && !u.required) grow.ledger.avoid.add(u.key);
             for(var e : grow.drop.entrySet()) step.merge(e.getKey(), -e.getValue(), Integer::sum);
             step.values().removeIf(v -> v <= 0);
         }
+        //(the step's taking down was for what it builds: with nothing of that laid, what stands stays)
+        if(wanted && !laid && !grow.removed.isEmpty()){
+            for(Inst i : grow.removed) i.removed = false;
+            System.out.println("  not taken down after all: " + grow.removed.size() + " things (nothing laid for them)");
+            grow.removed.clear();
+        }
         grow.ledger.write(ledgerFile);
-        grow.orders(ordersFile, from);
+        grow.orders(ordersFile);
         System.out.println(String.format("grow step %d done in %.1f s", grow.ledger.step, (System.nanoTime() - t0) / 1e9));
         System.exit(0);
     }

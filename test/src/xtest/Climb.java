@@ -52,6 +52,7 @@ public class Climb{
         String spans = args.length > 5 ? args[5] : "12", spanSeconds = args.length > 6 ? args[6] : "90", think = args.length > 7 ? args[7] : "60";
         Fi ledger = work.child("ledger.txt"), state = work.child("state.txt"), orders = work.child("orders.txt");
         ledger.delete();
+        work.child("shapes.txt").delete();
 
         Vars.logic.reset();
         SaveIO.load(map);
@@ -93,7 +94,9 @@ public class Climb{
             if(hand.idle() || now >= nextPlan){
                 nextPlan = now + span;
                 writeState(state, jobs, core, unit, hand, now);
-                jobs.removeIf(j -> !j.remove && !standing(j) && !begun(j));
+                //(what is not up yet comes again in the orders, as much of it as the planner keeps, with what is new;
+                //what is being taken down goes on)
+                jobs.removeIf(j -> !j.remove && !standing(j));
                 hand.keepOnly(jobs);
                 long t0 = System.nanoTime();
                 List<String> out = grow(args[0], map.path(), plan, ledger.path(), state.path(), orders.path(), spans, spanSeconds, think);
@@ -101,8 +104,8 @@ public class Climb{
                 thought += secs;
                 steps++;
                 List<Job> next = readOrders(orders);
-                //(what was given back to the plan, out; of what is new, what takes down first, then what joins power, then
-                //lines, then the rest: what makes what stands work goes up before what is new)
+                //(what takes down first, then what joins power, then lines, then the rest: what makes what stands work goes
+                //up before what is new)
                 next.sort(Comparator.comparingInt(j -> j.remove ? 0 : j.kind.equals("nodes") ? 1 : j.kind.equals("line") ? 2 : 3));
                 jobs.addAll(next);
                 hand.give(next, digPlan(orders));
@@ -307,6 +310,9 @@ public class Climb{
         void give(List<Job> jobs, Map<String, Float> dig){
             queue.addAll(jobs);
             digPlan = dig;
+            //(what was put by is tried again: what stood in its way may be gone)
+            skipped.clear();
+            building = null;
             waitUntil = jobs.isEmpty() ? (float)(Vars.state.tick / 60.0) + 30f : 0f;
         }
 
@@ -315,19 +321,27 @@ public class Climb{
             return Vars.state.tick / 60.0 >= waitUntil;
         }
 
+        /** Seconds spent digging each item (the flights to the core with it too), and how much of it came of that. */
+        final ObjectFloatMap<Item> digTime = new ObjectFloatMap<>();
+        final ObjectIntMap<Item> dugIn = new ObjectIntMap<>();
+
         float digRate(Item item){
-            //(MinerComp: an item each 50 + 15 ticks of digging at the unit's speed, with no scaling by hardness; the way to
-            //the core and back with each stack is left to the plan's slack)
-            return unit == null ? 5f : 60f * unit.type.mineSpeed / (50f + (unit.type.mineHardnessScaling ? item.hardness * 15f : 15f));
+            //(as it has gone, once a load of it has come in: what came of the digging, and what is in hand, over the time
+            //spent on it, the flights too; before, as MinerComp has it, an item each 50 + 15 (by hardness) ticks of
+            //digging at the unit's speed)
+            float t = digTime.get(item, 0f);
+            if(dugIn.get(item, 0) > 0 && t > 0f) return (dugIn.get(item, 0) + (unit != null && unit.item() == item ? unit.stack.amount : 0)) / t;
+            if(unit == null) return 5f;
+            return 60f * unit.type.mineSpeed * Vars.state.rules.unitMineSpeed(us) / (50f + (unit.type.mineHardnessScaling ? item.hardness * 15f : 15f));
         }
 
         @Override
         public void updateMovement(){
         }
 
-        /** The block being built now, and since when (a block that does not go up for a minute is put by). */
+        /** The block being built now, since when it last went up, how far it was then (one that does not go up for a minute is put by). */
         Object[] building;
-        float buildingSince;
+        float buildingSince, lastProgress;
 
         @Override
         public void updateUnit(){
@@ -386,6 +400,16 @@ public class Climb{
             }
             unit.mineTile = null;
             Block block = Vars.content.block((String)next[0]);
+            Tile at = Vars.world.tile((Integer)next[1], (Integer)next[2]);
+            boolean going = at != null && at.build instanceof ConstructBlock.ConstructBuild c0 && c0.current == block;
+            //(one the game would not let be built there now (what stands in its way): put by at once, tried again later)
+            if(!going && !Build.validPlace(block, us, (Integer)next[1], (Integer)next[2], (Integer)next[3], false, true)){
+                skipped.add(key(next));
+                System.out.println("    put by: " + next[0] + " at " + next[1] + "," + next[2] + " (cannot be built there now)");
+                unit.plans.clear();
+                building = null;
+                return;
+            }
             BuildPlan cur = unit.buildPlan();
             if(cur == null || cur.breaking || cur.x != (Integer)next[1] || cur.y != (Integer)next[2] || cur.block != block){
                 unit.plans.clear();
@@ -394,9 +418,14 @@ public class Climb{
             doing = "building " + (of.unit == null ? of.kind : of.unit) + " (" + next[0] + ")";
             moveTo(Vars.world.tile((Integer)next[1], (Integer)next[2]), Vars.buildingRange * 0.5f);
             float now = (float)(Vars.state.tick / 60.0);
+            float progress = at != null && at.build instanceof ConstructBlock.ConstructBuild c1 ? c1.progress : 0f;
             if(building != next){
                 building = next;
                 buildingSince = now;
+                lastProgress = progress;
+            }else if(progress > lastProgress){
+                buildingSince = now;
+                lastProgress = progress;
             }else if(now - buildingSince > 60f){
                 skipped.add(key(next));
                 System.out.println("    put by: " + next[0] + " at " + next[1] + "," + next[2] + " (no progress for a minute)");
@@ -443,14 +472,17 @@ public class Climb{
             if(unit.stack.amount <= 0 || !unit.within(core, Vars.mineTransferRange)) return;
             if(unit.mineTile != null && unit.stack.amount < unit.type.itemCapacity) return;
             int accepted = core.acceptStack(unit.item(), unit.stack.amount, unit);
-            if(accepted > 0) Call.transferItemTo(unit, unit.item(), accepted, unit.x, unit.y, core);
-            else unit.clearItem();
+            if(accepted > 0){
+                dugIn.increment(unit.item(), accepted);
+                Call.transferItemTo(unit, unit.item(), accepted, unit.x, unit.y, core);
+            }else unit.clearItem();
         }
 
         void dig(Item item, CoreBlock.CoreBuild core){
             if(item == null) return;
             Tile wall = wall(item, core);
             if(wall == null) return;
+            digTime.increment(item, 0f, Time.delta / 60f);
             boolean full = unit.stack.amount >= unit.type.itemCapacity || (unit.stack.amount > 0 && unit.item() != item);
             if(full){
                 unit.mineTile = null;
@@ -462,12 +494,15 @@ public class Climb{
         }
 
         Tile wall(Item item, Building core){
-            Tile known = walls.get(item);
-            if(known != null && known.wallDrop() == item) return known;
+            //(looked for once, found or not: walls of ore do not come and go)
+            if(walls.containsKey(item)){
+                Tile known = walls.get(item);
+                if(known == null || known.wallDrop() == item) return known;
+            }
             Tile best = null;
             float bestD = Float.MAX_VALUE;
-            for(Tile t : Vars.world.tiles){
-                if(t.wallDrop() != item || !unit.canMine(item)) continue;
+            if(unit.canMine(item)) for(Tile t : Vars.world.tiles){
+                if(t.wallDrop() != item) continue;
                 float d = core.dst(t.worldx(), t.worldy());
                 if(d < bestD){
                     bestD = d;

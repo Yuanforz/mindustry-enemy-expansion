@@ -98,6 +98,23 @@ public class GrowProbe{
             if(b.liquids == null || b.liquids.currentAmount() < 0.001f && !(b.block instanceof mindustry.world.blocks.production.Drill)) continue;
             System.out.println(String.format(Locale.ROOT, "    %s@%d,%d rot %d holds %s %.2f", b.block.name, b.tileX(), b.tileY(), b.rotation, b.liquids.current().name, b.liquids.currentAmount()));
         }
+        //(a close look at some: what each holds, whether it would work, what about it takes what it makes)
+        for(String at : System.getProperty("probe.at", "").split(";")){
+            if(at.isBlank()) continue;
+            String[] xy = at.split(",");
+            Building b = Vars.world.build(Integer.parseInt(xy[0].trim()), Integer.parseInt(xy[1].trim()));
+            if(b == null){
+                System.out.println("  at " + at + ": nothing");
+                continue;
+            }
+            StringBuilder about = new StringBuilder();
+            for(Building o : b.proximity){
+                about.append(o.block.name).append('@').append(o.tileX()).append(',').append(o.tileY());
+                if(b.items != null) for(Item item : Vars.content.items()) if(b.items.get(item) > 0) about.append(o.acceptItem(b, item) ? " takes " : " refuses ").append(item.name);
+                about.append("; ");
+            }
+            System.out.println(String.format(Locale.ROOT, "  at %s: %s rot %d efficiency %.2f shouldConsume %s enabled %s items %s liquids %s | about: %s", at, b.block.name, b.rotation, b.efficiency, b.shouldConsume(), b.enabled, b.items, b.liquids == null ? "-" : b.liquids.current().name + " " + b.liquids.currentAmount(), about));
+        }
         StringBuilder came = new StringBuilder();
         for(Item item : Vars.content.items()){
             int d = core.items.get(item) - before.get(item);

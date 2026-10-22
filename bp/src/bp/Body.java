@@ -121,6 +121,8 @@ public final class Body{
     public boolean given;
     /** Standing already, as laid out and checked before (a base grown): what is between two such is not asked again. */
     public boolean standing;
+    /** A line that stands (its pieces the parts): what it carries to whom, so that a new line may run on into it. */
+    public Router.Standing line;
     public int ox, oy, rot;
 
     public Body(int id, String label, boolean fixed){
@@ -140,6 +142,7 @@ public final class Body{
         f.outs = outs;
         f.role = q.role;
         f.fixed = true;
+        f.line = p.body.line;
         return f;
     }
 

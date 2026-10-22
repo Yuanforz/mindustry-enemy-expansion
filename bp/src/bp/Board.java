@@ -63,6 +63,8 @@ public final class Board{
         public Block block;
         /** A piece of a body's own line (a module's), standing: of no line being laid, never taken up. */
         public boolean fixed;
+        /** Of a line that stands already (a base grown): what it carries to whom, how much now and at most (else null). */
+        public Router.Standing line;
 
         public Piece(Kind kind, Block block, int x, int y, int rot, int net, String res){
             this.kind = kind;

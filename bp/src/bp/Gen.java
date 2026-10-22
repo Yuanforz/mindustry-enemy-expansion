@@ -251,8 +251,12 @@ public final class Gen{
 
     // ------------------------------------------------------------------ 4: who feeds whom
 
-    /** Of parts that stand already (a base grown), what each has to spare and what each still lacks, by thing. */
-    final Map<Body.Part, Map<String, Float>> spare = new HashMap<>(), lacks = new HashMap<>();
+    /**
+     * Of parts that stand already (a base grown), what each has to spare and what each still lacks, by thing; the most it
+     * hands any one taker now; and how many lines it has to the core, by thing.
+     */
+    final Map<Body.Part, Map<String, Float>> spare = new HashMap<>(), lacks = new HashMap<>(), fedMost = new HashMap<>();
+    final Map<Body.Part, Map<String, Integer>> coreLinks = new HashMap<>();
 
     /** What a maker gives a second; a source as much as lines from each of its sides carry. */
     float supply(Body.Part p, String res){
@@ -287,8 +291,12 @@ public final class Gen{
                 continue;
             }
             List<Body.Part> ms = g.makers, ts = g.takers;
-            //(the transportation problem: least rate times gap, each taker's need met, no maker past what it makes)
-            MPSolver lp = MPSolver.createSolver("GLOP");
+            //(the transportation problem: least rate times gap, each taker's need met, no maker past what it makes. A
+            //maker hands round to all about it that take (Building.dump), and the core takes all it is handed: a maker
+            //with a line to the core hands it as much as it hands any other line, and all it hands no other)
+            boolean anyCore = false;
+            for(Body.Part t : ts) if(Board.isCore(t)) anyCore = true;
+            MPSolver lp = MPSolver.createSolver(anyCore ? "SCIP" : "GLOP");
             MPVariable[][] f = new MPVariable[ms.size()][ts.size()];
             MPObjective obj = lp.objective();
             MPConstraint[] need = new MPConstraint[ts.size()];
@@ -300,14 +308,61 @@ public final class Gen{
                 need[j].setCoefficient(short_, 1);
                 obj.setCoefficient(short_, 1e4);
             }
+            double inf = MPSolver.infinity();
             for(int i = 0; i < ms.size(); i++){
-                MPConstraint cap = lp.makeConstraint(0, supply(ms.get(i), g.res));
+                Body.Part m = ms.get(i);
+                float sup = supply(m, g.res);
+                int links = coreLinks.getOrDefault(m, Map.of()).getOrDefault(g.res, 0);
+                MPConstraint cap = lp.makeConstraint(0, sup);
+                MPVariable core = null;
                 for(int j = 0; j < ts.size(); j++){
-                    if(ms.get(i) == ts.get(j)) continue;
-                    f[i][j] = lp.makeNumVar(0, MPSolver.infinity(), "f" + i + "_" + j);
+                    if(m == ts.get(j)) continue;
+                    boolean isCore = Board.isCore(ts.get(j));
+                    //(one with a line to the core hands it all that is left already: no second)
+                    if(isCore && links > 0) continue;
+                    f[i][j] = lp.makeNumVar(0, inf, "f" + i + "_" + j);
                     cap.setCoefficient(f[i][j], 1);
                     need[j].setCoefficient(f[i][j], 1);
-                    obj.setCoefficient(f[i][j], Placer.gap(ms.get(i), ts.get(j)) + 1);
+                    obj.setCoefficient(f[i][j], Placer.gap(m, ts.get(j)) + 1);
+                    if(isCore) core = f[i][j];
+                }
+                if(links > 0){
+                    //(its lines to the core take, each, as much as any other line of it, and between them all the rest;
+                    //the takers it hands to now keep what they get, a shortfall of theirs as dear as any)
+                    MPVariable level = lp.makeNumVar(0, inf, "level" + i);
+                    cap.setCoefficient(level, links);
+                    cap.setBounds(sup, sup);
+                    for(int j = 0; j < ts.size(); j++){
+                        if(f[i][j] == null) continue;
+                        MPConstraint c = lp.makeConstraint(-inf, 0);
+                        c.setCoefficient(f[i][j], 1);
+                        c.setCoefficient(level, -1);
+                    }
+                    float most = fedMost.getOrDefault(m, Map.of()).getOrDefault(g.res, 0f);
+                    if(most > 0f){
+                        MPVariable lack = lp.makeNumVar(0, most, "kept" + i);
+                        MPConstraint keep = lp.makeConstraint(most, inf);
+                        keep.setCoefficient(level, 1);
+                        keep.setCoefficient(lack, 1);
+                        obj.setCoefficient(lack, 1e4);
+                    }
+                }else if(core != null){
+                    //(given a line to the core now or not; given one, it takes as much as any other line of the maker, and
+                    //all the rest)
+                    MPVariable y = lp.makeIntVar(0, 1, "y" + i);
+                    MPConstraint on = lp.makeConstraint(-inf, 0);
+                    on.setCoefficient(core, 1);
+                    on.setCoefficient(y, -sup);
+                    MPConstraint all = lp.makeConstraint(0, inf);
+                    for(int j = 0; j < ts.size(); j++) if(f[i][j] != null) all.setCoefficient(f[i][j], 1);
+                    all.setCoefficient(y, -sup);
+                    for(int j = 0; j < ts.size(); j++){
+                        if(f[i][j] == null || f[i][j] == core) continue;
+                        MPConstraint c = lp.makeConstraint(-inf, sup);
+                        c.setCoefficient(f[i][j], 1);
+                        c.setCoefficient(core, -1);
+                        c.setCoefficient(y, sup);
+                    }
                 }
             }
             obj.setMinimization();
@@ -369,7 +424,8 @@ public final class Gen{
         //holds the liquid its puddles spread into)
         for(Body body : bodies) for(Body.Part p : body.parts){
             String liquid = Board.mustDrain(p);
-            if(liquid == null) continue;
+            //(what stands already was drained when it was laid)
+            if(liquid == null || body.standing) continue;
             Body.Part sink = null;
             for(Body o : bodies) for(Body.Part q : o.parts) if(q.block instanceof mindustry.world.blocks.sandbox.LiquidVoid && (sink == null || Placer.gap(p, q) < Placer.gap(p, sink))) sink = q;
             Router.Net n = new Router.Net(id++, liquid, 2, p);
@@ -468,8 +524,13 @@ public final class Gen{
     final Map<Body.Part, Float> supplyRate = new HashMap<>();
 
     /** The topology: the bodies placed, the lines laid, power; the best of the tries kept (bodies put back where it had them). */
-    /** Of the layout kept, the bodies that stand where they may not. */
+    /**
+     * Of the layout kept, the bodies that stand where they may not, the blocks without power (block@x0,y0), and of its
+     * lines the tiles two share and the leaks.
+     */
     Set<Body> misplacedKept = Set.of();
+    List<String> unpoweredKept = List.of();
+    int overusedKept, leaksKept;
 
     Spec layOut(long seed){
         long t0 = System.nanoTime();
@@ -523,6 +584,9 @@ public final class Gen{
                 bestNets = nets;
                 bestPower = power.added;
                 misplacedKept = misplaced;
+                unpoweredKept = powerMade() ? new ArrayList<>(power.unpowered) : List.of();
+                overusedKept = router.overused;
+                leaksKept = router.leaks;
                 bestAt.clear();
                 for(Body body : bodies) bestAt.put(body, new int[]{body.ox, body.oy, body.rot});
             }
@@ -616,7 +680,8 @@ public final class Gen{
                 mindustry.gen.Building c = Vars.world.build(n.from.ax(), n.from.ay());
                 if(c != null) got = Vars.content.item(n.res) != null ? check.traceItem(c, Vars.content.item(n.res)) : check.traceLiquid(c, Vars.content.liquid(n.res));
             }
-            for(Body.Part t : n.to) if(!got.contains(where(t))){
+            //(a taker no line was laid to is the router's to tell, not a line laid that goes wrong)
+            for(Body.Part t : n.to) if(!n.unreached.contains(t) && !got.contains(where(t))){
                 wrong++;
                 if(print) System.out.println("  NOT AS LAID: " + n.res + " from " + where(n.from) + " does not reach " + where(t) + " (it reaches " + got + ")");
             }

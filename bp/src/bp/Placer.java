@@ -68,6 +68,7 @@ public final class Placer{
 
     int[] cover;
     float[] crowd;
+    Body[] laneOf;
     /** Which part covers each tile as the bodies stand now (the last of them, where two do). */
     Body.Part[] partAt;
 
@@ -88,9 +89,15 @@ public final class Placer{
         Arrays.fill(partAt, null);
         double hard = 0, wire = 0, port = 0, crowding = 0, yield = 0;
         boolean[] lane = new boolean[w * h];
+        //(whose each lane is: a solid block on it is that body's trouble as much as the block's)
+        if(laneOf == null || laneOf.length != w * h) laneOf = new Body[w * h];
+        Arrays.fill(laneOf, null);
         //(the areas bodies keep clear: none of two exclusive bodies over one another)
         int[] zone = new int[w * h];
-        for(Body body : bodies) for(int i : body.clearTiles) lane[i] = true;
+        for(Body body : bodies) for(int i : body.clearTiles){
+            lane[i] = true;
+            laneOf[i] = body;
+        }
         for(Body body : bodies) for(int[] r : body.clearWorld){
             for(int y = r[1]; y <= r[3]; y++) for(int x = r[0]; x <= r[2]; x++){
                 if(!b.in(x, y)){
@@ -99,6 +106,7 @@ public final class Placer{
                 }
                 int i = b.idx(x, y);
                 lane[i] = true;
+                laneOf[i] = body;
                 if(body.exclusive && zone[i]++ > 0) hard += hb(1, 1, body, null);
             }
         }
@@ -110,7 +118,10 @@ public final class Placer{
                 continue;
             }
             yield += Math.max(0f, p.need - p.yields.get(k));
-            for(int t : p.lanes.get(k)) lane[t] = true;
+            for(int t : p.lanes.get(k)){
+                lane[t] = true;
+                laneOf[t] = e.getKey();
+            }
         }
         for(Body body : bodies) for(Body.Part p : body.parts){
             if(!body.fixed && !(p.block.size == 1 && p.block.buildVisibility == mindustry.world.meta.BuildVisibility.sandboxOnly ? b.floor(p.x0, p.y0) : b.canStand(p.block, p.x0, p.y0, p.rot))){
@@ -125,7 +136,7 @@ public final class Placer{
                 int i = b.idx(x, y);
                 if(cover[i]++ > 0) hard += hb(5, 1, body, partAt[i] == null ? null : partAt[i].body);
                 partAt[i] = p;
-                if(p.block.solid && (lane[i] || b.clear[i])) hard += hb(6, 1, body, null);
+                if(p.block.solid && (lane[i] || b.clear[i])) hard += hb(6, 1, body, laneOf[i]);
             }
         }
         //(the ground a body holds whole: no block of another body on it; where nothing stands, taken, so that no line
@@ -471,7 +482,7 @@ public final class Placer{
                     }
                 }
             }
-            body.put(bestP[0], bestP[1], bestP[2]);
+            if(bestP != null) body.put(bestP[0], bestP[1], bestP[2]);
         }
         refresh();
         cost = evaluate();

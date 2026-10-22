@@ -167,6 +167,7 @@ public final class Power{
     }
 
     public Power run(){
+        int lastOthers = Integer.MAX_VALUE;
         while(true){
             vs.clear();
             build();
@@ -184,17 +185,21 @@ public final class Power{
                 Set<Integer> others = new HashSet<>();
                 for(int i = 0; i < vs.size(); i++) if((makes(vs.get(i).block) || vs.get(i).needs) && find(i) != main) others.add(find(i));
                 if(others.isEmpty()) break;
-                if(!grow(Set.of(main), others)){
+                //(each path laid joins one more grid; if one did not, the nodes laid are not seen to join it: stop. So
+                //below, each path powers one more)
+                if(others.size() >= lastOthers || !grow(Set.of(main), others)){
                     for(int i = 0; i < vs.size(); i++) if(vs.get(i).needs && !rooted.contains(find(i))) unpowered.add(vs.get(i).block.name + "@" + vs.get(i).x0 + "," + vs.get(i).y0);
                     break;
                 }
+                lastOthers = others.size();
                 continue;
             }
             if(wanting.isEmpty()) break;
-            if(!grow(rooted, wanting)){
+            if(wanting.size() >= lastOthers || !grow(rooted, wanting)){
                 for(int i = 0; i < vs.size(); i++) if(vs.get(i).needs && !rooted.contains(find(i))) unpowered.add(vs.get(i).block.name + "@" + vs.get(i).x0 + "," + vs.get(i).y0);
                 break;
             }
+            lastOthers = wanting.size();
         }
         return this;
     }
