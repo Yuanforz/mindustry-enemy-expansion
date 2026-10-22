@@ -158,6 +158,7 @@ public class Climb{
                 }
                 System.out.println(String.format("  %s: %d of %d things given stand; %d of %d machines work (idle: %s); core %s (this minute: %s); %s", time(now), standing, jobs.size(), working, machines, idle, core.items, came.toString().trim(), hand.doing));
                 if((int)(now / 60f) % 5 == 0) System.out.println("    " + finalForm());
+                System.out.println(String.format(Locale.ROOT, "    core unit at %.0f,%.0f; digs %s; holds %s %d; plans %d, building %s, mining %s", unit.x / 8f, unit.y / 8f, unit.mineTile == null ? "-" : unit.mineTile.x + "," + unit.mineTile.y + " (" + unit.mineTile.wallDrop() + ")", unit.item() == null ? "-" : unit.item().name, unit.stack.amount, unit.plans.size, unit.activelyBuilding(), unit.mining()));
             }
         }
         int standing = 0;

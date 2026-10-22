@@ -694,6 +694,25 @@ public final class Router{
 
     /** The square the search keeps within (null: the whole map). */
     int[] box;
+    /** Whether each move is asked if it crosses the way that leads to it (else only the way found, at the end). */
+    boolean strict;
+
+    /** Whether a way found crosses itself: two of its pieces on a tile, or a bridge of its kind on the span of its own hop. */
+    boolean crossesItself(Net net, List<Piece> laid){
+        Set<Integer> tiles = new HashSet<>();
+        for(Piece q : laid) for(int t : tilesOf(q)) if(!tiles.add(t)) return true;
+        for(Piece q : net.pieces) for(int t : tilesOf(q)) if(tiles.contains(t)) return true;
+        for(int i = 0; i + 1 < laid.size(); i++){
+            Piece a = laid.get(i), c = laid.get(i + 1);
+            if(!(a.kind == Kind.bridgeIn || a.kind == Kind.lbridgeIn)) continue;
+            for(Piece q : laid){
+                if(q == a || q == c || !bridgeFamily(q, a)) continue;
+                boolean between = a.x == c.x ? q.x == a.x && (q.y - a.y) * (c.y - q.y) > 0 : q.y == a.y && (q.x - a.x) * (c.x - q.x) > 0;
+                if(between) return true;
+            }
+        }
+        return false;
+    }
 
     boolean layIn(Net net, Body.Part sink, int[] within){
         box = within;
@@ -794,11 +813,14 @@ public final class Router{
                     join = joinAt(net, sink, nx[0], nx[1], ps.get(ps.size() - 1));
                     if(join != null) goal = true;
                 }
-                //(not over the path itself)
-                boolean crosses = false;
-                for(Piece q : ps) if(onPath(st, b.idx(q.x, q.y))) crosses = true;
-                if(!goal && onPath(st, b.idx(nx[0], nx[1]))) crosses = true;
-                if(crosses) continue;
+                //(not over the path itself: asked of every move only when the cheapest way found crossed itself, which a
+                //way of least cost does not, a loop of it costing more than none)
+                if(strict){
+                    boolean crosses = false;
+                    for(Piece q : ps) if(onPath(st, b.idx(q.x, q.y))) crosses = true;
+                    if(!goal && onPath(st, b.idx(nx[0], nx[1]))) crosses = true;
+                    if(crosses) continue;
+                }
                 //(first what it costs without its leaks, a bound below: most moves end there, a better way to where they
                 //lead being known already)
                 float low = 0f;
@@ -858,6 +880,14 @@ public final class Router{
                 }
                 m = mv[st];
                 st = p;
+            }
+        }
+        if(!strict && crossesItself(net, laid)){
+            strict = true;
+            try{
+                return layBoxed(net, sink);
+            }finally{
+                strict = false;
             }
         }
         if(tapRef >= 0){
@@ -998,6 +1028,11 @@ public final class Router{
         return n;
     }
 
+    /** How many rounds with nothing better before the laying stops: the more lines fight, the longer they may take to part. */
+    int patience(){
+        return 10 + nets.size() / 4;
+    }
+
     /** Takers a line cannot reach at all (no way, whatever is shared): not sought again. */
     final Set<Long> walledOff = new HashSet<>();
 
@@ -1057,8 +1092,8 @@ public final class Router{
             if(nowBad < bestBad){
                 bestBad = nowBad;
                 since = rounds;
-            }else if(rounds - since >= 40) break;
-            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || rounds - since >= 40)) for(int i = 0; i < at.length; i++) if(at[i].size() > 1){
+            }else if(rounds - since >= patience()) break;
+            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || rounds - since >= patience())) for(int i = 0; i < at.length; i++) if(at[i].size() > 1){
                 StringBuilder who = new StringBuilder();
                 for(Piece o : at[i]) who.append(" ").append(o).append("/").append(o.res).append("#").append(o.net);
                 int x = i % b.w, y = i / b.w;
@@ -1071,7 +1106,7 @@ public final class Router{
                 }
                 System.out.println("  shared " + x + "," + y + " hist " + hist[i] + ":" + who + " | about:" + around);
             }
-            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || rounds - since >= 40)) for(Net net : nets) for(Piece q : net.pieces){
+            if(Boolean.getBoolean("bp.debug") && (rounds == maxRounds || rounds - since >= patience())) for(Net net : nets) for(Piece q : net.pieces){
                 int l = leaks(q, partner(net, q));
                 if(l == 0) continue;
                 StringBuilder why = new StringBuilder();

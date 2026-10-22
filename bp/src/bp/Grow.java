@@ -641,8 +641,16 @@ public final class Grow{
         if(status != MPSolver.ResultStatus.OPTIMAL && status != MPSolver.ResultStatus.FEASIBLE) return out;
         for(Unit u : units){
             int add = (int)Math.round(b.get(u)[1].solutionValue()), drop = (int)Math.round(d.get(u)[1].solutionValue());
+            //(to build some and take some down of one unit in a span is the same as the difference alone, for less)
+            if(add > 0 && drop > 0){
+                System.out.println("  (" + u.key + ": built " + add + " and taken down " + drop + " in one span: only the difference)");
+                int both = Math.min(add, drop);
+                add -= both;
+                drop -= both;
+            }
             if(add > 0) out.put(u, add);
             if(drop > 0) takeDown.put(u, drop);
+            if(Boolean.getBoolean("bp.debug") && (add > 0 || drop > 0)) System.out.println(String.format("    %s: had %d, built %d, taken down %d, then %d; works %.2f in span 1, %.2f in span 2", u.key, ledger.committed(u.key), add, drop, Math.round(n.get(u)[1].solutionValue()), a.get(u)[1].solutionValue(), T > 1 ? a.get(u)[2].solutionValue() : 0));
         }
         float end = 0f;
         StringBuilder later = new StringBuilder();
