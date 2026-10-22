@@ -29,6 +29,7 @@ import java.util.*;
  */
 public class Climb{
     static Team us;
+    static final ObjectIntMap<Item> lastStock = new ObjectIntMap<>();
 
     /** One thing to build: its id in the ledger, its blocks (name, x, y, turn, config or null). */
     static final class Job{
@@ -98,6 +99,9 @@ public class Climb{
                 thought += secs;
                 steps++;
                 List<Job> next = readOrders(orders);
+                //(what was given back to the plan, out; of what is new, what takes down first, then what joins power, then
+                //lines, then the rest: what makes what stands work goes up before what is new)
+                next.sort(Comparator.comparingInt(j -> j.remove ? 0 : j.kind.equals("nodes") ? 1 : j.kind.equals("line") ? 2 : 3));
                 jobs.addAll(next);
                 hand.give(next, digPlan(orders));
                 List<String> names = new ArrayList<>();
@@ -111,7 +115,33 @@ public class Climb{
                 nextTell = now + 60f;
                 int standing = 0;
                 for(Job j : jobs) if(standing(j)) standing++;
-                System.out.println(String.format("  %s: %d of %d things given stand; core %s; %s", time(now), standing, jobs.size(), core.items, hand.doing));
+                //(the machines that stand, and how many of them work; what came into the core this minute)
+                int machines = 0, working = 0;
+                Map<String, Integer> idle = new TreeMap<>();
+                for(Building b : us.data().buildings){
+                    //(what works by something: crafters, drills, generators that burn; not carriers, nodes, the core)
+                    if(b.block.consumers.length == 0 || b instanceof CoreBlock.CoreBuild || b.block.group == mindustry.world.meta.BlockGroup.transportation || b.block.group == mindustry.world.meta.BlockGroup.liquids || b.block.group == mindustry.world.meta.BlockGroup.power) continue;
+                    machines++;
+                    if(b.efficiency > 0.5f) working++;
+                    else idle.merge(b.block.name, 1, Integer::sum);
+                }
+                //(power: each grid with what it makes and needs; each generator's own efficiency)
+                Set<mindustry.world.blocks.power.PowerGraph> grids = new LinkedHashSet<>();
+                StringBuilder gens = new StringBuilder();
+                for(Building b : us.data().buildings){
+                    if(b.power != null && b.block.hasPower) grids.add(b.power.graph);
+                    if(b instanceof mindustry.world.blocks.power.PowerGenerator.GeneratorBuild gb) gens.append(String.format(Locale.ROOT, "%s@%d,%d:%.2f ", b.block.name, b.tileX(), b.tileY(), gb.productionEfficiency));
+                }
+                StringBuilder grid = new StringBuilder();
+                for(var gr : grids) if(gr.all.size > 1) grid.append(String.format(Locale.ROOT, "[%d blocks, makes %.1f needs %.1f, %.0f%%] ", gr.all.size, gr.getPowerProduced() * 60f, gr.getPowerNeeded() * 60f, gr.getSatisfaction() * 100f));
+                System.out.println("    power: " + grids.size() + " grids " + grid + "| generators " + gens);
+                StringBuilder came = new StringBuilder();
+                for(Item item : Vars.content.items()){
+                    int d = core.items.get(item) - lastStock.get(item, 0);
+                    if(d != 0) came.append(item.name).append(d > 0 ? "+" : "").append(d).append(' ');
+                    lastStock.put(item, core.items.get(item));
+                }
+                System.out.println(String.format("  %s: %d of %d things given stand; %d of %d machines work (idle: %s); core %s (this minute: %s); %s", time(now), standing, jobs.size(), working, machines, idle, core.items, came.toString().trim(), hand.doing));
             }
         }
         int standing = 0;
@@ -222,10 +252,7 @@ public class Climb{
         /** Keeps of what it was given only these (the rest given back to the plan). */
         void keepOnly(List<Job> jobs){
             queue.removeIf(j -> !jobs.contains(j));
-            if(job != null && !jobs.contains(job)){
-                job = null;
-                unit.plans.clear();
-            }
+            if(unit != null) unit.plans.clear();
         }
 
         void give(List<Job> jobs, Map<String, Float> dig){
@@ -235,7 +262,7 @@ public class Climb{
         }
 
         boolean idle(){
-            if(job != null || !queue.isEmpty()) return false;
+            if(!queue.isEmpty()) return false;
             return Vars.state.tick / 60.0 >= waitUntil;
         }
 
@@ -249,92 +276,112 @@ public class Climb{
         public void updateMovement(){
         }
 
+        /** The block being built now, and since when (a block that does not go up for a minute is put by). */
+        Object[] building;
+        float buildingSince;
+
         @Override
         public void updateUnit(){
             var core = unit.team.core();
             if(core == null) return;
             offload(core);
-            while(job == null && !queue.isEmpty()){
-                job = queue.poll();
-                if(standing(job)) job = null;
+            queue.removeIf(Climb::standing);
+            job = queue.isEmpty() ? null : queue.peek();
+            //what to take down, first
+            for(Job j : queue) if(j.remove){
+                List<Object[]> stand = new ArrayList<>();
+                for(Object[] b : j.blocks) if(built(b)) stand.add(b);
+                if(stand.isEmpty()) continue;
+                unit.mineTile = null;
+                if(unit.plans.isEmpty() || !unit.plans.first().breaking) {
+                    unit.plans.clear();
+                    for(Object[] b : stand) unit.addBuild(new BuildPlan((Integer)b[1], (Integer)b[2]));
+                }
+                BuildPlan first = unit.buildPlan();
+                doing = "taking down " + (j.unit == null ? j.kind : j.unit) + " (" + stand.size() + " blocks left)";
+                if(first != null) moveTo(Vars.world.tile(first.x, first.y), Vars.buildingRange * 0.5f);
+                return;
             }
-            if(job == null){
+            //the first block, in the order given, that goes up already or the core can pay for: what cannot be paid for
+            //waits, what can goes up meanwhile
+            Object[] next = null, wanting = null;
+            Job of = null;
+            for(Job j : queue){
+                for(Object[] b : j.blocks){
+                    if(built(b) || skipped.contains(key(b))) continue;
+                    Tile t = Vars.world.tile((Integer)b[1], (Integer)b[2]);
+                    boolean going = t != null && t.build instanceof ConstructBlock.ConstructBuild c && c.current != null && c.current.name.equals(b[0]);
+                    if(going || pays(b, core)){
+                        next = b;
+                        of = j;
+                        break;
+                    }
+                    if(wanting == null) wanting = b;
+                }
+                if(next != null) break;
+            }
+            if(next == null){
                 unit.plans.clear();
+                building = null;
+                Item short_ = wanting == null ? null : shortOf(wanting, core);
                 String pick = null;
                 float most = 0f;
                 for(var e : digPlan.entrySet()) if(e.getValue() > most){
                     most = e.getValue();
                     pick = e.getKey();
                 }
-                doing = "digging " + (pick == null ? "what is least" : pick) + " (nothing to build)";
-                dig(pick == null ? least(core) : Vars.content.item(pick), core);
-                return;
-            }
-            if(job.remove){
-                List<Object[]> stand = new ArrayList<>();
-                for(Object[] b : job.blocks) if(built(b)) stand.add(b);
-                if(stand.isEmpty()){
-                    job = null;
-                    return;
-                }
-                unit.mineTile = null;
-                if(unit.plans.isEmpty()) for(Object[] b : stand) unit.addBuild(new BuildPlan((Integer)b[1], (Integer)b[2]));
-                BuildPlan first = unit.buildPlan();
-                doing = "taking down " + (job.unit == null ? job.kind : job.unit) + " (" + stand.size() + " blocks left)";
-                if(first != null) moveTo(Vars.world.tile(first.x, first.y), Vars.buildingRange * 0.5f);
-                return;
-            }
-            //what of the thing is left, and whether the core can pay for it
-            List<Object[]> left = new ArrayList<>();
-            for(Object[] b : job.blocks) if(!built(b) && !skipped.contains(key(b))) left.add(b);
-            if(left.isEmpty()){
-                job = null;
-                stallSince = -1f;
-                return;
-            }
-            ObjectIntMap<Item> need = new ObjectIntMap<>();
-            for(Object[] b : left){
-                Tile t = Vars.world.tile((Integer)b[1], (Integer)b[2]);
-                if(t != null && t.build instanceof ConstructBlock.ConstructBuild) continue;
-                for(ItemStack st : Vars.content.block((String)b[0]).requirements) need.increment(st.item, st.amount);
-            }
-            Item short_ = null;
-            for(var e : need) if(core.items.get(e.key) < e.value){
-                short_ = e.key;
-                break;
-            }
-            if(short_ != null){
-                unit.plans.clear();
-                doing = "saving for " + (job.unit == null ? job.kind : job.unit) + " (short of " + short_.name + ")";
-                Item dig = unit.canMine(short_) && wall(short_, core) != null ? short_ : least(core);
+                Item dig = short_ != null && unit.canMine(short_) && wall(short_, core) != null ? short_ : pick != null ? Vars.content.item(pick) : least(core);
+                doing = wanting == null ? "digging " + (dig == null ? "nothing" : dig.name) + " (nothing to build)" : "digging " + (dig == null ? "nothing" : dig.name) + " (short of " + (short_ == null ? "?" : short_.name) + " for " + wanting[0] + ")";
                 dig(dig, core);
                 return;
             }
             unit.mineTile = null;
-            //builds: every block left planned, the unit within reach of the first
-            if(unit.plans.isEmpty()) for(Object[] b : left){
-                Block block = Vars.content.block((String)b[0]);
-                BuildPlan plan = new BuildPlan((Integer)b[1], (Integer)b[2], (Integer)b[3], block, b[4] == null ? null : bp.Scratch.configOf((String)b[4]));
-                unit.addBuild(plan);
+            Block block = Vars.content.block((String)next[0]);
+            BuildPlan cur = unit.buildPlan();
+            if(cur == null || cur.breaking || cur.x != (Integer)next[1] || cur.y != (Integer)next[2] || cur.block != block){
+                unit.plans.clear();
+                unit.addBuild(new BuildPlan((Integer)next[1], (Integer)next[2], (Integer)next[3], block, next[4] == null ? null : bp.Scratch.configOf((String)next[4])));
             }
-            BuildPlan first = unit.buildPlan();
-            doing = "building " + (job.unit == null ? job.kind : job.unit) + " (" + left.size() + " blocks left)";
-            if(first != null) moveTo(Vars.world.tile(first.x, first.y), Vars.buildingRange * 0.5f);
-            //(a block that does not go up for a minute is put by)
+            doing = "building " + (of.unit == null ? of.kind : of.unit) + " (" + next[0] + ")";
+            moveTo(Vars.world.tile((Integer)next[1], (Integer)next[2]), Vars.buildingRange * 0.5f);
             float now = (float)(Vars.state.tick / 60.0);
-            if(left.size() != lastLeft){
-                lastLeft = left.size();
-                stallSince = now;
-            }else if(stallSince >= 0f && now - stallSince > 60f && first != null){
-                skipped.add(first.block.name + "@" + first.x + "," + first.y);
-                System.out.println("    put by: " + first.block.name + " at " + first.x + "," + first.y + " (no progress for a minute)");
-                unit.plans.removeFirst();
-                stallSince = now;
+            if(building != next){
+                building = next;
+                buildingSince = now;
+            }else if(now - buildingSince > 60f){
+                skipped.add(key(next));
+                System.out.println("    put by: " + next[0] + " at " + next[1] + "," + next[2] + " (no progress for a minute)");
+                unit.plans.clear();
+                building = null;
             }
+        }
+
+        /** Whether the core can pay for a block now. */
+        static boolean pays(Object[] b, CoreBlock.CoreBuild core){
+            for(ItemStack st : Vars.content.block((String)b[0]).requirements) if(core.items.get(st.item) < st.amount) return false;
+            return true;
+        }
+
+        static Item shortOf(Object[] b, CoreBlock.CoreBuild core){
+            for(ItemStack st : Vars.content.block((String)b[0]).requirements) if(core.items.get(st.item) < st.amount) return st.item;
+            return null;
         }
 
         static String key(Object[] b){
             return b[0] + "@" + b[1] + "," + b[2];
+        }
+
+        /** The first item the core is short of for what of a thing is left to build (null: it can pay for all of it). */
+        Item short_(Job j, CoreBlock.CoreBuild core){
+            ObjectIntMap<Item> need = new ObjectIntMap<>();
+            for(Object[] b : j.blocks){
+                if(built(b) || skipped.contains(key(b))) continue;
+                Tile t = Vars.world.tile((Integer)b[1], (Integer)b[2]);
+                if(t != null && t.build instanceof ConstructBlock.ConstructBuild) continue;
+                for(ItemStack st : Vars.content.block((String)b[0]).requirements) need.increment(st.item, st.amount);
+            }
+            for(var e : need) if(core.items.get(e.key) < e.value) return e.key;
+            return null;
         }
 
         Item least(CoreBlock.CoreBuild core){

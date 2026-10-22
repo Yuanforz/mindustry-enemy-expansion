@@ -175,6 +175,21 @@ public final class Power{
             for(int i = 0; i < vs.size(); i++) if(makes(vs.get(i).block)) rooted.add(find(i));
             Set<Integer> wanting = new HashSet<>();
             for(int i = 0; i < vs.size(); i++) if(vs.get(i).needs && !rooted.contains(find(i))) wanting.add(find(i));
+            //(where power is not to be had anywhere at will, all of it one grid: what is made shared by all that use it,
+            //as the plan counts it; the grid that makes most grown to every other that makes or uses power)
+            if(!free && !rooted.isEmpty()){
+                Map<Integer, Integer> makers = new HashMap<>();
+                for(int i = 0; i < vs.size(); i++) if(makes(vs.get(i).block)) makers.merge(find(i), 1, Integer::sum);
+                int main = Collections.max(makers.entrySet(), Map.Entry.comparingByValue()).getKey();
+                Set<Integer> others = new HashSet<>();
+                for(int i = 0; i < vs.size(); i++) if((makes(vs.get(i).block) || vs.get(i).needs) && find(i) != main) others.add(find(i));
+                if(others.isEmpty()) break;
+                if(!grow(Set.of(main), others)){
+                    for(int i = 0; i < vs.size(); i++) if(vs.get(i).needs && !rooted.contains(find(i))) unpowered.add(vs.get(i).block.name + "@" + vs.get(i).x0 + "," + vs.get(i).y0);
+                    break;
+                }
+                continue;
+            }
             if(wanting.isEmpty()) break;
             if(!grow(rooted, wanting)){
                 for(int i = 0; i < vs.size(); i++) if(vs.get(i).needs && !rooted.contains(find(i))) unpowered.add(vs.get(i).block.name + "@" + vs.get(i).x0 + "," + vs.get(i).y0);
