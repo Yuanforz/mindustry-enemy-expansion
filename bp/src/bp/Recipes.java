@@ -178,6 +178,42 @@ public final class Recipes{
             out.add(r);
             return;
         }
+        if(b instanceof mindustry.world.blocks.payloads.Constructor c){
+            //a constructor: a block of those it may make, from its cost, in its build time over the constructor's build
+            //speed (BlockProducer.updateTile), handed out as a payload by its name
+            for(Block made : Vars.content.blocks()){
+                if(!made.isOnPlanet(Planets.erekir) || !c.canProduce(made) || made.requirements.length == 0) continue;
+                float seconds = made.buildTime / c.buildSpeed / 60f;
+                Recipe r = new Recipe(b.name + ":" + made.name, b, Recipe.Kind.crafter, Recipe.Ground.none, null);
+                consumers(b, r, 0f, false);
+                for(ItemStack st : made.requirements) r.in.merge(st.item.name, st.amount / seconds, Float::sum);
+                r.out.put(made.name, 1f / seconds);
+                out.add(r);
+            }
+            return;
+        }
+        if(b instanceof UnitAssembler a){
+            //an assembler: each plan, from the payloads it asks (units and blocks by name) in its time; a plan past the
+            //first wants modules of each tier up to its own standing against its area (UnitAssembler.checkTier), counted
+            //as parts of it, their power with it
+            Block module = null;
+            for(Block m : Vars.content.blocks()) if(m instanceof UnitAssemblerModule && m.isOnPlanet(Planets.erekir)) module = m;
+            for(int i = 0; i < a.plans.size; i++){
+                var plan = a.plans.get(i);
+                if(i > 0 && module == null) continue;
+                Recipe r = new Recipe(b.name + ":" + plan.unit.name, b, Recipe.Kind.units, Recipe.Ground.none, null);
+                consumers(b, r, 0f, false);
+                float seconds = plan.time / 60f;
+                for(var st : plan.requirements) r.in.merge(st.item.name, st.amount / seconds, Float::sum);
+                if(i > 0){
+                    r.parts.put(module, i);
+                    for(Consume cm : module.consumers) if(cm instanceof ConsumePower cp) r.fixedPowerUse += perSecond(cp.usage) * i;
+                }
+                r.out.put(plan.unit.name, 1f / seconds);
+                out.add(r);
+            }
+            return;
+        }
         if(b instanceof UnitFactory f){
             for(var plan : f.plans){
                 Recipe r = new Recipe(b.name + ":" + plan.unit.name, b, Recipe.Kind.units, Recipe.Ground.none, null);
