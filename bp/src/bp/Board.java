@@ -237,9 +237,22 @@ public final class Board{
         return true;
     }
 
+    /**
+     * Whether a part takes a thing it is not there for: the core takes every item, the goals are what it is for; a void
+     * every item or liquid, the one its port is for being its own.
+     */
+    public boolean swallows(Body.Part p, String res){
+        boolean item = Vars.content.item(res) != null, liquid = Vars.content.liquid(res) != null;
+        if(isCore(p)) return item && !goals.contains(res);
+        if(p.block instanceof ItemVoid) return item && !res.equals(p.config);
+        if(p.block instanceof LiquidVoid) return liquid && !res.equals(p.config);
+        return false;
+    }
+
     /** Whether a part takes this (item or liquid) from a neighbour. */
     public boolean partTakes(Body.Part p, String res){
         if(isCore(p)) return Vars.content.item(res) != null;
+        if(p.block instanceof ItemVoid) return Vars.content.item(res) != null;
         if(p.block instanceof LiquidVoid) return Vars.content.liquid(res) != null;
         if(p.recipe == null) return false;
         return p.recipe.in.containsKey(res) || p.recipe.fixedIn.containsKey(res);

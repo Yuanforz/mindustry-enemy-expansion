@@ -59,6 +59,8 @@ public final class Gen{
             if(Vars.content.block(p.block()) instanceof mindustry.world.blocks.sandbox.PowerSource) bal.sources.add("power");
         }
         if(prob.freePower) bal.sources.add("power");
+        //(a module's input ports: what they give, without limit)
+        for(Problem.Port port : prob.ports) if(port.in()) bal.sources.add(port.kind().equals("power") ? "power" : port.res());
         for(Recipe r : Recipes.all()) if(r.kind != Recipe.Kind.source && !r.name.equals("heat-source")) bal.recipes.add(r);
         bal.expandWildcards();
         balance = bal.solve();
@@ -76,6 +78,8 @@ public final class Gen{
             bodies.add(body);
             if(Board.isCore(body.main())) core = body.main();
         }
+        ports(id);
+        id = bodies.size() + 1000;
         for(Object[] m : balance.machines){
             Recipe r = (Recipe)m[0];
             int count = (Integer)m[1];
@@ -119,6 +123,51 @@ public final class Gen{
         }
     }
 
+    /** What each output port of a module takes a second. */
+    final Map<Body.Part, Float> portRate = new HashMap<>();
+
+    /**
+     * A module's ports: each a block of the sandbox on the module's edge, free to stand anywhere along it (the placing
+     * chooses): an input a source of what it gives, an output a void of what it takes (so that the module runs alone in
+     * the engine), power a power source. With "out spare", each thing the balance has to spare gets an output port too.
+     */
+    void ports(int id){
+        if(prob.moduleW <= 0) return;
+        List<Problem.Port> all = new ArrayList<>(prob.ports);
+        if(prob.spare) for(var e : balance.spare.entrySet()){
+            String k = e.getKey();
+            boolean taken = false;
+            for(Problem.Port p : prob.ports) if(p.res().equals(k)) taken = true;
+            if(taken || k.equals("power") || e.getValue() <= 1e-3f) continue;
+            all.add(new Problem.Port(false, Vars.content.liquid(k) != null ? "liquid" : "item", k, e.getValue()));
+        }
+        int w = prob.moduleW, h = prob.moduleH;
+        for(Problem.Port p : all){
+            boolean liquid = p.kind().equals("liquid"), power = p.kind().equals("power");
+            Block bl = power ? mindustry.content.Blocks.powerSource : p.in() ? (liquid ? mindustry.content.Blocks.liquidSource : mindustry.content.Blocks.itemSource) : (liquid ? mindustry.content.Blocks.liquidVoid : mindustry.content.Blocks.itemVoid);
+            Body body = new Body(id++, (p.in() ? "in " : "out ") + p.res(), false);
+            Body.Part part = body.add(bl, 0, 0, 0, null, 1f, power ? null : p.res());
+            if(!p.in()) portRate.put(part, p.rate() > 0 ? balance.delivered.getOrDefault(p.res(), p.rate()) : p.rate());
+            Placer.Places places = new Placer.Places();
+            //(its edge: the tiles a block can stand on with a neighbour that is off the module or no ground to build on;
+            //the game keeps the outermost tiles of a world unbuildable)
+            for(int x = 0; x < w; x++) for(int y = 0; y < h; y++){
+                if(!board.floor(x, y)) continue;
+                boolean edge = false;
+                for(int d = 0; d < 4; d++) if(!board.floor(x + Geo.dx(d), y + Geo.dy(d))) edge = true;
+                if(!edge) continue;
+                places.at.add(new int[]{x, y, 0});
+                places.yields.add(0f);
+                places.lanes.add(new int[0]);
+            }
+            body.put(places.at.get(0)[0], places.at.get(0)[1], 0);
+            portPlaces.put(body, places);
+            bodies.add(body);
+        }
+    }
+
+    final Map<Body, Placer.Places> portPlaces = new HashMap<>();
+
     /** Heaters against a machine that needs heat, of the kinds the balance chose for it. */
     void heat(Body body, Recipe r){
         List<Recipe> heaters = new ArrayList<>();
@@ -160,7 +209,8 @@ public final class Gen{
             for(Body body : bodies) for(Body.Part p : body.parts){
                 if(p.makes(k) > 1e-6f || k.equals(p.config) && (p.block instanceof mindustry.world.blocks.sandbox.ItemSource || p.block instanceof mindustry.world.blocks.sandbox.LiquidSource)) g.makers.add(p);
                 if(p.takes(k) > 1e-6f || Board.isCore(p) && item && prob.goals.containsKey(k)) g.takers.add(p);
-                if(p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid && liquid && drained(k)) g.takers.add(p);
+                if(p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid && liquid && drained(k) && p.config == null) g.takers.add(p);
+                if(portRate.containsKey(p) && k.equals(p.config)) g.takers.add(p);
             }
             if(g.payload) for(Body.Part t : g.takers) g.buffer.put(t, Math.max(0, (int)batch(t, k) - 1));
             if(!g.makers.isEmpty() && !g.takers.isEmpty()) groups.add(g);
@@ -186,6 +236,7 @@ public final class Gen{
     }
 
     float demand(Body.Part p, String res){
+        if(portRate.containsKey(p)) return portRate.get(p);
         if(Board.isCore(p)) return balance.delivered.getOrDefault(res, prob.goals.getOrDefault(res, 0f));
         return p.takes(res);
     }
@@ -367,7 +418,7 @@ public final class Gen{
         s.rows.addAll(prob.ground.rows);
         s.seconds = prob.seconds;
         s.places.addAll(prob.fixed);
-        for(Body body : bodies) if(!body.fixed) for(Body.Part p : body.parts) s.places.add(new Spec.Place(p.block.name, p.ax(), p.ay(), p.rot, p.config));
+        for(Body body : bodies) if(!body.fixed) for(Body.Part p : body.parts) s.places.add(new Spec.Place(p.block.name, p.ax(), p.ay(), p.rot, p.block instanceof mindustry.world.blocks.sandbox.ItemVoid || p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid ? null : p.config));
         for(Piece q : router.all()) s.places.add(new Spec.Place(q.block.name, q.x, q.y, q.rot, null));
         if(power != null) for(Piece q : power.added) s.places.add(new Spec.Place(q.block.name, q.x, q.y, q.rot, null));
         return s;
@@ -380,6 +431,7 @@ public final class Gen{
         bodies();
         groups();
         Placer placer = new Placer(board, bodies, groups, seed);
+        for(var e : portPlaces.entrySet()) placer.restrict(e.getKey(), e.getValue());
         Spec best = null;
         int bestBad = Integer.MAX_VALUE;
         Map<Body, int[]> bestAt = new HashMap<>();

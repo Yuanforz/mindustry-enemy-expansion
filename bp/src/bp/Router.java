@@ -176,7 +176,7 @@ public final class Router{
                     List<String> given = q.itemCarrier() ? outs(p)[4] : q.liquidCarrier() ? outs(p)[(dir + 2) % 4] : List.of();
                     for(String y : given) if(!y.equals(q.res)) c++;
                 }
-                if(has(Board.handsDirs(q), dir) && (q.outs & (1 << dir)) == 0 && q.itemCarrier() && Board.isCore(p) && !b.goals.contains(q.res)) c++;
+                if(has(Board.handsDirs(q), dir) && (q.outs & (1 << dir)) == 0 && (q.itemCarrier() || q.liquidCarrier()) && b.swallows(p, q.res)) c++;
             }
             for(Piece o : at[n]){
                 if(o.net == q.net || !family(o, q)) continue;

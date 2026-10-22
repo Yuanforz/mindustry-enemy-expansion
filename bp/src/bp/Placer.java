@@ -108,7 +108,7 @@ public final class Placer{
             for(int t : p.lanes.get(k)) lane[t] = true;
         }
         for(Body body : bodies) for(Body.Part p : body.parts){
-            if(!body.fixed && !b.canStand(p.block, p.x0, p.y0, p.rot)) hard += 1;
+            if(!body.fixed && !(p.block.size == 1 && p.block.buildVisibility == mindustry.world.meta.BuildVisibility.sandboxOnly ? b.floor(p.x0, p.y0) : b.canStand(p.block, p.x0, p.y0, p.rot))) hard += 1;
             for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++){
                 if(!b.in(x, y)){
                     hard += 1;
@@ -186,7 +186,9 @@ public final class Placer{
             for(int[] t : p.around()){
                 if(!b.in(t[0], t[1])) continue;
                 Body.Part o = b.partAt[b.idx(t[0], t[1])];
-                if(o != null && Board.isCore(o)) for(String y : Board.itemsOut(p)) if(!b.goals.contains(y)) hard += 1;
+                if(o == null) continue;
+                for(String y : Board.itemsOut(p)) if(b.swallows(o, y)) hard += 1;
+                for(String y : Board.liquidsOut(p, t[2])) if(b.swallows(o, y)) hard += 1;
             }
         }
         port += wants.size() - match(wants, wantPart, cover);

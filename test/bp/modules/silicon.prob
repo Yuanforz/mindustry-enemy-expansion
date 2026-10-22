@@ -1,0 +1,7 @@
+# A silicon module: sand, graphite and power in at its edge, silicon out.
+module 16 12
+in item sand
+in item graphite
+in power
+out item silicon 4
+seconds 120
