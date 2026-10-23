@@ -696,15 +696,22 @@ public final class Grow{
         m.solver.setTimeLimit((long)(think * 1000));
         //(GLOP's last check of a solution at the precision of the model's own numbers: its rates and stocks span seven
         //orders of magnitude, the reduced costs come out within a millionth or so of what is exact)
-        if(m.solverName.equals("GLOP")) m.solver.setSolverSpecificParametersAsString("solution_feasibility_tolerance: " + System.getProperty("bp.glopTolerance", "1e-5"));
+        //(when it cannot vouch for a solution at that precision (IMPRECISE, which the binding calls ABNORMAL), asked again
+        //at a tenth of it, and again)
+        double tol = Double.parseDouble(System.getProperty("bp.glopTolerance", "1e-5"));
         if(Boolean.getBoolean("bp.solverLog")) m.solver.enableOutput();
         long t0 = System.nanoTime();
-        try{
-            m.status = m.solver.solve();
-        }catch(IllegalArgumentException e){
-            //(a status the binding does not know, as HiGHS may give)
-            m.status = MPSolver.ResultStatus.ABNORMAL;
-            System.out.println("  (the solver ended with a status not known: " + e.getMessage() + ")");
+        for(int k = 0; k < 3; k++, tol *= 10){
+            if(m.solverName.equals("GLOP")) m.solver.setSolverSpecificParametersAsString("solution_feasibility_tolerance: " + tol);
+            try{
+                m.status = m.solver.solve();
+            }catch(IllegalArgumentException e){
+                //(a status the binding does not know, as HiGHS may give)
+                m.status = MPSolver.ResultStatus.ABNORMAL;
+                System.out.println("  (the solver ended with a status not known: " + e.getMessage() + ")");
+            }
+            if(m.status != MPSolver.ResultStatus.ABNORMAL || !m.solverName.equals("GLOP")) break;
+            System.out.println(String.format(Locale.ROOT, "  (the plan imprecise at %.0e: asked again at %.0e)", tol, tol * 10));
         }
         m.seconds = (System.nanoTime() - t0) / 1e9;
     }
