@@ -1132,20 +1132,28 @@ public final class Grow{
             trouble.add(b);
         }
         List<String> later = new ArrayList<>();
+        //(a taker of the step's that its line does not reach cannot work: the step's own. A maker of the step's whose
+        //line does not reach one that stands already: that one is short as it was before, left for later, the maker
+        //kept for those it does reach; one that reaches none at all, the step's own)
+        Map<Body, Integer> reaches = new HashMap<>();
         for(Router.Net n : g.bestNets){
+            if(!n.from.body.standing) reaches.merge(n.from.body, n.to.size() - n.unreached.size(), Integer::sum);
             for(Body.Part t : n.unreached){
-                if(n.from.body.standing && t.body.standing){
+                if(t.body.standing){
                     later.add(n.res + " " + Gen.where(n.from) + " to " + Gen.where(t));
                     continue;
                 }
                 own++;
-                trouble.add(n.from.body);
                 trouble.add(t.body);
             }
             if(n.drain && !n.drained){
                 own++;
                 trouble.add(n.from.body);
             }
+        }
+        for(var e : reaches.entrySet()) if(e.getValue() == 0){
+            own++;
+            trouble.add(e.getKey());
         }
         for(String u : g.unpoweredKept) if(freshAt.contains(u)){
             own++;
