@@ -29,6 +29,11 @@ public final class Router{
         public final Set<Body.Part> unreached = new LinkedHashSet<>();
         /** Takers reached by joining another line of the same thing to the same taker: the piece joined, by taker. */
         public final Map<Body.Part, Piece> joins = new HashMap<>();
+        /**
+         * Pieces of lines that stand, of its maker and its thing, it branches off: each turned to a router, a side of it
+         * opened toward this line ({piece, side}).
+         */
+        public final List<Object[]> taps = new ArrayList<>();
         /** A drain: a line of conduits to an empty tile it leaks onto (Building.moveLiquidForward), no taker. */
         public boolean drain;
         /** Payloads the line must hold on its way (each payload conveyor holds one): for a taker that takes a batch at once. */
@@ -63,6 +68,9 @@ public final class Router{
         public final String res;
         public final List<Body.Part> to = new ArrayList<>();
         public float load, cap;
+        /** Its maker (null: not known); whether it carries its maker's alone (no line runs on into it). */
+        public Body.Part from;
+        public boolean pure;
 
         public Standing(int id, String res){
             this.id = id;
@@ -103,9 +111,20 @@ public final class Router{
     boolean same(Piece a, Piece c){
         if(a.itemCarrier() && c.itemCarrier() && coreBound(a) && coreBound(c)) return true;
         if(!a.res.equals(c.res)) return false;
+        //(lines of one maker and one thing, each carrying its alone: what one hands the other is the maker's all the same)
+        Body.Part ma = makerOf(a), mc = makerOf(c);
+        if(ma != null && ma == mc) return true;
         if(a.line == null && c.line == null) return true;
         List<Body.Part> ta = takers(a), tc = takers(c);
         return ta != null && tc != null && ta.size() == tc.size() && ta.containsAll(tc);
+    }
+
+    /** The maker a piece's line carries from alone (null: not one alone, or not known). */
+    Body.Part makerOf(Piece p){
+        if(p.line != null) return p.line.pure ? p.line.from : null;
+        if(p.fixed) return null;
+        Net n = byId.get(p.net);
+        return n == null ? null : n.from;
     }
 
     List<Body.Part> takers(Piece p){
@@ -125,6 +144,8 @@ public final class Router{
      * did as well as negotiation or better, in less time (PLAN §32).
      */
     static final boolean NAIVE = Boolean.parseBoolean(System.getProperty("bp.naive", "true"));
+    /** Whether a line may branch off a line that stands, of its maker and its thing (bp.taps). */
+    static final boolean TAPS = Boolean.parseBoolean(System.getProperty("bp.taps", "true"));
     float pf = NAIVE ? 1e4f : 0.5f;
     /** How far a bridge reaches, of the bridges the lines use (DirectionBridge.range): of items, of liquids. */
     int range, lrange;
@@ -156,6 +177,7 @@ public final class Router{
             if(p == null || !seen.add(p)) continue;
             if(p.piece != null){
                 Piece f = Body.fixed(p);
+                partOfPiece.put(f, p);
                 at[b.idx(f.x, f.y)].add(f);
                 if(f.kind == Kind.bridgeIn || f.kind == Kind.bridgeOut) itemBridges[b.idx(f.x, f.y)]++;
                 if(f.kind == Kind.lbridgeIn || f.kind == Kind.lbridgeOut) liquidBridges[b.idx(f.x, f.y)]++;
@@ -368,7 +390,7 @@ public final class Router{
     float price(Piece q, Piece partner){
         int i = b.idx(q.x, q.y);
         if(hard && (!at[i].isEmpty() || leaks(q, partner) > 0)) return Float.POSITIVE_INFINITY;
-        return cost(q.kind) + hist[i] + pf * (at[i].size() + leaks(q, partner));
+        return cost(q.kind) + hist[i] + pf * (at[i].size() + leaks(q, partner)) + (b.price != null ? b.price[i] : 0f);
     }
 
     int gap(int x, int y, Body.Part p){
@@ -907,6 +929,44 @@ public final class Router{
                 push(open, state(b.idx(nx, ny), side, 1), tap, -2 - (pi * 4 + side), 0, gap(nx, ny, sink) * hmin);
             }
         }
+        //(and the pieces of lines that stand from its maker, of its thing alone, turned to routers: their sides)
+        List<Object[]> stTaps = new ArrayList<>();
+        if(TAPS && (net.cls == 0 || net.cls == 2) && sink != null) for(Piece f : standingOf(net.from)){
+            if(!f.res.equals(net.res) || f.block == null) continue;
+            //(what it carries already and this line's besides, within what its slowest carrier carries)
+            if(f.line.load + flowTo(net, sink) > f.line.cap + 1e-4f) continue;
+            Kind tapKind = net.cls == 0 ? Kind.router : Kind.lrouter;
+            boolean router = f.kind == tapKind;
+            boolean duct = net.cls == 0 && (f.kind == Kind.duct || f.kind == Kind.armored) && f.from >= 0;
+            if(!router && !duct && !(net.cls == 2 && f.kind == Kind.conduit && f.from == f.rot && straightAfter(f))) continue;
+            if(!router && Float.isInfinite(cost(tapKind))) continue;
+            int rrot = duct ? f.from : f.rot;
+            int[] ways = net.cls == 0 ? new int[]{rrot, (rrot + 1) % 4, (rrot + 3) % 4} : new int[]{(f.rot + 1) % 4, (f.rot + 3) % 4};
+            for(int side : ways){
+                if((f.outs & (1 << side)) != 0) continue;
+                int nx = f.x + Geo.dx(side), ny = f.y + Geo.dy(side);
+                Piece r = new Piece(tapKind, blockOf(tapKind), f.x, f.y, rrot, f.net, f.res);
+                r.from = f.from;
+                r.outs = f.outs | (1 << side);
+                r.fixed = true;
+                r.line = f.line;
+                int tapLeaks = leaks(r, null);
+                if(hard && tapLeaks > 0) continue;
+                float tap = (router ? 0f : cost(tapKind) - cost(f.kind)) + pf * tapLeaks;
+                int code = (net.pieces.size() + stTaps.size()) * 4 + side;
+                stTaps.add(new Object[]{f, rrot});
+                if(b.in(nx, ny) && inPart(nx, ny, sink)){
+                    if(tap < bestGoal){
+                        bestGoal = tap;
+                        goalTap = code;
+                        goalSt = -1;
+                    }
+                    continue;
+                }
+                if(!open(nx, ny, false)) continue;
+                push(open, state(b.idx(nx, ny), side, 1), tap, -2 - code, 0, gap(nx, ny, sink) * hmin);
+            }
+        }
         while(!open.isEmpty()){
             long[] top = open.poll();
             double f = Double.longBitsToDouble(top[0]);
@@ -1016,7 +1076,18 @@ public final class Router{
                 strict = false;
             }
         }
-        if(tapRef >= 0){
+        if(tapRef >= 0 && tapRef / 4 >= net.pieces.size()){
+            //(a piece of a line that stands, turned to a router: what it was kept, to be put back if this line is taken up)
+            Object[] t = stTaps.get(tapRef / 4 - net.pieces.size());
+            Piece f = (Piece)t[0];
+            int side = tapRef % 4;
+            if(!tapped.containsKey(f)) tapped.put(f, new Object[]{f.kind, f.block, f.rot, f.outs});
+            if(net.cls == 0 && f.kind != Kind.router) f.rot = (Integer)t[1];
+            f.kind = net.cls == 0 ? Kind.router : Kind.lrouter;
+            f.block = blockOf(f.kind);
+            f.outs |= 1 << side;
+            net.taps.add(new Object[]{f, side});
+        }else if(tapRef >= 0){
             Piece p = net.pieces.get(tapRef / 4);
             unplace(p);
             if(net.cls == 0 && p.kind != Kind.router) p.rot = p.from;
@@ -1113,6 +1184,51 @@ public final class Router{
     void ripUp(Net net){
         for(Piece q : net.pieces) unplace(q);
         net.pieces.clear();
+        //(the pieces of lines that stand it branched off, as they were, but for other lines' branches)
+        for(Object[] t : net.taps){
+            Piece f = (Piece)t[0];
+            f.outs &= ~(1 << (Integer)t[1]);
+            Object[] o = tapped.get(f);
+            if(o != null && f.outs == (Integer)o[3]){
+                f.kind = (Kind)o[0];
+                f.block = (Block)o[1];
+                f.rot = (Integer)o[2];
+                tapped.remove(f);
+            }
+        }
+        net.taps.clear();
+    }
+
+    /** Pieces of lines that stand turned to routers, with what they were: {kind, block, turn, hands to}. */
+    public final Map<Piece, Object[]> tapped = new IdentityHashMap<>();
+    /** The part each piece of a line that stands is (a body's), for writing what stands out as it is now. */
+    public final Map<Piece, Body.Part> partOfPiece = new IdentityHashMap<>();
+
+    /** The parts of lines that stand turned to routers now, each with the piece it is now. */
+    public Map<Body.Part, Piece> retuned(){
+        Map<Body.Part, Piece> out = new IdentityHashMap<>();
+        for(Piece f : tapped.keySet()) if(partOfPiece.containsKey(f)) out.put(partOfPiece.get(f), f);
+        return out;
+    }
+
+    /** Of the lines that stand, the pieces of each maker's pure lines, by maker (worked out once). */
+    Map<Body.Part, List<Piece>> standingOf;
+
+    List<Piece> standingOf(Body.Part maker){
+        if(standingOf == null){
+            standingOf = new IdentityHashMap<>();
+            //(in the order of the tiles, so that the same ground gives the same search)
+            for(List<Piece> on : at) for(Piece f : on) if(f.fixed && f.line != null && f.line.pure && f.line.from != null && partOfPiece.containsKey(f)) standingOf.computeIfAbsent(f.line.from, k -> new ArrayList<>()).add(f);
+        }
+        return standingOf.getOrDefault(maker, List.of());
+    }
+
+    /** Whether a conduit of a line that stands is followed straight by the next of its line (or hands into a part). */
+    boolean straightAfter(Piece p){
+        int nx = p.x + Geo.dx(p.rot), ny = p.y + Geo.dy(p.rot);
+        if(!b.in(nx, ny)) return false;
+        for(Piece q : at[b.idx(nx, ny)]) if(q.net == p.net) return q.kind != Kind.conduit || q.rot == p.rot;
+        return b.partAt[b.idx(nx, ny)] != null;
     }
 
     // ------------------------------------------------------------------ all lines

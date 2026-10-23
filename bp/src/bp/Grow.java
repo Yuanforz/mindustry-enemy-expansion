@@ -71,7 +71,7 @@ public final class Grow{
             String[] w = line.trim().split("\\s+");
             switch(w[0]){
                 case "form" -> fin = w[1].equals("final");
-                case "machine" -> plan.machines.add(new Object[]{recipes.get(w[1]), Integer.parseInt(w[2]), Float.parseFloat(w[3]), null, w[4].equals("-") ? null : w[4].replace('_', ' ')});
+                case "machine" -> plan.machines.add(new Object[]{Recipes.named(recipes, w[1]), Integer.parseInt(w[2]), Float.parseFloat(w[3]), null, w[4].equals("-") ? null : w[4].replace('_', ' ')});
                 case "site" -> {
                     Unit u = new Unit();
                     u.recipe = recipes.get(w[1]);
@@ -209,6 +209,156 @@ public final class Grow{
         }
     }
 
+    /**
+     * Of what stands, what it makes and cannot hand out: a machine's output not handed yet that no line could take
+     * anywhere. From the sides it hands that thing out of, over free ground (a bridge jumping what is in the way, as far
+     * as it reaches), no line reaches a line of that thing, a block that stands and lacks it, a place on the ground not
+     * built yet whose machine takes it, or room for the smallest machine that takes it. By unit and thing: {how much a
+     * second, of how many of the unit}. The schedule does not count it made.
+     */
+    final Map<Unit, Map<String, float[]>> stranded = new HashMap<>();
+
+    void stranded(Board board){
+        int w = board.w, h = board.h, n = w * h;
+        //(what is on each tile: a piece of a line and what it carries; what lacks what)
+        String[] lineRes = new String[n];
+        //(and whose: the maker a pure line carries from alone, as inst * 1000 + part; -1 none)
+        long[] lineFrom = new long[n];
+        Arrays.fill(lineFrom, -1L);
+        Set<Integer> joinedInto = new HashSet<>();
+        for(Inst i : ledger.insts) if(!i.removed) joinedInto.addAll(i.via);
+        for(Inst i : ledger.insts){
+            if(i.removed) continue;
+            long from = i.flows.isEmpty() || joinedInto.contains(i.id) ? -1L : (long)(Integer)i.flows.get(0)[1] * 1000 + (Integer)i.flows.get(0)[2];
+            for(Object[] q : i.pieces){
+                Block bl = Vars.content.block((String)q[1]);
+                int x0 = Geo.lo((Integer)q[2], bl.size), y0 = Geo.lo((Integer)q[3], bl.size);
+                for(int y = y0; y < y0 + bl.size; y++) for(int x = x0; x < x0 + bl.size; x++) if(board.in(x, y)){
+                    lineRes[x + y * w] = (String)q[8];
+                    lineFrom[x + y * w] = from;
+                }
+            }
+        }
+        boolean[] free = new boolean[n];
+        for(int y = 0; y < h; y++) for(int x = 0; x < w; x++) free[x + y * w] = board.floor(x, y) && !occupied.contains(x + y * w);
+        //(free squares of each side: sq[k][i] whether the k-square with lowest corner i is all free)
+        int[] sum = new int[(w + 1) * (h + 1)];
+        for(int y = 0; y < h; y++) for(int x = 0; x < w; x++) sum[(x + 1) + (y + 1) * (w + 1)] = (free[x + y * w] ? 1 : 0) + sum[x + (y + 1) * (w + 1)] + sum[(x + 1) + y * (w + 1)] - sum[x + y * (w + 1)];
+        Map<Long, Float> handed = new HashMap<>(), got = new HashMap<>();
+        for(Inst i : ledger.insts) if(!i.removed) for(Object[] f : i.flows){
+            handed.merge(((long)(Integer)f[1] * 1000 + (Integer)f[2]) * 31 + ((String)f[0]).hashCode(), (Float)f[5], Float::sum);
+            got.merge(((long)(Integer)f[3] * 1000 + (Integer)f[4]) * 31 + ((String)f[0]).hashCode(), (Float)f[5], Float::sum);
+        }
+        Map<String, Unit> byKey = new HashMap<>();
+        for(Unit u : units) byKey.put(u.key, u);
+        //(the bodies that stand)
+        Map<Inst, Body> bodies = new LinkedHashMap<>();
+        for(Inst i : ledger.insts){
+            if(i.removed || i.parts.isEmpty() || i.kind.equals("nodes")) continue;
+            Body body = new Body(i.id, i.unit == null ? i.kind : i.unit, true);
+            for(Object[] p : i.parts){
+                Recipe r = p[4] == null ? null : recipes.get((String)p[4]);
+                body.add(Vars.content.block((String)p[0]), (Integer)p[1], (Integer)p[2], (Integer)p[3], r, (Float)p[5], (String)p[7]).yield = (Float)p[6];
+            }
+            body.put(0, 0, 0);
+            bodies.put(i, body);
+        }
+        Block lb = Vars.content.block("reinforced-bridge-conduit"), ib = Vars.content.block("duct-bridge");
+        int lr = lb == null ? 0 : Carriers.range(lb), ir = ib == null ? 0 : Carriers.range(ib);
+        int count = 0;
+        for(var be : bodies.entrySet()){
+            Inst i = be.getKey();
+            Body body = be.getValue();
+            if(i.unit == null || !byKey.containsKey(i.unit)) continue;
+            Unit u = byKey.get(i.unit);
+            for(int k = 0; k < body.parts.size(); k++){
+                Body.Part p = body.parts.get(k);
+                if(p.recipe == null) continue;
+                Set<String> outs = new TreeSet<>(p.recipe.at(p.yield).out.keySet());
+                outs.addAll(p.recipe.fixedOut.keySet());
+                for(String r : outs){
+                    boolean liquid = Vars.content.liquid(r) != null;
+                    if(!liquid && Vars.content.item(r) == null) continue;
+                    float spare = p.makes(r) - handed.getOrDefault(((long)i.id * 1000 + k) * 31 + r.hashCode(), 0f);
+                    if(spare <= 1e-4f) continue;
+                    //(where a line of it could end: beside a block that lacks it, beside a place not built whose machine takes it)
+                    boolean[] end = new boolean[n];
+                    for(var oe : bodies.entrySet()) for(int k2 = 0; k2 < oe.getValue().parts.size(); k2++){
+                        Body.Part o = oe.getValue().parts.get(k2);
+                        if(o == p || o.takes(r) <= 0f && !(Board.isCore(o) && !liquid)) continue;
+                        if(!Board.isCore(o) && o.takes(r) - got.getOrDefault(((long)oe.getKey().id * 1000 + k2) * 31 + r.hashCode(), 0f) <= 1e-4f) continue;
+                        for(int[] t : o.around()) if(board.in(t[0], t[1])) end[t[0] + t[1] * w] = true;
+                    }
+                    int side = Integer.MAX_VALUE;
+                    for(Unit x : units){
+                        if(x.recipe == null || x.recipe.at(x.yield).in.getOrDefault(r, 0f) <= 0f && x.recipe.fixedIn.getOrDefault(r, 0f) <= 0f) continue;
+                        if(x.site != null){
+                            if(ledger.committed(x.key) > 0 || blocked(x)) continue;
+                            Body sb = body(probeGen, x, -1);
+                            for(Body.Part o : sb.parts) for(int[] t : o.around()) if(board.in(t[0], t[1])) end[t[0] + t[1] * w] = true;
+                        }else side = Math.min(side, x.block.size);
+                    }
+                    //(over free ground from its sides, bridges jumping)
+                    boolean out = false;
+                    ArrayDeque<Integer> q = new ArrayDeque<>();
+                    boolean[] seen = new boolean[n];
+                    for(int[] t : p.around()){
+                        if(liquid && !Board.liquidsOut(p, t[2]).contains(r)) continue;
+                        if(!board.in(t[0], t[1])) continue;
+                        int idx = t[0] + t[1] * w;
+                        //(a line that stands takes nothing new on: of items, one to the core takes any; of a liquid, none)
+                        if(!liquid && r.equals(lineRes[idx]) || end[idx]) out = true;
+                        //(a line of its own, of this thing alone: a new one may branch off it)
+                        if(r.equals(lineRes[idx]) && lineFrom[idx] == (long)i.id * 1000 + k && Router.TAPS) out = true;
+                        for(Body.Part o : body.parts) if(o != p && o.covers(t[0], t[1]) && o.takes(r) > 0f) out = true;
+                        if(free[idx] && !seen[idx]){
+                            seen[idx] = true;
+                            q.add(idx);
+                        }
+                    }
+                    int range = liquid ? lr : ir;
+                    while(!out && !q.isEmpty()){
+                        int c = q.poll(), cx = c % w, cy = c / w;
+                        if(end[c]){
+                            out = true;
+                            if(Boolean.getBoolean("bp.debugShut")) System.out.println("    end at " + cx + "," + cy);
+                        }
+                        //(room for the smallest machine that takes it, against this tile)
+                        if(side != Integer.MAX_VALUE) for(int y0 = cy - side; y0 <= cy + 1 && !out; y0++) for(int x0 = cx - side; x0 <= cx + 1 && !out; x0++){
+                            if(x0 < 0 || y0 < 0 || x0 + side > w || y0 + side > h) continue;
+                            boolean against = (x0 == cx + 1 || x0 + side == cx) && cy >= y0 && cy < y0 + side || (y0 == cy + 1 || y0 + side == cy) && cx >= x0 && cx < x0 + side;
+                            if(!against) continue;
+                            int a = sum[(x0 + side) + (y0 + side) * (w + 1)] - sum[x0 + (y0 + side) * (w + 1)] - sum[(x0 + side) + y0 * (w + 1)] + sum[x0 + y0 * (w + 1)];
+                            if(a == side * side){
+                                out = true;
+                                if(Boolean.getBoolean("bp.debugShut")) System.out.println("    room at " + x0 + "," + y0 + " side " + side);
+                            }
+                        }
+                        for(int d = 0; d < 4 && !out; d++) for(int s2 = 1; s2 <= Math.max(1, range); s2++){
+                            int nx = cx + Geo.dx(d) * s2, ny = cy + Geo.dy(d) * s2;
+                            if(!board.in(nx, ny)) break;
+                            int ni = nx + ny * w;
+                            if(s2 == 1 && !liquid && r.equals(lineRes[ni])) out = true;
+                            if(free[ni] && !seen[ni]){
+                                seen[ni] = true;
+                                q.add(ni);
+                            }
+                        }
+                    }
+                    if(Boolean.getBoolean("bp.debugShut")) System.out.println("  shut? " + i.unit + "#" + i.id + " " + r + ": " + (out ? "out" : "shut in") + ", " + java.util.stream.IntStream.range(0, n).filter(x -> seen[x]).count() + " tiles reached");
+                    if(out) continue;
+                    float[] v = stranded.computeIfAbsent(u, x -> new HashMap<>()).computeIfAbsent(r, x -> new float[2]);
+                    v[0] += spare;
+                    v[1] += 1;
+                    count++;
+                }
+            }
+        }
+        if(count > 0) System.out.println("  made and not to be handed out (shut in): " + stranded.entrySet().stream().map(e -> e.getKey().key + " " + e.getValue().entrySet().stream().map(f -> f.getKey() + " " + f.getValue()[0]).toList()).toList());
+    }
+
+    Gen probeGen;
+
     /** Whether a machine on ground can no longer stand at its place: what is committed stands on it, or solid on its beams' way. */
     boolean blocked(Unit u){
         if(u.site == null || ledger.committed(u.key) > 0) return false;
@@ -246,6 +396,8 @@ public final class Grow{
                     u.seconds += c.buildTime / 60f * line;
                 }
             }
+            //(dearer by its failures to be laid out)
+            u.seconds *= 1 + ledger.failed.getOrDefault(u.key, 0);
             //(power nodes, what they have cost so far a thing that uses power)
             boolean usesPower = false;
             for(Body.Part p : b.parts) if(Power.needs(p.block)) usesPower = true;
@@ -423,6 +575,8 @@ public final class Grow{
         final List<Object[]> flows = new ArrayList<>();
         /** The lines a line runs on into, joining them (it stands only as long as they do). */
         final Set<Integer> via = new TreeSet<>();
+        /** The lines a line branches off, of its maker (it stands only as long as they do; what it carries runs through them first). */
+        final Set<Integer> tapOf = new TreeSet<>();
         /**
          * What a body keeps clear of solid blocks, on the map: areas (lowest corner, highest corner) and single tiles (a
          * drill's beams); whether none of another such body's areas may lie over its own.
@@ -436,6 +590,11 @@ public final class Grow{
         final List<Inst> insts = new ArrayList<>();
         /** Places found not to be had among what stands (a step's layout could not put them there). */
         final Set<String> avoid = new TreeSet<>();
+        /**
+         * How often each unit was left out of a step for its layout (its lines not laid, no room): its time to build is
+         * dearer by as much again each time, as a tile fought over grows dearer in negotiated routing; laid, forgotten.
+         */
+        final Map<String, Integer> failed = new TreeMap<>();
         int step;
         /** The id the next thing committed gets: ids are never given twice (a thing given back keeps its id from use). */
         int next = 1;
@@ -511,6 +670,7 @@ public final class Grow{
                     case "step" -> l.step = Integer.parseInt(w[1]);
                     case "next" -> l.next = Integer.parseInt(w[1]);
                     case "avoid" -> l.avoid.add(w[1].replace('|', ' '));
+                    case "failed" -> l.failed.put(w[1].replace('|', ' '), Integer.parseInt(w[2]));
                     case "inst" -> {
                         cur = new Inst();
                         cur.id = Integer.parseInt(w[1]);
@@ -524,6 +684,7 @@ public final class Grow{
                     case "piece" -> cur.pieces.add(new Object[]{w[1], w[2], Integer.parseInt(w[3]), Integer.parseInt(w[4]), Integer.parseInt(w[5]), Integer.parseInt(w[6]), Integer.parseInt(w[7]), Integer.parseInt(w[8]), w[9]});
                     case "flow" -> cur.flows.add(new Object[]{w[1], Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4]), Integer.parseInt(w[5]), Float.parseFloat(w[6])});
                     case "via" -> cur.via.add(Integer.parseInt(w[1]));
+                    case "tap" -> cur.tapOf.add(Integer.parseInt(w[1]));
                     case "clear" -> cur.clear.add(new int[]{Integer.parseInt(w[1]), Integer.parseInt(w[2]), Integer.parseInt(w[3]), Integer.parseInt(w[4])});
                     case "lane" -> {
                         for(String t : w[1].split(",")) if(!t.isEmpty()) cur.lane.add(Integer.parseInt(t));
@@ -539,12 +700,14 @@ public final class Grow{
         void write(String file){
             StringBuilder s = new StringBuilder("# what the grown base has committed, step by step\nstep " + step + "\nnext " + nextId() + "\n");
             for(String a : avoid) s.append("avoid ").append(a.replace(' ', '|')).append('\n');
+            for(var e : failed.entrySet()) s.append("failed ").append(e.getKey().replace(' ', '|')).append(' ').append(e.getValue()).append('\n');
             for(Inst i : insts){
                 s.append(String.format(Locale.ROOT, "inst %d %s %s %s%n", i.id, i.kind, i.unit == null ? "-" : i.unit.replace(' ', '|'), i.removed ? "removed" : i.built ? "built" : "committed"));
                 for(Object[] p : i.parts) s.append(String.format(Locale.ROOT, "part %s %d %d %d %s %.6f %.4f %s%n", p[0], p[1], p[2], p[3], p[4] == null ? "-" : p[4], p[5], p[6], p[7] == null ? "-" : p[7]));
                 for(Object[] q : i.pieces) s.append(String.format(Locale.ROOT, "piece %s %s %d %d %d %d %d %d %s%n", q));
                 for(Object[] f : i.flows) s.append(String.format(Locale.ROOT, "flow %s %d %d %d %d %.6f%n", f));
                 for(int v : i.via) s.append("via ").append(v).append('\n');
+                for(int v : i.tapOf) s.append("tap ").append(v).append('\n');
                 for(int[] c : i.clear) s.append(String.format(Locale.ROOT, "clear %d %d %d %d%n", c[0], c[1], c[2], c[3]));
                 if(!i.lane.isEmpty()) s.append("lane ").append(String.join(",", i.lane.stream().map(String::valueOf).toList())).append('\n');
                 if(i.exclusive) s.append("exclusive\n");
@@ -659,7 +822,9 @@ public final class Grow{
             for(int t = 1; t <= T; t++){
                 boolean isWhole = t <= whole;
                 int lo = u.removable ? 0 : have;
-                v[t] = isWhole ? solver.makeIntVar(lo, most, "n_" + u.key + "_" + t) : solver.makeNumVar(lo, most, "n_" + u.key + "_" + t);
+                //(what this step found it could not lay out now: none more of it in the first span)
+                int hi = t == 1 && notNow.contains(u) ? Math.min(most, have) : most;
+                v[t] = isWhole ? solver.makeIntVar(lo, hi, "n_" + u.key + "_" + t) : solver.makeNumVar(lo, hi, "n_" + u.key + "_" + t);
                 up[t] = isWhole ? solver.makeIntVar(0, u.count, "") : solver.makeNumVar(0, u.count, "");
                 down[t] = isWhole ? solver.makeIntVar(0, u.removable ? u.count : 0, "") : solver.makeNumVar(0, u.removable ? u.count : 0, "");
                 MPConstraint flow = fl[t] = solver.makeConstraint(0, 0);
@@ -743,6 +908,18 @@ public final class Grow{
                 for(Unit u : units){
                     float rate = u.rate.getOrDefault(r, 0f);
                     if(rate != 0f) made.setCoefficient(m.a.get(u)[t], rate);
+                }
+                //(what is made shut in counts for nothing: the shut-in ones taken as the last of their unit at work)
+                for(var e : stranded.entrySet()){
+                    float[] sv = e.getValue().get(r);
+                    if(sv == null) continue;
+                    Unit u = e.getKey();
+                    MPVariable lost = solver.makeNumVar(0, inf, "");
+                    MPConstraint lc = solver.makeConstraint(-sv[0], inf);
+                    lc.setCoefficient(lost, 1);
+                    lc.setCoefficient(m.a.get(u)[t], -sv[0] / sv[1]);
+                    lc.setCoefficient(m.n.get(u)[t - 1], sv[0] / sv[1]);
+                    made.setCoefficient(lost, -1);
                 }
                 if(!item) continue;
                 made.setCoefficient(in, -1);
@@ -1120,12 +1297,22 @@ public final class Grow{
         Map<Long, Body.Part> partOf = new HashMap<>();
         for(var e : whose.entrySet()) partOf.put((long)e.getValue()[0] * 1000 + e.getValue()[1], e.getKey());
         Map<Integer, List<Inst>> runInto = new HashMap<>();
-        for(Inst i : lineBodies.keySet()) for(int v : i.via) runInto.computeIfAbsent(v, k -> new ArrayList<>()).add(i);
+        Set<Integer> joinedInto = new HashSet<>();
+        for(Inst i : lineBodies.keySet()){
+            for(int v : i.via){
+                runInto.computeIfAbsent(v, k -> new ArrayList<>()).add(i);
+                joinedInto.add(v);
+            }
+            //(a line branched off another carries through it first: its load the other's too)
+            for(int v : i.tapOf) runInto.computeIfAbsent(v, k -> new ArrayList<>()).add(i);
+        }
         for(var e : lineBodies.entrySet()){
             Inst i = e.getKey();
             String res = i.flows.isEmpty() ? i.pieces.isEmpty() ? null : (String)i.pieces.get(0)[8] : (String)i.flows.get(0)[0];
             if(res == null) continue;
             Router.Standing line = new Router.Standing(i.id, res);
+            if(!i.flows.isEmpty()) line.from = partOf.get((long)(Integer)i.flows.get(0)[1] * 1000 + (Integer)i.flows.get(0)[2]);
+            line.pure = !joinedInto.contains(i.id);
             for(Object[] f : i.flows){
                 Body.Part t = partOf.get((long)(Integer)f[3] * 1000 + (Integer)f[4]);
                 if(t != null && !line.to.contains(t)) line.to.add(t);
@@ -1154,6 +1341,17 @@ public final class Grow{
             Body ghost = body(g, u, -1);
             for(Body.Part p : ghost.parts) for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++){
                 if(g.board.in(x, y) && !stepSites.contains(g.board.idx(x, y))) g.board.ghostAt[g.board.idx(x, y)] = p;
+            }
+        }
+        //(the tiles about the final form's places not built yet: what a line laid now pays to stand there, as much as a
+        //detour of so many tiles, so that the lines those places will need find room)
+        if(RING > 0f){
+            float tile = (float)g.weights.cost(g.carriers.cheapest(Carriers.Role.conduit, g.weights));
+            g.board.price = new float[g.board.w * g.board.h];
+            for(Unit u : units){
+                if(u.site == null || !u.required || ledger.committed(u.key) > 0 || step.containsKey(u)) continue;
+                Body ghost = body(g, u, -1);
+                for(Body.Part p : ghost.parts) for(int[] t : p.around()) if(g.board.in(t[0], t[1])) g.board.price[g.board.idx(t[0], t[1])] = RING * tile;
             }
         }
         //(what is wrong already, by the game's rules, before the step: the step is to make nothing worse)
@@ -1305,6 +1503,21 @@ public final class Grow{
             //(a line that came to nothing, left for a later step)
             if(!i.pieces.isEmpty() || !i.flows.isEmpty()) ledger.insts.add(i);
         }
+        //(a line that branches off one that stands: that one's piece turned to a router, to be built over it again)
+        for(Router.Net net : g.bestNets) for(Object[] t : net.taps){
+            Board.Piece f = (Board.Piece)t[0];
+            Inst stood = f.line == null ? null : ledger.get(f.line.id);
+            if(stood == null) continue;
+            for(Object[] q : stood.pieces) if((Integer)q[2] == f.x && (Integer)q[3] == f.y){
+                q[0] = f.kind.name();
+                q[1] = f.block.name;
+                q[4] = f.rot;
+                q[6] = f.outs;
+            }
+            stood.built = false;
+            Inst branch = ofNet.get(net.id);
+            if(branch != null) branch.tapOf.add(stood.id);
+        }
         //(a line that joins another runs on into it, laid now or standing)
         for(Router.Net net : g.bestNets) for(Piece q : net.joins.values()){
             if(q.line != null){
@@ -1361,6 +1574,7 @@ public final class Grow{
             for(Inst i : ledger.insts){
                 if(back.contains(i) || i.removed) continue;
                 Set<Integer> keep = new HashSet<>(i.via);
+                keep.addAll(i.tapOf);
                 for(Object[] f : i.flows){
                     keep.add((Integer)f[1]);
                     keep.add((Integer)f[3]);
@@ -1375,6 +1589,9 @@ public final class Grow{
         ledger.insts.removeAll(back);
         System.out.println("  planned again: " + back.size() + " things not begun");
     }
+
+    /** Units this step could not lay out among what stands: planned again with none more of them in the first span. */
+    final Set<Unit> notNow = new HashSet<>();
 
     /** Of a step not laid out clean, what to leave out: so many of each unit. */
     final Map<Unit, Integer> drop = new LinkedHashMap<>();
@@ -1404,6 +1621,7 @@ public final class Grow{
                 boolean touches = false;
                 for(Object[] f : in.flows) if(gone.contains((Integer)f[1]) || gone.contains((Integer)f[3])) touches = true;
                 for(int v : in.via) if(gone.contains(v)) touches = true;
+                for(int v : in.tapOf) if(gone.contains(v)) touches = true;
                 if(!touches) continue;
                 in.removed = true;
                 removed.add(in);
@@ -1440,6 +1658,11 @@ public final class Grow{
         new Fi(file).writeString(s.toString());
     }
 
+    /** How often a step is planned again for what it could not lay out (bp.replans; 0: the step only lessened). */
+    static final int REPLANS = Integer.getInteger("bp.replans", 0);
+    /** What a line pays to stand against a place of the final form not built yet, in tiles of detour (bp.ring; 0 none). */
+    static final float RING = Float.parseFloat(System.getProperty("bp.ring", "0"));
+
     public static void main(String[] args){
         long tBoot = System.nanoTime();
         Game.boot(args[0]);
@@ -1466,10 +1689,19 @@ public final class Grow{
         grow.ways(probe);
         long tWays = System.nanoTime();
         grow.measure(probe);
+        //(a unit measured as nothing finite cannot be planned with: said, and left out of the schedule's reach)
+        for(Unit u : grow.units){
+            boolean bad = !Float.isFinite(u.seconds) || !Float.isFinite(u.power);
+            for(float v : u.cost.values()) bad |= !Float.isFinite(v);
+            for(float v : u.rate.values()) bad |= !Float.isFinite(v);
+            if(bad) System.out.println("  NOT FINITE: " + u.key + " seconds " + u.seconds + " power " + u.power + " cost " + u.cost + " rate " + u.rate);
+        }
         grow.writeShapes();
         long tMeasure = System.nanoTime();
         grow.ledger.step++;
         grow.occupied(probe.board.w);
+        grow.probeGen = probe;
+        grow.stranded(probe.board);
         if(Boolean.getBoolean("bp.debug")) grow.reach(st);
         Map<Unit, Integer> step = grow.next(st, spans, spanSeconds, think);
         long tNext = System.nanoTime();
@@ -1481,8 +1713,9 @@ public final class Grow{
         for(int round = 0; !step.isEmpty(); round++){
             grow.drop.clear();
             grow.whose.clear();
-            if(grow.layOut(dataDir, world, step, grow.ledger.step)){
+            if(grow.layOut(dataDir, world, step, grow.ledger.step + 1000L * Long.getLong("bp.seed", 0L))){
                 laid = true;
+                for(Unit u : step.keySet()) grow.ledger.failed.remove(u.key);
                 break;
             }
             if(grow.drop.isEmpty() || round >= 3){
@@ -1493,6 +1726,20 @@ public final class Grow{
             //(a way up's place found not to be had is left for good, there being others; a place the final form has is
             //tried again at a later step)
             for(Unit u : grow.drop.keySet()) if(u.site != null && !u.required) grow.ledger.avoid.add(u.key);
+            for(Unit u : grow.drop.keySet()) grow.ledger.failed.merge(u.key, 1, Integer::sum);
+            if(round < REPLANS){
+                //(planned again, what could not be laid now not in the first span, so that the core unit's time goes to
+                //what can be: what was taken down for the step stands again, the new plan takes down its own)
+                for(Inst i : grow.removed) i.removed = false;
+                grow.removed.clear();
+                grow.notNow.addAll(grow.drop.keySet());
+                step = grow.next(st, spans, spanSeconds, think);
+                System.out.println(String.format("  planned again, not now %s: %s", grow.notNow.stream().map(u -> u.key).toList(), step));
+                grow.takeDown();
+                if(!grow.removed.isEmpty()) System.out.println("  taken down: " + grow.removed.stream().map(i -> i.unit == null ? i.kind + " " + i.id : i.unit).toList());
+                wanted |= !step.isEmpty();
+                continue;
+            }
             for(var e : grow.drop.entrySet()) step.merge(e.getKey(), -e.getValue(), Integer::sum);
             step.values().removeIf(v -> v <= 0);
         }

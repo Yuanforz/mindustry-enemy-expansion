@@ -442,6 +442,20 @@ public final class Recipes{
         return c;
     }
 
+    /**
+     * A recipe of a plan by its name: one of the recipes, or a heat redirector the balance put in to gather heat (it has no
+     * recipe of its own: one is made for it as the balance makes it, Balance.solve).
+     */
+    public static Recipe named(Map<String, Recipe> recipes, String name){
+        Recipe r = recipes.get(name);
+        if(r != null) return r;
+        mindustry.world.Block b = Vars.content.block(name);
+        if(b == null || !conductors().contains(b)) return null;
+        return CONDUCTOR.computeIfAbsent(name, k -> new Recipe(b.name, b, Recipe.Kind.heater, Recipe.Ground.none, null));
+    }
+
+    static final Map<String, Recipe> CONDUCTOR = new HashMap<>();
+
     /** The heat redirectors there are (conductors that pass heat on whole, not split). */
     public static List<mindustry.world.Block> conductors(){
         List<mindustry.world.Block> out = new ArrayList<>();

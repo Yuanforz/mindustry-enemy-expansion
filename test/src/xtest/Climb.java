@@ -423,7 +423,10 @@ public class Climb{
             Tile at = Vars.world.tile((Integer)next[1], (Integer)next[2]);
             boolean going = at != null && at.build instanceof ConstructBlock.ConstructBuild c0 && c0.current == block;
             //(one the game would not let be built there now (what stands in its way): put by at once, tried again later)
-            if(!going && !Build.validPlace(block, us, (Integer)next[1], (Integer)next[2], (Integer)next[3], false, true)){
+            //(a block put over one of ours it may replace, as a player puts a router over a duct: the game's check with no
+            //core radius asked, which in its other form refuses anything over a block, as for a payload set down)
+            boolean over = at != null && at.build != null && at.build.team == us && block.canReplace(at.block()) && Build.validPlace(block, us, (Integer)next[1], (Integer)next[2], (Integer)next[3], false, false);
+            if(!going && !over && !Build.validPlace(block, us, (Integer)next[1], (Integer)next[2], (Integer)next[3], false, true)){
                 skipped.add(key(next));
                 System.out.println("    put by: " + next[0] + " at " + next[1] + "," + next[2] + " (cannot be built there now)");
                 unit.plans.clear();

@@ -49,7 +49,7 @@ public final class District{
         for(String line : new Fi(args[2]).readString().split("\n")){
             String[] w = line.trim().split("\\s+");
             if(w[0].equals("machine")){
-                Recipe r = recipes.get(w[1]);
+                Recipe r = Recipes.named(recipes, w[1]);
                 int n = Integer.parseInt(w[2]);
                 float work = Float.parseFloat(w[3]);
                 if(!w[4].equals("-")){

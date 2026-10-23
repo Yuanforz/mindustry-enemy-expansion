@@ -506,7 +506,13 @@ public final class Gen{
         s.rows.addAll(prob.ground.rows);
         s.seconds = prob.seconds;
         s.places.addAll(prob.fixed);
-        for(Body body : bodies) if(!body.given) for(Body.Part p : body.parts) s.places.add(new Spec.Place(p.block.name, p.ax(), p.ay(), p.rot, p.block.configurable && !(p.block instanceof mindustry.world.blocks.sandbox.ItemVoid || p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid) ? p.config : null));
+        //(a piece of a line that stands turned to a router, as it is now)
+        Map<Body.Part, Piece> retuned = router.retuned();
+        for(Body body : bodies) if(!body.given) for(Body.Part p : body.parts){
+            Piece f = retuned.get(p);
+            if(f != null) s.places.add(new Spec.Place(f.block.name, f.x, f.y, f.rot, null));
+            else s.places.add(new Spec.Place(p.block.name, p.ax(), p.ay(), p.rot, p.block.configurable && !(p.block instanceof mindustry.world.blocks.sandbox.ItemVoid || p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid) ? p.config : null));
+        }
         for(Piece q : router.all()) s.places.add(new Spec.Place(q.block.name, q.x, q.y, q.rot, null));
         if(power != null) for(Piece q : power.added) s.places.add(new Spec.Place(q.block.name, q.x, q.y, q.rot, null));
         return s;

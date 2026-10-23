@@ -171,8 +171,11 @@ public final class Heat{
         obj.addTerm(minY, -unit);
         m.minimize(obj);
         CpSolver solver = new CpSolver();
-        solver.getParameters().setMaxTimeInSeconds(20);
-        solver.getParameters().setNumWorkers(4);
+        //(the same arrangement every time for the same machine: one worker, a limit counted in the solver's own work,
+        //not the clock; a busy machine or another run gets what this one got)
+        solver.getParameters().setNumWorkers(1);
+        solver.getParameters().setMaxDeterministicTime(Double.parseDouble(System.getProperty("bp.heatWork", "10")));
+        solver.getParameters().setRandomSeed(1);
         CpSolverStatus st = solver.solve(m);
         if(st != CpSolverStatus.OPTIMAL && st != CpSolverStatus.FEASIBLE) return null;
         List<Put> out = new ArrayList<>();

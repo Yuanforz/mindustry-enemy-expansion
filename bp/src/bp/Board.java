@@ -196,6 +196,11 @@ public final class Board{
      * them must not take what they will hand out, nor hand them what they will take, once they stand.
      */
     public Body.Part[] ghostAt;
+    /**
+     * What a line pays to stand on a tile (null: nothing): about the places of the final form not built yet, where their
+     * own lines will have to start.
+     */
+    public float[] price;
 
     /** Marks the ground the bodies keep clear (their areas) as no place for a solid block, and what they hold whole. */
     public void putClear(Collection<Body> bodies){

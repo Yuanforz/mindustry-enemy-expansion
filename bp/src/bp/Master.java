@@ -188,7 +188,7 @@ public final class Master{
             String[] w = line.trim().split("\\s+");
             if(w[0].equals("form")) fin = w[1].equals("final");
             else if(w[0].equals("machine")){
-                Recipe r = recipes.get(w[1]);
+                Recipe r = Recipes.named(recipes, w[1]);
                 plan.machines.add(new Object[]{r, Integer.parseInt(w[2]), Float.parseFloat(w[3]), null, w[4].equals("-") ? null : w[4].replace('_', ' ')});
             }else if(w[0].equals("site")){
                 Recipe r = recipes.get(w[1]);
