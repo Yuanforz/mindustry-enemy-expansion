@@ -264,6 +264,17 @@ public final class Router{
             if(!b.in(nx, ny)) continue;
             int n = b.idx(nx, ny);
             Body.Part p = b.partAt[n];
+            //(a machine of the final form still to come, on its held ground: as if it stood there)
+            Body.Part ghost = p == null && b.ghostAt != null ? b.ghostAt[n] : null;
+            if(ghost != null && (q.itemCarrier() || q.liquidCarrier())){
+                if(Board.pieceTakes(q, dir, null, ghost)){
+                    for(String y : outs(ghost)[(dir + 2) % 4]){
+                        boolean item = mindustry.Vars.content.item(y) != null;
+                        if(item ? q.itemCarrier() : q.liquidCarrier()) c++;
+                    }
+                }
+                if(has(Board.handsDirs(q), dir) && (q.outs & (1 << dir)) == 0 && b.partTakes(ghost, q.res)) c++;
+            }
             if(p != null){
                 if(Board.pieceTakes(q, dir, null, p)){
                     for(String y : outs(p)[(dir + 2) % 4]){

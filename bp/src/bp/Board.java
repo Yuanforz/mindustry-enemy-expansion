@@ -191,6 +191,11 @@ public final class Board{
 
     /** Ground a body holds whole (a module's square): no line goes there. */
     public boolean[] held;
+    /**
+     * Machines of the final form not standing yet, on the ground held for them (null: none): what is laid now about
+     * them must not take what they will hand out, nor hand them what they will take, once they stand.
+     */
+    public Body.Part[] ghostAt;
 
     /** Marks the ground the bodies keep clear (their areas) as no place for a solid block, and what they hold whole. */
     public void putClear(Collection<Body> bodies){

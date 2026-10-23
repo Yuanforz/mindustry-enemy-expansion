@@ -1058,6 +1058,16 @@ public final class Grow{
         }
         hold.put(0, 0, 0);
         if(!hold.holdLocal.isEmpty()) g.bodies.add(hold);
+        //(and the machines to come there, as ghosts the lines laid now keep clear of: nothing beside one that would take
+        //what it will hand out, or hand it what it takes)
+        g.board.ghostAt = new Body.Part[g.board.w * g.board.h];
+        for(Unit u : units){
+            if(u.site == null || !u.required || ledger.committed(u.key) > 0 || step.containsKey(u)) continue;
+            Body ghost = body(g, u, -1);
+            for(Body.Part p : ghost.parts) for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++){
+                if(g.board.in(x, y) && !stepSites.contains(g.board.idx(x, y))) g.board.ghostAt[g.board.idx(x, y)] = p;
+            }
+        }
         //(what is wrong already, by the game's rules, before the step: the step is to make nothing worse)
         int before = 0;
         if(!ledger.insts.isEmpty()){
