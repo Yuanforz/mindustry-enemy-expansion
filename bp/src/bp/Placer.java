@@ -239,8 +239,29 @@ public final class Placer{
         return 0;
     }
 
+    /**
+     * Who feeds whom, if fixed (a floor plan's ties: maker, taker, thing, weight): each tie's gap weighed, none for one
+     * that touches; else each taker to its nearest maker.
+     */
+    public List<Object[]> ties;
+
+    double tiesTerm(){
+        double wire = 0;
+        for(Object[] t : ties){
+            Body.Part m = (Body.Part)t[0], k = (Body.Part)t[1];
+            String res = (String)t[2];
+            boolean liquid = mindustry.Vars.content.liquid(res) != null;
+            if(Router.touches(m, k, res, liquid)) continue;
+            int gap = gap(m, k) + 1;
+            wire += (Float)t[3] * gap;
+            spread(m, k, gap);
+        }
+        return wire;
+    }
+
     /** The lines: each taker to its nearest maker and each maker to its nearest taker. */
     double wireTerm(){
+        if(ties != null) return tiesTerm();
         double wire = 0;
         for(Group g : groups){
             for(Body.Part t : g.takers){

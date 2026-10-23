@@ -119,7 +119,13 @@ public final class Router{
     final Weights w;
     final List<Piece>[] at;
     final float[] hist;
-    float pf = 0.5f;
+    /**
+     * Naive laying (the default; -Dbp.naive=false for negotiation): each line once, in turn, shortest first, the ground
+     * other lines took as good as walled (sharing priced out from the start), no rounds of negotiation. On the climb it
+     * did as well as negotiation or better, in less time (PLAN §32).
+     */
+    static final boolean NAIVE = Boolean.parseBoolean(System.getProperty("bp.naive", "true"));
+    float pf = NAIVE ? 1e4f : 0.5f;
     /** How far a bridge reaches, of the bridges the lines use (DirectionBridge.range): of items, of liquids. */
     int range, lrange;
     public int rounds;
@@ -1217,11 +1223,18 @@ public final class Router{
     final Map<Net, Set<Body.Part>> walledOff = new IdentityHashMap<>();
 
     public boolean run(int maxRounds){
+        if(NAIVE) maxRounds = 1;
         own = new boolean[b.w * b.h];
         for(Net n : nets) byId.put(n.id, n);
         int bestBad = Integer.MAX_VALUE, since = 0;
+        //(naive: the shortest lines first)
+        List<Net> turn = nets;
+        if(NAIVE){
+            turn = new ArrayList<>(nets);
+            turn.sort(Comparator.comparingInt(n -> n.to.isEmpty() ? 0 : n.to.stream().mapToInt(t -> gap(t, n.from)).min().getAsInt()));
+        }
         for(rounds = 1; rounds <= maxRounds; rounds++){
-            for(Net net : nets){
+            for(Net net : turn){
                 //(after the first round only the lines in what is still fought over, or not whole, are laid again: the
                 //rest stand as they are)
                 if(rounds > 1 && !involved(net)) continue;

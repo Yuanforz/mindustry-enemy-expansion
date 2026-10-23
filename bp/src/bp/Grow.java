@@ -309,6 +309,87 @@ public final class Grow{
         return b;
     }
 
+    /**
+     * The final form's floor plan (bp.Target), if one is given: where each of its machines is to stand, by unit (lowest
+     * corner of the body's frame, turn); its shapes taken for the units'. A machine of the step goes to a place of its
+     * unit not had yet; the places not had are held for what is to come.
+     */
+    final Map<String, List<int[]>> slots = new LinkedHashMap<>();
+
+    void readFloor(Fi file){
+        String cur = null;
+        List<String> shape = null;
+        for(String line : file.readString().split("\n")){
+            if(line.startsWith("#") || line.isBlank()) continue;
+            if(line.startsWith("unit ")){
+                cur = line.substring(5);
+                shape = new ArrayList<>();
+                shapes.put(cur, shape);
+                slots.put(cur, new ArrayList<>());
+            }else if(line.startsWith("slot ")){
+                String[] w = line.split(" ");
+                slots.get(cur).add(new int[]{Integer.parseInt(w[1]), Integer.parseInt(w[2]), Integer.parseInt(w[3])});
+            }else if(shape != null) shape.add(line);
+        }
+    }
+
+    /** Of a unit's places, the one nearest what stands that makes what it takes (liquids most), else nearest the core. */
+    int[] bestSlot(Gen g, Body b, List<int[]> free){
+        int[] best = null;
+        double bestC = Double.MAX_VALUE;
+        for(int[] at : free){
+            b.put(at[0], at[1], at[2]);
+            double c = 0;
+            for(Body.Part p : b.parts){
+                if(p.recipe == null) continue;
+                Set<String> ins = new TreeSet<>(p.recipe.in.keySet());
+                ins.addAll(p.recipe.fixedIn.keySet());
+                for(String r : ins){
+                    if(Vars.content.item(r) == null && Vars.content.liquid(r) == null) continue;
+                    if(p.takes(r) <= 0f) continue;
+                    int gap = 60;
+                    for(Body o : g.bodies) if(o.standing) for(Body.Part q : o.parts) if(q.makes(r) > 0f) gap = Math.min(gap, Placer.gap(p, q));
+                    c += (Vars.content.liquid(r) != null ? 3 : 1) * gap;
+                }
+            }
+            if(g.core != null) c += 0.01 * Placer.gap(b.main(), g.core);
+            if(c < bestC){
+                bestC = c;
+                best = at;
+            }
+        }
+        return best;
+    }
+
+    /** A body put down for good at a place (of the floor plan): what the placer does not move. */
+    static Body pinned(Body b, int[] at){
+        Body p = new Body(b.id, b.label, true);
+        for(Body.Part q : b.parts) p.add(q.block, q.lx, q.ly, q.lrot, q.recipe, q.work, q.config).yield = q.yield;
+        p.clearLocal.addAll(b.clearLocal);
+        p.holdLocal.addAll(b.holdLocal);
+        p.exclusive = b.exclusive;
+        p.put(at[0], at[1], at[2]);
+        return p;
+    }
+
+    /** The places of a unit's not had yet: none of what stands on its ground, nor taken by one of the step's own (taken). */
+    List<int[]> freeSlots(Gen g, Unit u, Set<Integer> taken){
+        List<int[]> out = new ArrayList<>();
+        List<int[]> all = slots.get(u.key);
+        if(all == null || u.site != null || u.recipe == null) return out;
+        Body probe = body(g, u, -1);
+        for(int[] at : all){
+            probe.put(at[0], at[1], at[2]);
+            boolean free = true;
+            for(Body.Part p : probe.parts) for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++){
+                int i = x + y * g.board.w;
+                if(occupied.contains(i) || taken.contains(i)) free = false;
+            }
+            if(free) out.add(at);
+        }
+        return out;
+    }
+
     /** A unit as a body: a machine with its heaters, one on its place, a block that only stands. */
     Body body(Gen g, Unit u, int id){
         if(u.recipe == null){
@@ -1088,11 +1169,34 @@ public final class Grow{
         //the step's own
         Map<Body, Unit> fresh = new LinkedHashMap<>();
         int nid = ledger.nextId();
+        //(a machine of the floor plan's to a place of its not had yet: the one nearest what makes what it takes)
+        Set<Integer> takenSlots = new HashSet<>();
         for(var e : step.entrySet()) for(int k = 0; k < e.getValue(); k++){
             Body b = body(g, e.getKey(), 200000 + nid);
+            List<int[]> free = freeSlots(g, e.getKey(), takenSlots);
+            if(!free.isEmpty()){
+                b = pinned(b, bestSlot(g, b, free));
+                for(Body.Part p : b.parts) for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++) takenSlots.add(x + y * g.board.w);
+            }
             fresh.put(b, e.getKey());
             g.bodies.add(b);
             nid++;
+        }
+        //(the floor plan's places not had, held: no block nor line of the step on them, and their machines as ghosts)
+        if(!slots.isEmpty()){
+            for(Unit u : units){
+                if(!u.required || !slots.containsKey(u.key)) continue;
+                for(int[] at : freeSlots(g, u, takenSlots)){
+                    Body gb = body(g, u, -1);
+                    gb.put(at[0], at[1], at[2]);
+                    for(Body.Part p : gb.parts){
+                        hold.holdLocal.add(new int[]{p.x0, p.y0, p.x1(), p.y1()});
+                        for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++) if(g.board.in(x, y) && g.board.ghostAt[g.board.idx(x, y)] == null) g.board.ghostAt[g.board.idx(x, y)] = p;
+                    }
+                }
+            }
+            hold.put(0, 0, 0);
+            if(!hold.holdLocal.isEmpty() && !g.bodies.contains(hold)) g.bodies.add(hold);
         }
         //(to the core: every item made beyond what is taken)
         Map<String, Float> made = new HashMap<>();
@@ -1172,7 +1276,7 @@ public final class Grow{
         for(Body b : fresh.keySet()){
             Inst i = new Inst();
             i.id = b.id - 200000;
-            i.kind = b.fixed ? "site" : b.main().recipe == null ? "single" : "machine";
+            i.kind = fresh.get(b).site != null ? "site" : b.main().recipe == null ? "single" : "machine";
             i.unit = fresh.get(b).key;
             for(int k = 0; k < b.parts.size(); k++){
                 Body.Part p = b.parts.get(k);
@@ -1350,6 +1454,7 @@ public final class Grow{
         grow.ledger = Ledger.read(ledgerFile);
         grow.readShapes(new Fi(ledgerFile).sibling("shapes.txt"));
         grow.readPlan(planFile, grow.recipes);
+        if(System.getProperty("bp.floor") != null) grow.readFloor(new Fi(System.getProperty("bp.floor")));
         State st = State.read(stateFile);
         grow.state = st;
         for(Inst i : grow.ledger.insts) if(st.built.contains(i.id)) i.built = true;

@@ -531,6 +531,9 @@ public final class Gen{
     Set<Body> misplacedKept = Set.of();
     List<String> unpoweredKept = List.of();
     int overusedKept, leaksKept;
+    /** Whether the bodies stand where they are to stand already (placed by other means): the first try lays lines only. */
+    boolean keep;
+    static final boolean GREEDY = System.getProperty("bp.place", "anneal").equals("greedy");
 
     Spec layOut(long seed){
         long t0 = System.nanoTime();
@@ -544,10 +547,16 @@ public final class Gen{
         for(int attempt = 0; attempt < Integer.getInteger("bp.attempts", 8); attempt++){
             //(the first placing from anywhere; after it, mending: from where things are, cool, so that what was laid well
             //stays and the room asked for is found about the places fought over)
-            int steps = (attempt == 0 ? 4000 : 1500) * Math.max(4, placer.movable.size());
+            int steps = keep && attempt == 0 ? 0 : (attempt == 0 ? 4000 : 1500) * Math.max(4, placer.movable.size());
             long tp = System.nanoTime();
             Arrays.fill(board.clear, false);
-            placer.run(steps, attempt == 0, attempt == 0 ? 1.0 : 0.05);
+            //(greedy: the first placing each new body beside what feeds it, room about it, no annealing)
+            if(GREEDY && attempt == 0 && !keep && !placer.movable.isEmpty()){
+                Districts d = new Districts(this);
+                d.room = Integer.getInteger("bp.room", 1);
+                d.run();
+                placer.run(0, false, 0.0);
+            }else placer.run(steps, attempt == 0 && !keep, attempt == 0 ? 1.0 : 0.05);
             board.putClear(bodies);
             long tr = System.nanoTime();
             System.out.println(String.format("placing %d: cost %.1f (%d bodies, %d steps)", attempt, placer.cost, bodies.size(), steps));
