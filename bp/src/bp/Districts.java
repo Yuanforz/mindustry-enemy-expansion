@@ -30,7 +30,19 @@ public final class Districts{
         this.bodies = g.bodies;
         for(int i = 0; i < bodies.size(); i++) index.put(bodies.get(i), i);
         for(Body x : bodies) if(!x.fixed) movable.add(x);
+        mindustry.world.Block ib = Vars.content.block("duct-bridge"), lb = Vars.content.block("reinforced-bridge-conduit");
+        itemRange = ib == null ? 0 : Carriers.range(ib);
+        liquidRange = lb == null ? 0 : Carriers.range(lb);
     }
+
+    /**
+     * Whether a place must leave each of its trades a way (bp.place=routed): over free ground, a bridge jumping what is in
+     * the way, from a maker's side it hands the thing out of to a free tile against the taker; a maker's own pure lines
+     * (a branch may come off them) and lines to the core alone (items may run into them) count as ways out too.
+     */
+    boolean routed;
+    final Map<String, boolean[]> regions = new HashMap<>();
+    int itemRange, liquidRange;
 
     /** One trade a body is put by: one of its parts and another's, the thing, how much it weighs. */
     record Tie(Body.Part mine, Body.Part other, String res, float w){
@@ -45,6 +57,7 @@ public final class Districts{
     // ------------------------------------------------------------------ the ground
 
     void mark(Body x, int v){
+        regions.clear();
         int k = index.get(x) + 1;
         for(Body.Part p : x.parts) for(int y = p.y0; y <= p.y1(); y++) for(int xx = p.x0; xx <= p.x1(); xx++){
             if(!b.in(xx, y)) continue;
@@ -111,6 +124,85 @@ public final class Districts{
         return c;
     }
 
+    /** Whether a tile is free ground for a line: nothing on it (nor held), a carrier may stand there. */
+    boolean free(int x, int y){
+        return b.in(x, y) && occ[b.idx(x, y)] == 0 && b.floor(x, y);
+    }
+
+    /**
+     * The free ground a line of a thing can cover from a part (its sides that hand the thing out, for a maker; all its
+     * sides, for a taker), and from the lines it may come off or run into: worked out once a part, a thing, a role.
+     */
+    boolean[] region(Body.Part p, String res, boolean maker){
+        String key = System.identityHashCode(p) + "|" + res + "|" + maker;
+        boolean[] got = regions.get(key);
+        if(got != null) return got;
+        boolean liquid = Vars.content.liquid(res) != null;
+        boolean[] seen = new boolean[b.w * b.h];
+        ArrayDeque<Integer> q = new ArrayDeque<>();
+        List<Body.Part> from = new ArrayList<>();
+        from.add(p);
+        for(Body o : bodies){
+            if(o.line == null || o.parts.isEmpty()) continue;
+            boolean mine = maker && o.line.pure && o.line.from == p && o.line.res.equals(res) && Router.TAPS;
+            boolean toCore = !maker && Board.isCore(p) && o.line.coreBound() && !liquid;
+            if(mine || toCore) from.addAll(o.parts);
+        }
+        for(Body.Part f : from) for(int[] t : f.around()){
+            if(f == p && maker && liquid && !Board.liquidsOut(p, t[2]).contains(res)) continue;
+            if(!free(t[0], t[1])) continue;
+            int i = b.idx(t[0], t[1]);
+            if(!seen[i]){
+                seen[i] = true;
+                q.add(i);
+            }
+        }
+        int range = liquid ? liquidRange : itemRange;
+        while(!q.isEmpty()){
+            int c = q.poll(), cx = c % b.w, cy = c / b.w;
+            for(int d = 0; d < 4; d++) for(int k = 1; k <= Math.max(1, range); k++){
+                int nx = cx + Geo.dx(d) * k, ny = cy + Geo.dy(d) * k;
+                if(!b.in(nx, ny)) break;
+                if(!free(nx, ny)) continue;
+                int ni = b.idx(nx, ny);
+                if(!seen[ni]){
+                    seen[ni] = true;
+                    q.add(ni);
+                }
+            }
+        }
+        regions.put(key, seen);
+        return seen;
+    }
+
+    /** Whether a body where it is now leaves a way for each thing it takes and makes (one of the trades of each, enough). */
+    boolean routable(Body x, List<Tie> ties){
+        Set<String> need = new HashSet<>(), had = new HashSet<>();
+        Set<Integer> own = new HashSet<>();
+        for(Body.Part p : x.parts) for(int y = p.y0; y <= p.y1(); y++) for(int xx = p.x0; xx <= p.x1(); xx++) own.add(xx + y * b.w);
+        for(Tie t : ties){
+            boolean makes = t.mine.makes(t.res) > 0f && t.other.takes(t.res) > 0f || Board.isCore(t.other);
+            String key = (makes ? "out " : "in ") + t.res;
+            need.add(key);
+            if(had.contains(key)) continue;
+            boolean liquid = Vars.content.liquid(t.res) != null;
+            if(makes ? Router.touches(t.mine, t.other, t.res, liquid) : Router.touches(t.other, t.mine, t.res, liquid)){
+                had.add(key);
+                continue;
+            }
+            boolean[] r = region(t.other, t.res, !makes);
+            for(int[] a : t.mine.around()){
+                if(makes && liquid && !Board.liquidsOut(t.mine, a[2]).contains(t.res)) continue;
+                if(!free(a[0], a[1]) || own.contains(a[0] + a[1] * b.w)) continue;
+                if(r[b.idx(a[0], a[1])]){
+                    had.add(key);
+                    break;
+                }
+            }
+        }
+        return had.containsAll(need);
+    }
+
     /** The body put where its ties cost least, searched about those it trades with, nearest first; false if nowhere. */
     boolean put(Body x, List<Tie> ties, Body.Part core){
         Set<Body> partners = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -128,25 +220,33 @@ public final class Districts{
         if(centres.isEmpty()) centres.add(core != null ? new int[]{(core.x0 + core.x1()) / 2, (core.y0 + core.y1()) / 2} : new int[]{b.w / 2, b.h / 2});
         int[][] ext = new int[4][];
         for(int r = 0; r < 4; r++) ext[r] = x.extent(r);
+        //(routed: of the places that fit, the cheapest that leaves every trade a way; else the cheapest that fits)
+        int[] fallback = null;
         for(int reach : new int[]{8, 16, 32, 64, Math.max(b.w, b.h)}){
-            double best = Double.MAX_VALUE;
-            int[] at = null;
+            List<double[]> fitting = new ArrayList<>();
             for(int[] c : centres) for(int r = 0; r < 4; r++){
                 int cx = c[0] - (ext[r][0] + ext[r][2]) / 2, cy = c[1] - (ext[r][1] + ext[r][3]) / 2;
                 for(int dy = -reach; dy <= reach; dy++) for(int dx = -reach; dx <= reach; dx++){
                     x.put(cx + dx, cy + dy, r);
                     if(!fits(x, partners)) continue;
-                    double v = cost(ties, core);
-                    if(v < best){
-                        best = v;
-                        at = new int[]{cx + dx, cy + dy, r};
-                    }
+                    fitting.add(new double[]{cost(ties, core), cx + dx, cy + dy, r});
                 }
             }
-            if(at != null){
+            fitting.sort(Comparator.comparingDouble(v -> v[0]));
+            if(!routed && !fitting.isEmpty() || routed && fitting.isEmpty() && fallback != null && reach == Math.max(b.w, b.h)){
+                int[] at = routed ? fallback : new int[]{(int)fitting.get(0)[1], (int)fitting.get(0)[2], (int)fitting.get(0)[3]};
                 x.put(at[0], at[1], at[2]);
                 return true;
             }
+            for(double[] v : fitting){
+                x.put((int)v[1], (int)v[2], (int)v[3]);
+                if(fallback == null) fallback = new int[]{(int)v[1], (int)v[2], (int)v[3]};
+                if(routable(x, ties)) return true;
+            }
+        }
+        if(fallback != null){
+            x.put(fallback[0], fallback[1], fallback[2]);
+            return true;
         }
         return false;
     }

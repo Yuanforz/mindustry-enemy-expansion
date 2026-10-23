@@ -104,7 +104,9 @@ public final class Final{
         int cx = core == null ? gen.board.w / 2 : core.x(), cy = core == null ? gen.board.h / 2 : core.y();
         Balance bal = plan(surplus, Set.of(), Map.of());
         long t0 = System.nanoTime();
-        Map<Recipe, List<Sites.Site>> sites = new Sites(gen.board).find(bal.recipes, cx, cy, keep);
+        //(the nearest places that can all stand at once: the nearest of all are mostly one place shifted a tile, so that
+        //so many of them held room for a few machines only, and the plan fell short of what a field gives)
+        Map<Recipe, List<Sites.Site>> sites = Boolean.parseBoolean(System.getProperty("bp.finalApart", "true")) ? new Sites(gen.board).findApart(bal.recipes, cx, cy, keep) : new Sites(gen.board).find(bal.recipes, cx, cy, keep);
         int n = 0;
         for(var e : sites.entrySet()){
             List<Float> ys = new ArrayList<>();

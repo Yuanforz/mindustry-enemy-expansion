@@ -338,7 +338,9 @@ public final class Recipes{
         else ammo.put("", null);
         boolean coolable = t.coolant != null;
         for(var e : ammo.entrySet()) for(boolean cooled : coolable ? new boolean[]{false, true} : new boolean[]{false}){
-            String name = t.name + (e.getKey().isEmpty() ? "" : ":" + e.getKey()) + (cooled ? "+coolant" : "");
+            //(a way always has a colon, the one of a turret on power alone too: else its firing were named as the
+            //turret's block, and a deconstructor would take that firing apart as if it were the block made as a payload)
+            String name = t.name + ":" + (e.getKey().isEmpty() ? "power" : e.getKey()) + (cooled ? "+coolant" : "");
             Recipe r = new Recipe(name, t, Recipe.Kind.turret, Recipe.Ground.none, null);
             //(what it takes besides its ammunition and coolant: power, a liquid it needs, as the titan's hydrogen)
             for(Consume c : t.consumers){
@@ -449,6 +451,8 @@ public final class Recipes{
     public static Recipe named(Map<String, Recipe> recipes, String name){
         Recipe r = recipes.get(name);
         if(r != null) return r;
+        //(a plan written before a turret on power alone had its way named so)
+        if(recipes.get(name + ":power") != null) return recipes.get(name + ":power");
         mindustry.world.Block b = Vars.content.block(name);
         if(b == null || !conductors().contains(b)) return null;
         return CONDUCTOR.computeIfAbsent(name, k -> new Recipe(b.name, b, Recipe.Kind.heater, Recipe.Ground.none, null));

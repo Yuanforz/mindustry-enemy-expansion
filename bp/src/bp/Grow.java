@@ -168,7 +168,7 @@ public final class Grow{
         Spec.Place core = g.prob.fixed.isEmpty() ? null : g.prob.fixed.get(0);
         int cx = core == null ? g.board.w / 2 : core.x(), cy = core == null ? g.board.h / 2 : core.y();
         int k = 0;
-        for(var e : new Sites(g.board).find(ground, cx, cy, 6).entrySet()) for(Sites.Site site : e.getValue()){
+        for(var e : (APART ? new Sites(g.board).findApart(ground, cx, cy, 6) : new Sites(g.board).find(ground, cx, cy, 6)).entrySet()) for(Sites.Site site : e.getValue()){
             Unit u = new Unit();
             u.recipe = e.getKey();
             u.block = u.recipe.block;
@@ -276,11 +276,29 @@ public final class Grow{
                 if(p.recipe == null) continue;
                 Set<String> outs = new TreeSet<>(p.recipe.at(p.yield).out.keySet());
                 outs.addAll(p.recipe.fixedOut.keySet());
+                //(what its lines bring it of what it takes: one not fed makes nothing of what it has to spare)
+                Map<String, Float> in = new HashMap<>();
+                Set<String> ins = new TreeSet<>(p.recipe.at(p.yield).in.keySet());
+                ins.addAll(p.recipe.fixedIn.keySet());
+                for(String r : ins) in.put(r, got.getOrDefault(((long)i.id * 1000 + k) * 31 + r.hashCode(), 0f));
+                float fed = fed(p, in);
+                if(k == 0 && state.work.containsKey(i.id)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
+                if(fed < 1f - 1e-4f) unfed.add(i.id);
                 for(String r : outs){
                     boolean liquid = Vars.content.liquid(r) != null;
                     if(!liquid && Vars.content.item(r) == null) continue;
                     float spare = p.makes(r) - handed.getOrDefault(((long)i.id * 1000 + k) * 31 + r.hashCode(), 0f);
                     if(spare <= 1e-4f) continue;
+                    //(not fed: what it does not make is lost whatever ways out it has)
+                    float unmade = Math.min(spare, p.makes(r) * (1f - fed));
+                    if(unmade > 1e-4f){
+                        float[] v = stranded.computeIfAbsent(u, x -> new HashMap<>()).computeIfAbsent(r, x -> new float[2]);
+                        v[0] += unmade;
+                        v[1] += 1;
+                        count++;
+                        spare -= unmade;
+                        if(spare <= 1e-4f) continue;
+                    }
                     //(where a line of it could end: beside a block that lacks it, beside a place not built whose machine takes it)
                     boolean[] end = new boolean[n];
                     for(var oe : bodies.entrySet()) for(int k2 = 0; k2 < oe.getValue().parts.size(); k2++){
@@ -358,6 +376,8 @@ public final class Grow{
     }
 
     Gen probeGen;
+    /** Of what stands, the machines their lines do not bring all they take (taken down first). */
+    final Set<Integer> unfed = new HashSet<>();
 
     /** Whether a machine on ground can no longer stand at its place: what is committed stands on it, or solid on its beams' way. */
     boolean blocked(Unit u){
@@ -723,6 +743,8 @@ public final class Grow{
     static final class State{
         final Map<String, Float> stock = new HashMap<>(), dig = new HashMap<>();
         final Set<Integer> built = new HashSet<>(), begun = new HashSet<>();
+        /** How hard each machine that stands worked in the game lately (1 full), as measured: by thing committed. */
+        final Map<Integer, Float> work = new HashMap<>();
         float buildSpeed = 1.2f, coreCap = 4000f, time;
 
         static State read(String file){
@@ -736,6 +758,7 @@ public final class Grow{
                     case "dig" -> s.dig.put(w[1], Float.parseFloat(w[2]));
                     case "built" -> s.built.add(Integer.parseInt(w[1]));
                     case "begun" -> s.begun.add(Integer.parseInt(w[1]));
+                    case "work" -> s.work.put(Integer.parseInt(w[1]), Float.parseFloat(w[2]));
                     case "buildSpeed" -> s.buildSpeed = Float.parseFloat(w[1]);
                     case "coreCap" -> s.coreCap = Float.parseFloat(w[1]);
                     case "time" -> s.time = Float.parseFloat(w[1]);
@@ -1012,6 +1035,13 @@ public final class Grow{
         }else{
             plan = build(st, T, L, 0, System.getProperty("bp.lp", "GLOP"), null, null);
             solve(plan, think);
+            //(what GLOP cannot vouch for at any of its precisions, another simplex code, COIN-OR's CLP, solves: slower,
+            //but it has stood where GLOP gave up)
+            if(!plan.solved() && plan.solverName.equals("GLOP") && !System.getProperty("bp.lpBackup", "CLP").isEmpty()){
+                System.out.println("  (the plan " + plan.status.toString().toLowerCase() + " in GLOP: asked of " + System.getProperty("bp.lpBackup", "CLP") + ")");
+                plan = build(st, T, L, 0, System.getProperty("bp.lpBackup", "CLP"), null, null);
+                solve(plan, think);
+            }
             //(the near spans planned again in themselves, the first in whole numbers, what they leave worth what the plan
             //says it is worth to the rest)
             int near = Math.min(T, Integer.getInteger("bp.nearSpans", 2));
@@ -1282,8 +1312,13 @@ public final class Grow{
                 res.addAll(p.recipe.at(p.yield).in.keySet());
                 res.addAll(p.recipe.fixedIn.keySet());
                 res.addAll(p.recipe.fixedOut.keySet());
+                //(what it makes, as far as its lines bring it what it takes: one fed half makes half; and no more than it was
+                //seen to work in the game, whatever held it back)
+                float fed = fed(p, in);
+                //(a machine planned to work part of the time is seen at work that part: measured against that)
+                if(k == 0 && state.work.containsKey(i.id)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
                 for(String r : res){
-                    sp.put(r, Math.max(0f, p.makes(r) - o.getOrDefault(r, 0f)));
+                    sp.put(r, Math.max(0f, p.makes(r) * fed - o.getOrDefault(r, 0f)));
                     lk.put(r, Math.max(0f, p.takes(r) - in.getOrDefault(r, 0f)));
                 }
                 g.spare.put(p, sp);
@@ -1348,10 +1383,14 @@ public final class Grow{
         if(RING > 0f){
             float tile = (float)g.weights.cost(g.carriers.cheapest(Carriers.Role.conduit, g.weights));
             g.board.price = new float[g.board.w * g.board.h];
+            g.board.priceFor = new Recipe[g.board.w * g.board.h];
             for(Unit u : units){
                 if(u.site == null || !u.required || ledger.committed(u.key) > 0 || step.containsKey(u)) continue;
                 Body ghost = body(g, u, -1);
-                for(Body.Part p : ghost.parts) for(int[] t : p.around()) if(g.board.in(t[0], t[1])) g.board.price[g.board.idx(t[0], t[1])] = RING * tile;
+                for(Body.Part p : ghost.parts) for(int[] t : p.around()) if(g.board.in(t[0], t[1])){
+                    g.board.price[g.board.idx(t[0], t[1])] = RING * tile;
+                    g.board.priceFor[g.board.idx(t[0], t[1])] = u.recipe;
+                }
             }
         }
         //(what is wrong already, by the game's rules, before the step: the step is to make nothing worse)
@@ -1457,6 +1496,27 @@ public final class Grow{
             own++;
             trouble.add(e.getKey());
         }
+        //(a machine of the step's that nothing hands some thing it takes, no line of it planned at all (no maker had any
+        //to spare): it cannot work, the step's own, as one its line does not reach)
+        Map<Body.Part, Map<String, Float>> handedTo = new IdentityHashMap<>();
+        for(Router.Net n : g.bestNets) for(int k = 0; k < n.to.size() && k < n.flows.size(); k++){
+            Body.Part t = n.to.get(k);
+            if(n.unreached.contains(t)) continue;
+            handedTo.computeIfAbsent(t, x -> new HashMap<>()).merge(n.res, n.flows.get(k), Float::sum);
+        }
+        for(Body b : fresh.keySet()) for(Body.Part p : b.parts){
+            if(p.recipe == null) continue;
+            Set<String> ins = new TreeSet<>(p.recipe.at(p.yield).in.keySet());
+            ins.addAll(p.recipe.fixedIn.keySet());
+            for(String r : ins){
+                if(Vars.content.item(r) == null && Vars.content.liquid(r) == null || p.takes(r) <= 1e-6f) continue;
+                //(handed straight by a part of its own body: a heater's fuel is its own body's business, laid with it)
+                if(handedTo.getOrDefault(p, Map.of()).getOrDefault(r, 0f) > 1e-6f) continue;
+                own++;
+                trouble.add(b);
+                later.add("nothing hands " + r + " to " + Gen.where(p));
+            }
+        }
         for(String u : g.unpoweredKept) if(freshAt.contains(u)){
             own++;
             for(Body b : fresh.keySet()) for(Body.Part p : b.parts) if(u.equals(p.block.name + "@" + p.x0 + "," + p.y0)) trouble.add(b);
@@ -1537,6 +1597,19 @@ public final class Grow{
         return true;
     }
 
+    /** How much of what a part takes (items, liquids) its lines bring it, the least of them (1 for one that takes none). */
+    static float fed(Body.Part p, Map<String, Float> in){
+        float fed = 1f;
+        Set<String> ins = new TreeSet<>(p.recipe.at(p.yield).in.keySet());
+        ins.addAll(p.recipe.fixedIn.keySet());
+        for(String r : ins){
+            if(Vars.content.item(r) == null && Vars.content.liquid(r) == null) continue;
+            float t = p.takes(r);
+            if(t > 1e-6f) fed = Math.min(fed, Math.min(1f, in.getOrDefault(r, 0f) / t));
+        }
+        return fed;
+    }
+
     /** What a line carries a second: its own flows, and what the lines that run on into it carry. */
     static float load(Inst line, Map<Integer, List<Inst>> runInto, Set<Integer> seen){
         if(!seen.add(line.id)) return 0f;
@@ -1603,9 +1676,11 @@ public final class Grow{
         Set<Integer> gone = new HashSet<>();
         for(var e : takeDown.entrySet()){
             int k = e.getValue();
-            for(int i = ledger.insts.size() - 1; i >= 0 && k > 0; i--){
+            //(those not fed first, then the last committed)
+            for(int pass = 0; pass < 2; pass++) for(int i = ledger.insts.size() - 1; i >= 0 && k > 0; i--){
                 Inst in = ledger.insts.get(i);
                 if(in.removed || !e.getKey().key.equals(in.unit)) continue;
+                if(pass == 0 && !unfed.contains(in.id)) continue;
                 in.removed = true;
                 removed.add(in);
                 gone.add(in.id);
@@ -1660,6 +1735,8 @@ public final class Grow{
 
     /** How often a step is planned again for what it could not lay out (bp.replans; 0: the step only lessened). */
     static final int REPLANS = Integer.getInteger("bp.replans", 0);
+    /** Whether the ways up on ground are places that can all stand at once (bp.apart), not merely the nearest. */
+    static final boolean APART = Boolean.parseBoolean(System.getProperty("bp.apart", "false"));
     /** What a line pays to stand against a place of the final form not built yet, in tiles of detour (bp.ring; 0 none). */
     static final float RING = Float.parseFloat(System.getProperty("bp.ring", "0"));
 

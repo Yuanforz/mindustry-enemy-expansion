@@ -51,6 +51,30 @@ public final class Sites{
         return out;
     }
 
+    /**
+     * Of each recipe, the nearest places at full yield that can all stand at once, so many: none on another's body or on
+     * the tiles its beams pass over (the nearest are often one place turned or shifted a tile, of which one stands).
+     */
+    public Map<Recipe, List<Site>> findApart(List<Recipe> recipes, int cx, int cy, int keep){
+        Map<Recipe, List<Site>> all = find(recipes, cx, cy, Integer.MAX_VALUE), out = new LinkedHashMap<>();
+        for(var e : all.entrySet()){
+            List<Site> kept = new ArrayList<>();
+            Set<Integer> taken = new HashSet<>();
+            for(Site st : e.getValue()){
+                if(kept.size() >= keep) break;
+                boolean clash = false;
+                for(int t : st.body()) if(taken.contains(t)) clash = true;
+                for(int t : st.lane()) if(taken.contains(t)) clash = true;
+                if(clash) continue;
+                kept.add(st);
+                for(int t : st.body()) taken.add(t);
+                for(int t : st.lane()) taken.add(t);
+            }
+            out.put(e.getKey(), kept);
+        }
+        return out;
+    }
+
     /** The place of a recipe here, if it is at full yield. */
     Site at(Recipe r, int x0, int y0, int rot){
         Block bl = r.block;

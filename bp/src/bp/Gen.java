@@ -539,7 +539,8 @@ public final class Gen{
     int overusedKept, leaksKept;
     /** Whether the bodies stand where they are to stand already (placed by other means): the first try lays lines only. */
     boolean keep;
-    static final boolean GREEDY = System.getProperty("bp.place", "anneal").equals("greedy");
+    static final boolean ROUTED = System.getProperty("bp.place", "anneal").equals("routed");
+    static final boolean GREEDY = System.getProperty("bp.place", "anneal").equals("greedy") || ROUTED;
 
     Spec layOut(long seed){
         long t0 = System.nanoTime();
@@ -560,6 +561,7 @@ public final class Gen{
             if(GREEDY && attempt == 0 && !keep && !placer.movable.isEmpty()){
                 Districts d = new Districts(this);
                 d.room = Integer.getInteger("bp.room", 1);
+                d.routed = ROUTED;
                 d.run();
                 placer.run(0, false, 0.0);
             }else placer.run(steps, attempt == 0 && !keep, attempt == 0 ? 1.0 : 0.05);

@@ -138,6 +138,16 @@ public class Climb{
                 lastPlanAt = now;
             }
             Boot.frames(1);
+            //(how hard each machine that stands works, sampled each half second: what the planner is told it makes)
+            if(f % 30 == 0) for(Job j : jobs){
+                if(j.remove || j.unit == null || j.blocks.isEmpty() || !standing(j)) continue;
+                Object[] b0 = j.blocks.get(0);
+                Tile t = Vars.world.tile((Integer)b0[1], (Integer)b0[2]);
+                if(t == null || t.build == null || t.build.block.consumers.length == 0) continue;
+                float[] w = worked.computeIfAbsent(j.id, k -> new float[2]);
+                w[0] += t.build.efficiency;
+                w[1] += 1;
+            }
             if(now >= nextTell){
                 nextTell = now + 60f;
                 int standing = 0;
@@ -233,8 +243,23 @@ public class Climb{
         return lines;
     }
 
+    /** Of each thing that stands and works by something, how hard its machine worked since the last plan: {sum, samples}. */
+    static final Map<Integer, float[]> worked = new HashMap<>();
+    /** And over the window before that: the planner is told the better of the two (a machine just fed is not given up). */
+    static final Map<Integer, Float> workedBefore = new HashMap<>();
+
     static void writeState(Fi file, List<Job> jobs, CoreBlock.CoreBuild core, Unit unit, Builder hand, float now){
         StringBuilder s = new StringBuilder();
+        for(var e : worked.entrySet()){
+            float[] w = e.getValue();
+            if(w[1] < 60) continue;
+            float avg = w[0] / w[1];
+            Float before = workedBefore.get(e.getKey());
+            s.append(String.format(Locale.ROOT, "work %d %.3f%n", e.getKey(), before == null ? avg : Math.max(avg, before)));
+        }
+        workedBefore.clear();
+        for(var e : worked.entrySet()) if(e.getValue()[1] >= 60) workedBefore.put(e.getKey(), e.getValue()[0] / e.getValue()[1]);
+        worked.clear();
         for(Item item : Vars.content.items()) if(core.items.get(item) > 0) s.append("stock ").append(item.name).append(' ').append(core.items.get(item)).append('\n');
         for(Item item : Vars.content.items()) if(unit.canMine(item) && hand.wall(item, core) != null) s.append(String.format(Locale.ROOT, "dig %s %.3f%n", item.name, hand.digRate(item)));
         for(Job j : jobs) if(!j.remove && standing(j)) s.append("built ").append(j.id).append('\n');

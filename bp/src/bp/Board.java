@@ -201,6 +201,8 @@ public final class Board{
      * own lines will have to start.
      */
     public float[] price;
+    /** Of each priced tile, the place's recipe it is kept for: lines of what that takes or makes pay nothing there. */
+    public Recipe[] priceFor;
 
     /** Marks the ground the bodies keep clear (their areas) as no place for a solid block, and what they hold whole. */
     public void putClear(Collection<Body> bodies){

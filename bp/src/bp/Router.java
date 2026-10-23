@@ -111,12 +111,27 @@ public final class Router{
     boolean same(Piece a, Piece c){
         if(a.itemCarrier() && c.itemCarrier() && coreBound(a) && coreBound(c)) return true;
         if(!a.res.equals(c.res)) return false;
-        //(lines of one maker and one thing, each carrying its alone: what one hands the other is the maker's all the same)
-        Body.Part ma = makerOf(a), mc = makerOf(c);
-        if(ma != null && ma == mc) return true;
+        //(a line that branches off one that stands, and that one: what the one hands the other is the branch's own)
+        if(branches(a, c) || branches(c, a)) return true;
         if(a.line == null && c.line == null) return true;
         List<Body.Part> ta = takers(a), tc = takers(c);
         return ta != null && tc != null && ta.size() == tc.size() && ta.containsAll(tc);
+    }
+
+    /** Whether a tile kept about a place of the final form is kept for what a piece carries: what the place takes or makes. */
+    boolean keptFor(Piece q, int i){
+        Recipe r = b.priceFor == null ? null : b.priceFor[i];
+        if(r == null) return false;
+        return r.at(1f).in.containsKey(q.res) || r.at(1f).out.containsKey(q.res) || r.fixedIn.containsKey(q.res) || r.fixedOut.containsKey(q.res) || r.perYield.containsKey(q.res);
+    }
+
+    /** Whether a piece's line branches off the line that stands another piece is of. */
+    boolean branches(Piece p, Piece standing){
+        if(standing.line == null || p.fixed) return false;
+        Net n = byId.get(p.net);
+        if(n == null) return false;
+        for(Object[] t : n.taps) if(((Piece)t[0]).line == standing.line) return true;
+        return false;
     }
 
     /** The maker a piece's line carries from alone (null: not one alone, or not known). */
@@ -390,7 +405,7 @@ public final class Router{
     float price(Piece q, Piece partner){
         int i = b.idx(q.x, q.y);
         if(hard && (!at[i].isEmpty() || leaks(q, partner) > 0)) return Float.POSITIVE_INFINITY;
-        return cost(q.kind) + hist[i] + pf * (at[i].size() + leaks(q, partner)) + (b.price != null ? b.price[i] : 0f);
+        return cost(q.kind) + hist[i] + pf * (at[i].size() + leaks(q, partner)) + (b.price != null && !keptFor(q, i) ? b.price[i] : 0f);
     }
 
     int gap(int x, int y, Body.Part p){
