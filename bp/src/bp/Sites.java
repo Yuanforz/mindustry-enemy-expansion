@@ -78,6 +78,9 @@ public final class Sites{
             List<Site> kept = new ArrayList<>();
             Set<Integer> taken = new HashSet<>(pre.getOrDefault(e.getKey(), Set.of()));
             boolean rowed = Strips.rowed(e.getKey());
+            //(the ground other places of it stand on: a face kept there would cost a place)
+            Set<Integer> wanted = new HashSet<>();
+            if(!rowed && FACE) for(Site st : e.getValue()) for(int t : st.body()) wanted.add(t);
             for(Site st : e.getValue()){
                 if(kept.size() >= keep) break;
                 boolean clash = false;
@@ -86,7 +89,7 @@ public final class Sites{
                 if(clash) continue;
                 //(a whole face of it kept free for its lines, none of the others on it: else places side by side and back
                 //to back wall one another in, a drill among them with no tile to hand out of; a pump's is its strip's)
-                int[] face = rowed || !FACE ? new int[0] : face(st, taken, cx, cy);
+                int[] face = rowed || !FACE ? new int[0] : face(st, taken, wanted, cx, cy);
                 if(face == null) continue;
                 if(face.length > 0){
                     int[] lane = Arrays.copyOf(st.lane(), st.lane().length + face.length);
@@ -106,14 +109,16 @@ public final class Sites{
     static final boolean FACE = Boolean.parseBoolean(System.getProperty("bp.siteFace", "true"));
 
     /**
-     * A face of a place all on ground a carrier stands on and none of it taken, the one nearest the core; not the face a
-     * drill or a crusher works toward. Null if it has none.
+     * A face of a place all on ground a carrier stands on and none of it taken; not the face a drill or a crusher works
+     * toward. Of those, the one on the least ground other places stand on (each tile of it a place lost), then for one
+     * that works toward a face the one at its back (the rest of its row stands at its sides), then the one nearest the
+     * core. Null if it has none.
      */
-    int[] face(Site st, Set<Integer> taken, int cx, int cy){
+    int[] face(Site st, Set<Integer> taken, Set<Integer> wanted, int cx, int cy){
         int s = st.recipe().size, x0 = st.x0(), y0 = st.y0();
         boolean turned = st.recipe().block instanceof BeamDrill || st.recipe().block instanceof WallCrafter;
         int[] best = null;
-        int bestD = Integer.MAX_VALUE;
+        long bestD = Long.MAX_VALUE;
         for(int d = 0; d < 4; d++){
             if(turned && d == st.rot()) continue;
             int[] f = new int[s];
@@ -128,9 +133,11 @@ public final class Sites{
             }
             if(!ok) continue;
             int mx = d == 0 ? x0 + s : d == 2 ? x0 - 1 : x0 + s / 2, my = d == 1 ? y0 + s : d == 3 ? y0 - 1 : y0 + s / 2;
-            int dist = Math.abs(mx - cx) + Math.abs(my - cy);
-            if(dist < bestD){
-                bestD = dist;
+            int lost = 0;
+            for(int t : f) if(wanted.contains(t)) lost++;
+            long score = lost * 1_000_000L + (turned && d != (st.rot() + 2) % 4 ? 10_000L : 0L) + Math.abs(mx - cx) + Math.abs(my - cy);
+            if(score < bestD){
+                bestD = score;
                 best = f;
             }
         }
