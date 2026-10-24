@@ -68,16 +68,31 @@ public final class Sites{
      * the tiles its beams pass over (the nearest are often one place turned or shifted a tile, of which one stands).
      */
     public Map<Recipe, List<Site>> findApart(List<Recipe> recipes, int cx, int cy, int keep){
+        return findApart(recipes, cx, cy, keep, Map.of());
+    }
+
+    /** The same, of each recipe none on the tiles given for it (kept for others: the plan's places of other recipes). */
+    public Map<Recipe, List<Site>> findApart(List<Recipe> recipes, int cx, int cy, int keep, Map<Recipe, Set<Integer>> pre){
         Map<Recipe, List<Site>> all = find(recipes, cx, cy, Integer.MAX_VALUE), out = new LinkedHashMap<>();
         for(var e : all.entrySet()){
             List<Site> kept = new ArrayList<>();
-            Set<Integer> taken = new HashSet<>();
+            Set<Integer> taken = new HashSet<>(pre.getOrDefault(e.getKey(), Set.of()));
+            boolean rowed = Strips.rowed(e.getKey());
             for(Site st : e.getValue()){
                 if(kept.size() >= keep) break;
                 boolean clash = false;
                 for(int t : st.body()) if(taken.contains(t)) clash = true;
                 for(int t : st.lane()) if(taken.contains(t)) clash = true;
                 if(clash) continue;
+                //(a whole face of it kept free for its lines, none of the others on it: else places side by side and back
+                //to back wall one another in, a drill among them with no tile to hand out of; a pump's is its strip's)
+                int[] face = rowed || !FACE ? new int[0] : face(st, taken, cx, cy);
+                if(face == null) continue;
+                if(face.length > 0){
+                    int[] lane = Arrays.copyOf(st.lane(), st.lane().length + face.length);
+                    System.arraycopy(face, 0, lane, st.lane().length, face.length);
+                    st = new Site(st.recipe(), st.x0(), st.y0(), st.rot(), st.yield(), st.body(), lane);
+                }
                 kept.add(st);
                 for(int t : st.body()) taken.add(t);
                 for(int t : st.lane()) taken.add(t);
@@ -85,6 +100,41 @@ public final class Sites{
             out.put(e.getKey(), kept);
         }
         return out;
+    }
+
+    /** Whether a place keeps a free face (bp.siteFace). */
+    static final boolean FACE = Boolean.parseBoolean(System.getProperty("bp.siteFace", "true"));
+
+    /**
+     * A face of a place all on ground a carrier stands on and none of it taken, the one nearest the core; not the face a
+     * drill or a crusher works toward. Null if it has none.
+     */
+    int[] face(Site st, Set<Integer> taken, int cx, int cy){
+        int s = st.recipe().size, x0 = st.x0(), y0 = st.y0();
+        boolean turned = st.recipe().block instanceof BeamDrill || st.recipe().block instanceof WallCrafter;
+        int[] best = null;
+        int bestD = Integer.MAX_VALUE;
+        for(int d = 0; d < 4; d++){
+            if(turned && d == st.rot()) continue;
+            int[] f = new int[s];
+            boolean ok = true;
+            for(int i = 0; i < s && ok; i++){
+                int x = d == 0 ? x0 + s : d == 2 ? x0 - 1 : x0 + i, y = d == 1 ? y0 + s : d == 3 ? y0 - 1 : y0 + i;
+                if(!b.in(x, y) || !b.floor(x, y) || taken.contains(b.idx(x, y))){
+                    ok = false;
+                    break;
+                }
+                f[i] = b.idx(x, y);
+            }
+            if(!ok) continue;
+            int mx = d == 0 ? x0 + s : d == 2 ? x0 - 1 : x0 + s / 2, my = d == 1 ? y0 + s : d == 3 ? y0 - 1 : y0 + s / 2;
+            int dist = Math.abs(mx - cx) + Math.abs(my - cy);
+            if(dist < bestD){
+                bestD = dist;
+                best = f;
+            }
+        }
+        return best;
     }
 
     /** The place of a recipe here, if it is at full yield. */

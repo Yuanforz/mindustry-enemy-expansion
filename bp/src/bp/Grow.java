@@ -1628,8 +1628,10 @@ public final class Grow{
         //(a machine on ground the step puts there itself may stand on one: the schedule has them one at a time)
         Set<Integer> stepSites = new HashSet<>();
         for(Unit u : step.keySet()) for(int t : u.tiles) stepSites.add(t);
+        //(not a place something standing is in the way of, a way up on part of it: it cannot be built till that is taken
+        //down, and held it walled in what stands on the rest of it)
         for(Unit u : units){
-            if(u.site == null || !u.required || ledger.committed(u.key) > 0 || step.containsKey(u)) continue;
+            if(u.site == null || !u.required || ledger.committed(u.key) > 0 || step.containsKey(u) || blocked(u)) continue;
             for(int t : u.tiles) if(!stepSites.contains(t)) hold.holdLocal.add(new int[]{t % g.board.w, t / g.board.w, t % g.board.w, t / g.board.w});
         }
         //(the strips of the rows of pumps the plan has, or that stand: held whole, but for what the step lays there itself,
@@ -1657,7 +1659,7 @@ public final class Grow{
         //what it will hand out, or hand it what it takes)
         g.board.ghostAt = new Body.Part[g.board.w * g.board.h];
         for(Unit u : units){
-            if(u.site == null || !u.required || ledger.committed(u.key) > 0 || step.containsKey(u)) continue;
+            if(u.site == null || !u.required || ledger.committed(u.key) > 0 || step.containsKey(u) || blocked(u)) continue;
             Body ghost = body(g, u, -1);
             for(Body.Part p : ghost.parts) for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++){
                 if(g.board.in(x, y) && !stepSites.contains(g.board.idx(x, y))) g.board.ghostAt[g.board.idx(x, y)] = p;

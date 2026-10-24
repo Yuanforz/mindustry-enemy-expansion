@@ -419,7 +419,18 @@ public final class Router{
     float price(Piece q, Piece partner){
         int i = b.idx(q.x, q.y);
         if(hard && (!at[i].isEmpty() || leaks(q, partner) > 0)) return Float.POSITIVE_INFINITY;
-        return tileCost(q.kind, i) + hist[i] + pf * (at[i].size() + leaks(q, partner)) + (b.price != null && !keptFor(q, i) ? b.price[i] : 0f);
+        return tileCost(q.kind, i) + hist[i] + pf * (at[i].size() + leaks(q, partner)) + (b.price != null && !keptFor(q, i) ? b.price[i] : 0f) + apronCost(q, i);
+    }
+
+    /** What a piece pays against the sides of machines not its line's maker or takers (Board.apron). */
+    float apronCost(Piece q, int i){
+        if(b.apron == null || q.fixed) return 0f;
+        Body.Part[] o = b.apron[i];
+        if(o == null) return 0f;
+        Net n = byId.get(q.net);
+        if(n == null) return 0f;
+        for(Body.Part p : o) if(n.from == p || n.to.contains(p)) return 0f;
+        return b.apronPrice;
     }
 
     /** What a piece of a kind costs on a tile: less on a street (Streets). */
@@ -879,7 +890,109 @@ public final class Router{
             if(box[0] <= 0 && box[1] <= 0 && box[2] >= b.w - 1 && box[3] >= b.h - 1) break;
             if(layIn(net, sink, box)) return true;
         }
-        return layIn(net, sink, null);
+        //(over the whole map, the search led by the least each tile's way to the taker can cost, round what stands: the
+        //distance alone let it fill everything cheaper than the way round)
+        if(BOUND) bound(net, sink);
+        try{
+            return layIn(net, sink, null);
+        }finally{
+            lb = null;
+        }
+    }
+
+    /** Whether a search over the whole map is led by the least a way from each tile can cost (bp.bound). */
+    static final boolean BOUND = Boolean.parseBoolean(System.getProperty("bp.bound", "true"));
+    /** Of the search under way, the least a way from each tile to the taker costs (null: none). */
+    float[] lb;
+
+    /** The estimate from a tile: the distance at the least a tile costs, or the bound found, the greater. */
+    float est(int x, int y, Body.Part sink, float hmin){
+        float h = gap(x, y, sink) * hmin;
+        if(lb != null){
+            float l = lb[b.idx(x, y)];
+            if(l > h) h = l;
+        }
+        return h;
+    }
+
+    /**
+     * The least each tile's way to the taker can cost (a lower bound, so the search stays exact): a tile free or of
+     * another line (at the price of sharing it) a step on at the least a tile costs, a hop of a bridge over anything to a
+     * free tile at that a tile; from the tiles about the taker, and about the lines that go to it (a join ends there).
+     */
+    void bound(Net net, Body.Part sink){
+        int n = b.w * b.h;
+        float hmin = hminOf(net);
+        int hop = net.cls == 2 ? lrange : net.cls == 0 ? range : 1;
+        lb = new float[n];
+        Arrays.fill(lb, Float.POSITIVE_INFINITY);
+        PriorityQueue<long[]> q = new PriorityQueue<>((p, r) -> Float.compare(Float.intBitsToFloat((int)p[0]), Float.intBitsToFloat((int)r[0])));
+        for(int[] t : sink.around()){
+            if(!b.in(t[0], t[1])) continue;
+            int i = b.idx(t[0], t[1]);
+            float c = stepBound(i, hmin);
+            if(c < lb[i]){
+                lb[i] = c;
+                q.add(new long[]{Float.floatToIntBits(c), i});
+            }
+        }
+        for(int i = 0; i < n; i++) for(Piece o : at[i]){
+            if(o.net == net.id || o.block == null) continue;
+            boolean to = o.line != null ? o.line.to.contains(sink) : byId.containsKey(o.net) && byId.get(o.net).to.contains(sink);
+            if(!to) continue;
+            int x = i % b.w, y = i / b.w;
+            for(int d = 0; d < 4; d++){
+                int nx = x + Geo.dx(d), ny = y + Geo.dy(d);
+                if(!b.in(nx, ny)) continue;
+                int ni = b.idx(nx, ny);
+                float c = stepBound(ni, hmin);
+                if(c < lb[ni]){
+                    lb[ni] = c;
+                    q.add(new long[]{Float.floatToIntBits(c), ni});
+                }
+            }
+        }
+        while(!q.isEmpty()){
+            long[] top = q.poll();
+            float dv = Float.intBitsToFloat((int)top[0]);
+            int v = (int)top[1];
+            if(dv > lb[v]) continue;
+            int x = v % b.w, y = v / b.w;
+            for(int e = 0; e < 4; e++){
+                //(a step from the tile before: its piece's least; a hop of a bridge from j back, over anything: j tiles at the least)
+                for(int j = 1; j <= Math.max(1, hop); j++){
+                    int ux = x - Geo.dx(e) * j, uy = y - Geo.dy(e) * j;
+                    if(!b.in(ux, uy)) break;
+                    int u = b.idx(ux, uy);
+                    float c;
+                    if(j == 1) c = stepBound(u, hmin);
+                    else{
+                        if(!open(ux, uy, false) || !open(x, y, false)) continue;
+                        c = j * hmin;
+                    }
+                    if(c == Float.POSITIVE_INFINITY) continue;
+                    float nd = dv + c;
+                    if(nd < lb[u]){
+                        lb[u] = nd;
+                        q.add(new long[]{Float.floatToIntBits(nd), u});
+                    }
+                }
+            }
+        }
+    }
+
+    /** The least a piece on this tile costs: none where nothing may stand; a tile of another line at the price of sharing it. */
+    float stepBound(int i, float hmin){
+        int x = i % b.w, y = i / b.w;
+        if(!b.in(x, y) || b.partAt[i] != null || !b.floor(x, y) || b.held != null && b.held[i]) return Float.POSITIVE_INFINITY;
+        return hmin + pf * at[i].size();
+    }
+
+    /** The least a tile of a line of this kind costs (a bridge's hop as much a tile as it spans; on a street less). */
+    float hminOf(Net net){
+        float hmin = net.cls == 0 ? Math.min(cost(Kind.duct), (2f * cost(Kind.bridgeIn) + this.w.tile() * (range - 1)) / (range + 1)) : net.cls == 1 ? cost(Kind.surge) : Math.min(cost(Kind.conduit), (2f * cost(Kind.lbridgeIn) + this.w.tile() * (lrange - 1)) / (lrange + 1));
+        if(b.street != null && b.streetCount > 0) hmin *= Math.min(1f, Streets.COST);
+        return hmin;
     }
 
     /** The square the search keeps within (null: the whole map). */
@@ -920,9 +1033,8 @@ public final class Router{
         intoOf.clear();
         int w = b.w;
         PriorityQueue<long[]> open = new PriorityQueue<>((p, q) -> Double.compare(Double.longBitsToDouble(p[0]), Double.longBitsToDouble(q[0])));
-        float hmin = net.cls == 0 ? Math.min(cost(Kind.duct), (2f * cost(Kind.bridgeIn) + this.w.tile() * (range - 1)) / (range + 1)) : net.cls == 1 ? cost(Kind.surge) : Math.min(cost(Kind.conduit), (2f * cost(Kind.lbridgeIn) + this.w.tile() * (lrange - 1)) / (lrange + 1));
         //(a tile of street costs less: the least a tile may cost, so that the estimate stays below)
-        if(b.street != null && b.streetCount > 0) hmin *= Math.min(1f, Streets.COST);
+        float hmin = hminOf(net);
         //starts: the tiles about the maker it hands the thing to
         Body.Part from = net.from;
         int starts = 0;
@@ -930,7 +1042,7 @@ public final class Router{
             if(!open(t[0], t[1], false)) continue;
             List<String> gives = Board.out(from, t[2]);
             if(!gives.contains(net.res)) continue;
-            push(open, state(b.idx(t[0], t[1]), t[2], 1), 0f, -1, 0, gap(t[0], t[1], sink) * hmin);
+            push(open, state(b.idx(t[0], t[1]), t[2], 1), 0f, -1, 0, est(t[0], t[1], sink, hmin));
             starts++;
         }
         if(Boolean.getBoolean("bp.debugStarts") && starts == 0){
@@ -974,7 +1086,7 @@ public final class Router{
                     continue;
                 }
                 if(!open(nx, ny, false)) continue;
-                push(open, state(b.idx(nx, ny), side, 1), tap, -2 - (pi * 4 + side), 0, gap(nx, ny, sink) * hmin);
+                push(open, state(b.idx(nx, ny), side, 1), tap, -2 - (pi * 4 + side), 0, est(nx, ny, sink, hmin));
             }
         }
         //(and the pieces of lines that stand from its maker, of its thing alone, turned to routers: their sides)
@@ -1014,7 +1126,7 @@ public final class Router{
                     continue;
                 }
                 if(!open(nx, ny, false)) continue;
-                push(open, state(b.idx(nx, ny), side, 1), tap, -2 - code, 0, gap(nx, ny, sink) * hmin);
+                push(open, state(b.idx(nx, ny), side, 1), tap, -2 - code, 0, est(nx, ny, sink, hmin));
             }
         }
         while(!open.isEmpty()){
@@ -1116,7 +1228,7 @@ public final class Router{
                 }
                 int k2 = type == 3 ? 2 : 0;
                 int ns = state(b.idx(nx[0], nx[1]), nx[2], k2);
-                push(open, ns, ng, st, m, gap(nx[0], nx[1], sink) * hmin);
+                push(open, ns, ng, st, m, est(nx[0], nx[1], sink, hmin));
             }
         }
         if(bestGoal == Float.MAX_VALUE) return false;

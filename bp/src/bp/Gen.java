@@ -546,6 +546,8 @@ public final class Gen{
     int overusedKept, leaksKept;
     /** Whether the bodies stand where they are to stand already (placed by other means): the first try lays lines only. */
     boolean keep;
+    /** What a line pays to stand against another machine's side, in tiles of detour (bp.apron; 0 nothing). */
+    static final float APRON = Float.parseFloat(System.getProperty("bp.apron", "6"));
     static final boolean ROUTED = System.getProperty("bp.place", "anneal").equals("routed");
     static final boolean GREEDY = System.getProperty("bp.place", "anneal").equals("greedy") || ROUTED;
 
@@ -580,6 +582,8 @@ public final class Gen{
             //(bodies that stand where they may not: on ground they cannot stand on, over another, against what they hand
             //into unmeant)
             Set<Body> misplaced = placer.cost >= placer.wHard ? placer.hardBodies() : Set.of();
+            //(the machines' sides kept for their own lines: another's pays there, as a detour of so many tiles)
+            board.markAprons(bodies, APRON * (float)weights.cost(carriers.cheapest(Carriers.Role.conduit, weights)));
             List<Router.Net> nets = nets();
             Router router = new Router(board, nets, weights);
             router.carry(history);

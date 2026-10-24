@@ -207,6 +207,35 @@ public final class Board{
     public Recipe[] priceFor;
     /** Of each priced tile against a standing machine's side, the machine: its own lines pay nothing there (null: none). */
     public Body.Part[] portOwner;
+    /**
+     * The free tiles against each machine's sides (the core's, a port's), with the machines (null: none): a line of
+     * another's pays to stand there (Router: as a detour of bp.apron tiles), so that a machine's sides are left for its
+     * own lines; before, a line passing by took the one side a pump or a drill had, and its own lines had no way out.
+     */
+    public Body.Part[][] apron;
+    public float apronPrice;
+
+    public void markAprons(Collection<Body> bodies, float price){
+        apronPrice = price;
+        apron = price <= 0f ? null : new Body.Part[w * h][];
+        if(apron == null) return;
+        for(Body body : bodies) for(Body.Part p : body.parts){
+            if(p.piece != null || !(p.recipe != null || isCore(p) || isPortCarrier(p))) continue;
+            for(int[] t : p.around()){
+                if(!in(t[0], t[1])) continue;
+                int i = idx(t[0], t[1]);
+                if(partAt[i] != null) continue;
+                Body.Part[] o = apron[i];
+                if(o == null) apron[i] = new Body.Part[]{p};
+                else if(!Arrays.asList(o).contains(p)){
+                    Body.Part[] n = Arrays.copyOf(o, o.length + 1);
+                    n[o.length] = p;
+                    apron[i] = n;
+                }
+            }
+        }
+    }
+
     /** The streets (Streets): no body laid now on one, a line there cheaper (null: none). */
     public boolean[] street;
     public int streetCount;
