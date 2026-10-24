@@ -244,6 +244,8 @@ public final class Grow{
         return s;
     }
 
+    /** Whether what is begun in a span may take some of the next span's time (bp.spill). */
+    static final boolean SPILL = Boolean.parseBoolean(System.getProperty("bp.spill", "false"));
     /** Whether the near spans take down no more than the plan does by then (bp.nearDown). */
     static final boolean NEAR_DOWN = Boolean.parseBoolean(System.getProperty("bp.nearDown", "false"));
     /** Whether what is committed and not built yet takes the core unit's time first and works only once built (bp.pending). */
@@ -1236,9 +1238,20 @@ public final class Grow{
             res.addAll(u.cost.keySet());
         }
         MPObjective obj = solver.objective();
+        MPVariable spilled = null;
         for(int t = 1; t <= T; t++){
             //the core unit's time, but for what it has to build of what is committed
             MPConstraint time = solver.makeConstraint(-inf, Math.max(0f, L[t] - busy[t]));
+            //(what is begun in a span may take longer than the span: the rest of its time comes out of the next. Before,
+            //a furnace with its lines, 91 s at the core unit's measured speed, never fit a span of 90 s whole: each step
+            //put it off to the next span, and the core unit stood idle for minutes)
+            if(SPILL){
+                if(spilled != null) time.setCoefficient(spilled, 1);
+                if(t < T){
+                    spilled = solver.makeNumVar(0, inf, "");
+                    time.setCoefficient(spilled, -1);
+                }
+            }
             for(Unit u : units){
                 time.setCoefficient(m.b.get(u)[t], u.seconds / speed);
                 time.setCoefficient(m.d.get(u)[t], u.seconds / speed);
@@ -1386,8 +1399,11 @@ public final class Grow{
     /** Whether the final form counts a unit as it works (bp.creditWork), not as it stands. */
     static final boolean CREDIT_WORK = Boolean.parseBoolean(System.getProperty("bp.creditWork", "true"));
 
-    /** What a kind of block at work is worth a second, all kinds together, as a share of the whole standing (bp.kindWorth; 0 none). */
-    static final double KIND_WORTH = Double.parseDouble(System.getProperty("bp.kindWorth", "0"));
+    /**
+     * What a kind of block at work is worth a second, all kinds together, as a share of the whole standing (bp.kindWorth;
+     * 0 none). On big-3, 90 minutes: 66 kinds standing at 1, 50 at 0.
+     */
+    static final double KIND_WORTH = Double.parseDouble(System.getProperty("bp.kindWorth", "1"));
 
     Map<Block, List<Unit>> kinds;
 
@@ -1524,7 +1540,7 @@ public final class Grow{
         //(a test: one unit's course in the plan and in the near choice, and what the plan says it is worth after; bp.watch)
         if(System.getProperty("bp.watch") != null && plan.solved()) for(Unit u : units){
             if(!u.key.contains(System.getProperty("bp.watch"))) continue;
-            StringBuilder sb = new StringBuilder("  watch " + u.key + ": had " + ledger.committed(u.key) + "; plan n/b/d/a:");
+            StringBuilder sb = new StringBuilder("  watch " + u.key + ": had " + ledger.committed(u.key) + "; costs " + u.cost + ", " + String.format(Locale.ROOT, "%.1f", u.seconds) + " s; rates " + u.rate + "; plan n/b/d/a:");
             for(int t = 1; t <= plan.T; t++) sb.append(String.format(Locale.ROOT, " %d:%.2f/%.2f/%.2f/%.2f", t, plan.n.get(u)[t].solutionValue(), plan.b.get(u)[t].solutionValue(), plan.d.get(u)[t].solutionValue(), plan.a.get(u)[t].solutionValue()));
             if(first.solved()){
                 sb.append("; near:");
