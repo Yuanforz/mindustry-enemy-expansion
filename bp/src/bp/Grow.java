@@ -219,6 +219,8 @@ public final class Grow{
     final Map<Unit, Map<String, float[]>> stranded = new HashMap<>();
     /** Of each unit that stands, how much works now, its machines together (what their lines bring them, as measured). */
     final Map<Unit, Float> grounded = new HashMap<>();
+    /** Things the schedule has new makers of built in its second span: a machine of this step that takes one may wait for it. */
+    final Set<String> soonMade = new HashSet<>();
     /**
      * Whether a liquid's takers in a span get no more than its makers that take no liquid make then, and what its other
      * makers made the span before (what works now, for the first): a ring of makers that feed one another (a pump on
@@ -292,7 +294,24 @@ public final class Grow{
                 float fed = fed(p, in);
                 if(k == 0 && state.work.containsKey(i.id)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
                 if(fed < 1f - 1e-4f) unfed.add(i.id);
-                if(k == 0) grounded.merge(u, fed, Float::sum);
+                if(k == 0){
+                    //(one with a thing it takes that no line brings at all waits for a maker of it yet to come, whose line
+                    //will reach it (a new maker's line goes to what stands and lacks its thing): not dead, as one is that a
+                    //line brings from a maker that does not work)
+                    boolean waits = false;
+                    Map<String, Float> wired = new HashMap<>();
+                    for(String r : ins){
+                        if(Vars.content.item(r) == null && Vars.content.liquid(r) == null || p.takes(r) <= 1e-6f) continue;
+                        if(in.get(r) <= 1e-6f) waits = true;
+                        else wired.put(r, in.get(r));
+                    }
+                    float alive = fed;
+                    if(waits){
+                        alive = 1f;
+                        for(var we : wired.entrySet()) alive = Math.min(alive, Math.min(1f, we.getValue() / p.takes(we.getKey())));
+                    }
+                    grounded.merge(u, alive, Float::sum);
+                }
                 for(String r : outs){
                     boolean liquid = Vars.content.liquid(r) != null;
                     if(!liquid && Vars.content.item(r) == null) continue;
@@ -886,12 +905,6 @@ public final class Grow{
                 //(those taken down before this span go first among the dead: what is taken down in it works not anyway)
                 for(int tau = 1; tau < t; tau++) c.setCoefficient(down[tau], -1);
             }
-            //(what is built now works from the next span: the layout lays it only with what feeds it now or comes with it)
-            if(PRIME && T >= 2){
-                MPConstraint c = solver.makeConstraint(0, inf);
-                c.setCoefficient(w[2], 1);
-                c.setCoefficient(up[1], -1);
-            }
             m.n.put(u, v);
             m.a.put(u, w);
             m.b.put(u, up);
@@ -1111,6 +1124,11 @@ public final class Grow{
             }
         }
         if(!plan.solved() || !first.solved()) return out;
+        //(what new makers the near spans build next: a machine built now that takes it may stand till they come)
+        if(first.T >= 2) for(Unit u : units){
+            if(first.b.get(u)[2].solutionValue() <= 1e-3) continue;
+            for(var e : u.rate.entrySet()) if(e.getValue() > 0f) soonMade.add(e.getKey());
+        }
         for(Unit u : units){
             int add = (int)Math.round(first.b.get(u)[1].solutionValue()), drop = (int)Math.round(first.d.get(u)[1].solutionValue());
             //(to build some and take some down of one unit in a span is the same as the difference alone, for less)
@@ -1558,6 +1576,11 @@ public final class Grow{
                 if(Vars.content.item(r) == null && Vars.content.liquid(r) == null || p.takes(r) <= 1e-6f) continue;
                 //(handed straight by a part of its own body: a heater's fuel is its own body's business, laid with it)
                 if(handedTo.getOrDefault(p, Map.of()).getOrDefault(r, 0f) > 1e-6f) continue;
+                //(a maker of it the schedule builds next span: this one stands and waits, its line laid then)
+                if(soonMade.contains(r)){
+                    later.add("waits for " + r + ": " + Gen.where(p));
+                    continue;
+                }
                 own++;
                 trouble.add(b);
                 later.add("nothing hands " + r + " to " + Gen.where(p));

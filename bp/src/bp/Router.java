@@ -1411,8 +1411,24 @@ public final class Router{
                 q.add(i);
             }
         }
+        //(and the tiles about the lines of its maker that stand, of its thing: the search may branch off them, bp.taps)
+        if(TAPS && (net.cls == 0 || net.cls == 2)) for(Piece f : standingOf(net.from)){
+            if(!f.res.equals(net.res) || f.block == null) continue;
+            for(int d = 0; d < 4; d++){
+                int nx = f.x + Geo.dx(d), ny = f.y + Geo.dy(d);
+                if(!b.in(nx, ny)) continue;
+                if(sink.covers(nx, ny)) return true;
+                int i = b.idx(nx, ny);
+                if(passable(i) && !seen[i]){
+                    seen[i] = true;
+                    q.add(i);
+                }
+            }
+        }
+        int starts = q.size(), flooded = 0;
         while(!q.isEmpty()){
             int i = q.poll(), x = i % b.w, y = i / b.w;
+            flooded++;
             for(int e = 0; e < 4; e++){
                 for(int j = 1; j <= Math.max(1, hop); j++){
                     int nx = x + Geo.dx(e) * j, ny = y + Geo.dy(e) * j;
@@ -1429,6 +1445,14 @@ public final class Router{
                     }
                 }
             }
+        }
+        if(Boolean.getBoolean("bp.debugFlood")){
+            StringBuilder why = new StringBuilder();
+            if(starts == 0) for(int[] t : net.from.around()){
+                int i = b.in(t[0], t[1]) ? b.idx(t[0], t[1]) : -1;
+                why.append(String.format(" %d,%d/%d:%s%s%s%s", t[0], t[1], t[2], i < 0 ? "out" : b.partAt[i] != null ? "part(" + b.partAt[i].block.name + ")" : "", i >= 0 && !b.floor(t[0], t[1]) ? "nofloor" : "", i >= 0 && b.held != null && b.held[i] ? "held" : "", Board.out(net.from, t[2])));
+            }
+            System.out.println("    (no way at all: " + net + " to " + sink.block.name + "@" + sink.x0 + "," + sink.y0 + ": " + starts + " starts, " + flooded + " tiles flooded)" + why);
         }
         return false;
     }
