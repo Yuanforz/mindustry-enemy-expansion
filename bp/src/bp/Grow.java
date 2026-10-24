@@ -1487,6 +1487,35 @@ public final class Grow{
                 }
             }
         }
+        //(the tiles against a standing machine's sides it hands out of, while it has some of a thing to hand out still: what
+        //a line not its own pays to stand there, as a detour of so many tiles; else a line passing by takes the side, and
+        //what the machine makes besides has no way out, an electrolyzer's hydrogen side one of three tiles)
+        if(PORT > 0f){
+            float tile = (float)g.weights.cost(g.carriers.cheapest(Carriers.Role.conduit, g.weights));
+            int n = g.board.w * g.board.h;
+            if(g.board.price == null){
+                g.board.price = new float[n];
+                g.board.priceFor = new Recipe[n];
+            }
+            g.board.portOwner = new Body.Part[n];
+            Map<Long, Float> handed = new HashMap<>();
+            for(Inst i : ledger.insts) if(!i.removed) for(Object[] f : i.flows) handed.merge(((long)(Integer)f[1] * 1000 + (Integer)f[2]) * 31 + ((String)f[0]).hashCode(), (Float)f[5], Float::sum);
+            for(var e : whose.entrySet()){
+                Body.Part p = e.getKey();
+                if(p.recipe == null || e.getValue()[0] == 0) continue;
+                long key = (long)e.getValue()[0] * 1000 + e.getValue()[1];
+                for(int[] t : p.around()){
+                    if(!g.board.in(t[0], t[1])) continue;
+                    int i = g.board.idx(t[0], t[1]);
+                    if(g.board.partAt[i] != null) continue;
+                    boolean spare = false;
+                    for(String r : Board.out(p, t[2])) if(p.makes(r) - handed.getOrDefault(key * 31 + r.hashCode(), 0f) > 1e-4f) spare = true;
+                    if(!spare) continue;
+                    g.board.price[i] = Math.max(g.board.price[i], PORT * tile);
+                    g.board.portOwner[i] = p;
+                }
+            }
+        }
         //(what is wrong already, by the game's rules, before the step: the step is to make nothing worse)
         int before = 0;
         if(!ledger.insts.isEmpty()){
@@ -1854,6 +1883,8 @@ public final class Grow{
     static final boolean APART = Boolean.parseBoolean(System.getProperty("bp.apart", "true"));
     /** What a line pays to stand against a place of the final form not built yet, in tiles of detour (bp.ring; 0 none). */
     static final float RING = Float.parseFloat(System.getProperty("bp.ring", "0"));
+    /** What a line not its own pays to stand against a side a standing machine hands out of, in tiles of detour (bp.portReserve). */
+    static final float PORT = Float.parseFloat(System.getProperty("bp.portReserve", "0"));
 
     public static void main(String[] args){
         long tBoot = System.nanoTime();

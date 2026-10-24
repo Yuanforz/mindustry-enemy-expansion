@@ -127,6 +127,11 @@ public final class Router{
 
     /** Whether a tile kept about a place of the final form is kept for what a piece carries: what the place takes or makes. */
     boolean keptFor(Piece q, int i){
+        Body.Part owner = b.portOwner == null ? null : b.portOwner[i];
+        if(owner != null){
+            Net n = q.fixed ? null : byId.get(q.net);
+            return n != null && (n.from == owner || n.to.contains(owner));
+        }
         Recipe r = b.priceFor == null ? null : b.priceFor[i];
         if(r == null) return false;
         return r.at(1f).in.containsKey(q.res) || r.at(1f).out.containsKey(q.res) || r.fixedIn.containsKey(q.res) || r.fixedOut.containsKey(q.res) || r.perYield.containsKey(q.res);
