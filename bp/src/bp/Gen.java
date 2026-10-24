@@ -375,6 +375,8 @@ public final class Gen{
                 List<Body.Part> to = new ArrayList<>();
                 List<Float> fl = new ArrayList<>();
                 for(int j = 0; j < ts.size(); j++) if(f[i][j] != null && f[i][j].solutionValue() > 1e-5){
+                    //(laid again with the step's own lines alone: none between two that stand)
+                    if(onlyFresh && m.body.standing && ts.get(j).body.standing) continue;
                     to.add(ts.get(j));
                     fl.add((float)f[i][j].solutionValue());
                 }
@@ -546,6 +548,8 @@ public final class Gen{
     int overusedKept, leaksKept;
     /** Whether the bodies stand where they are to stand already (placed by other means): the first try lays lines only. */
     boolean keep;
+    /** Whether only lines to or from what is laid now are laid (none between two that stand): a step's second try. */
+    boolean onlyFresh;
     /** What a line pays to stand against another machine's side, in tiles of detour (bp.apron; 0 nothing). */
     static final float APRON = Float.parseFloat(System.getProperty("bp.apron", "6"));
     static final boolean ROUTED = System.getProperty("bp.place", "anneal").equals("routed");

@@ -677,6 +677,8 @@ public final class Grow{
 
     /** The core, about which the streets and the rows of pumps are found. */
     int coreX, coreY;
+    /** Whether this laying lays only the lines to or from the step's own (a second try after one with no one to blame). */
+    boolean onlyFresh;
     /** Of a layout: the strips that stand (their bodies), by inst; by row; the pumps of each row that stand. */
     final Map<Inst, Body> standingStrips = new LinkedHashMap<>();
     final Map<Strips.Row, Body> stripOf = new HashMap<>();
@@ -1485,6 +1487,7 @@ public final class Grow{
         //to spare)
         Gen g = new Gen(prob, dataDir);
         g.balance = plan;
+        g.onlyFresh = onlyFresh;
         streets(g);
         //(what can be had now: in the core, dug, or made by what is committed)
         Set<String> had = new HashSet<>(state.dig.keySet());
@@ -2275,6 +2278,14 @@ public final class Grow{
                 laid = true;
                 for(Unit u : step.keySet()) grow.ledger.failed.remove(u.key);
                 break;
+            }
+            //(wrong with no machine of the step to blame: the lines between what stands were the trouble; laid again with
+            //the step's own lines alone, those left for a later step)
+            if(grow.drop.isEmpty() && !grow.onlyFresh){
+                grow.onlyFresh = true;
+                System.out.println("  laid again with the step's own lines alone");
+                round--;
+                continue;
             }
             if(grow.drop.isEmpty() || round >= 3){
                 System.out.println("  NOT laid out clean: committed nothing");

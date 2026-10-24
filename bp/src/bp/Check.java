@@ -216,6 +216,9 @@ public final class Check{
                 s.append(String.join(", ", to));
                 if(!stops.isEmpty()){
                     jams++;
+                    //(where: the maker, and every carrier its things pass on the way to where they stop)
+                    spot(b);
+                    for(Building c : seen) spot(c);
                     s.append(to.isEmpty() ? "" : "; ").append("STOPS at ").append(String.join(", ", stops));
                 }
                 lines.add(s.toString());
