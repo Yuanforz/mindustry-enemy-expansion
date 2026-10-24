@@ -168,7 +168,7 @@ public final class Grow{
         Spec.Place core = g.prob.fixed.isEmpty() ? null : g.prob.fixed.get(0);
         int cx = core == null ? g.board.w / 2 : core.x(), cy = core == null ? g.board.h / 2 : core.y();
         int k = 0;
-        int keep = Integer.getInteger("bp.ways", 6);
+        int keep = Integer.getInteger("bp.ways", 12);
         for(var e : (APART ? new Sites(g.board).findApart(ground, cx, cy, keep) : new Sites(g.board).find(ground, cx, cy, keep)).entrySet()) for(Sites.Site site : e.getValue()){
             Unit u = new Unit();
             u.recipe = e.getKey();
@@ -1851,7 +1851,7 @@ public final class Grow{
     /** How often a step is planned again for what it could not lay out (bp.replans; 0: the step only lessened). */
     static final int REPLANS = Integer.getInteger("bp.replans", 0);
     /** Whether the ways up on ground are places that can all stand at once (bp.apart), not merely the nearest. */
-    static final boolean APART = Boolean.parseBoolean(System.getProperty("bp.apart", "false"));
+    static final boolean APART = Boolean.parseBoolean(System.getProperty("bp.apart", "true"));
     /** What a line pays to stand against a place of the final form not built yet, in tiles of detour (bp.ring; 0 none). */
     static final float RING = Float.parseFloat(System.getProperty("bp.ring", "0"));
 
