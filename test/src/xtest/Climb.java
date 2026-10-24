@@ -32,6 +32,13 @@ public class Climb{
     static final ObjectIntMap<Item> lastStock = new ObjectIntMap<>(), planStock = new ObjectIntMap<>();
     static float lastPlanAt;
     static final Set<String> builtKeys = new HashSet<>();
+    /**
+     * The core unit's build speed as it goes: the build seconds of every block it put up or took down, over the time it had
+     * a block to build and was not digging (its flights between blocks in it; its waits for what the core lacks, digging,
+     * not). The planner plans the core unit's time at this speed.
+     */
+    static float buildWork, buildBusy;
+    static final Map<String, Boolean> stoodThen = new HashMap<>();
 
     /** One thing to build: its id in the ledger, its blocks (name, x, y, turn, config or null). */
     static final class Job{
@@ -138,6 +145,15 @@ public class Climb{
                 lastPlanAt = now;
             }
             Boot.frames(1);
+            if(!unit.mining() && unit.plans.size > 0) buildBusy += 1f / 60f;
+            //(each block given that went up, or that was taken down, since the last look: its build seconds)
+            if(f % 30 == 0) for(Job j : jobs) for(Object[] b : j.blocks){
+                String key = Builder.key(b);
+                boolean stands = built(b);
+                Boolean was = stoodThen.put(key, stands);
+                if(was == null) was = false;
+                if(stands && !was || !stands && was && j.remove) buildWork += Vars.content.block((String)b[0]).buildTime / 60f;
+            }
             //(how hard each machine that stands works, sampled each half second: what the planner is told it makes)
             if(f % 30 == 0) for(Job j : jobs){
                 if(j.remove || j.unit == null || j.blocks.isEmpty() || !standing(j)) continue;
@@ -179,7 +195,7 @@ public class Climb{
                     lastStock.put(item, core.items.get(item));
                 }
                 System.out.println(String.format("  %s: %d of %d things given stand; %d of %d machines work (idle: %s); core %s (this minute: %s); %s", time(now), standing, jobs.size(), working, machines, idle, core.items, came.toString().trim(), hand.doing));
-                if((int)(now / 60f) % 5 == 0) System.out.println("    " + finalForm());
+                if((int)(now / 60f) % 5 == 0) System.out.println("    " + finalForm() + String.format(Locale.ROOT, "; built at %.2f a second (%.0f s of building over %.0f s)", buildWork / Math.max(1f, buildBusy), buildWork, buildBusy));
                 System.out.println(String.format(Locale.ROOT, "    core unit at %.0f,%.0f; digs %s; holds %s %d; plans %d, building %s, mining %s", unit.x / 8f, unit.y / 8f, unit.mineTile == null ? "-" : unit.mineTile.x + "," + unit.mineTile.y + " (" + unit.mineTile.wallDrop() + ")", unit.item() == null ? "-" : unit.item().name, unit.stack.amount, unit.plans.size, unit.activelyBuilding(), unit.mining()));
             }
         }
@@ -265,6 +281,7 @@ public class Climb{
         for(Job j : jobs) if(!j.remove && standing(j)) s.append("built ").append(j.id).append('\n');
         for(Job j : jobs) if(!j.remove && !standing(j) && begun(j)) s.append("begun ").append(j.id).append('\n');
         s.append(String.format(Locale.ROOT, "buildSpeed %.3f%ncoreCap %d%ntime %.1f%n", unit.type.buildSpeed * Vars.state.rules.buildSpeed(us), core.storageCapacity, now));
+        s.append(String.format(Locale.ROOT, "buildWork %.1f%nbuildBusy %.1f%n", buildWork, buildBusy));
         file.writeString(s.toString());
     }
 

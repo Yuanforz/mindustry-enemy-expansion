@@ -230,6 +230,8 @@ public final class Grow{
      * have it idle and hand its water to something else, which no line did.
      */
     static final boolean INERTIA = Boolean.parseBoolean(System.getProperty("bp.inertia", "true"));
+    /** Whether the core unit's time is planned at its build speed as measured (bp.measuredSpeed), not the game's own. */
+    static final boolean MEASURED_SPEED = Boolean.parseBoolean(System.getProperty("bp.measuredSpeed", "false"));
     /** Things the schedule has new makers of built in its second span: a machine of this step that takes one may wait for it. */
     final Set<String> soonMade = new HashSet<>();
     /**
@@ -243,6 +245,39 @@ public final class Grow{
     static final boolean POWER_BUILT = Boolean.parseBoolean(System.getProperty("bp.powerBuilt", "false"));
     final Map<Unit, Float> deadOf = new HashMap<>();
     static final boolean PRIME_LAG = PRIME && Boolean.parseBoolean(System.getProperty("bp.primeLag", "true")), PRIME_DEAD = PRIME && Boolean.parseBoolean(System.getProperty("bp.primeDead", "true"));
+
+    /** The game time of the step before (-1: none): what was found built by then stood through what was measured since. */
+    float prevTime = -1f;
+
+    /**
+     * Whether a thing, the lines that carry its flows and those they run on into or branch off (and, a pump a strip
+     * serves, the strip and its lines) were all found built by the step before: what it was measured to work since was
+     * as it stands now.
+     */
+    boolean settled(Inst i, Map<Integer, List<Inst>> linesOf, Map<Integer, Inst> stripOf){
+        if(prevTime < 0f) return false;
+        Deque<Inst> todo = new ArrayDeque<>();
+        Set<Integer> seen = new HashSet<>();
+        todo.add(i);
+        if(stripOf.containsKey(i.id)) todo.add(stripOf.get(i.id));
+        while(!todo.isEmpty()){
+            Inst x = todo.poll();
+            if(!seen.add(x.id)) continue;
+            if(x.builtAt < 0f || x.builtAt > prevTime) return false;
+            if(!x.kind.equals("line")) for(Inst l : linesOf.getOrDefault(x.id, List.of())) todo.add(l);
+            else{
+                for(int v : x.via){
+                    Inst vi = ledger.get(v);
+                    if(vi != null && !vi.removed) todo.add(vi);
+                }
+                for(int v : x.tapOf){
+                    Inst vi = ledger.get(v);
+                    if(vi != null && !vi.removed) todo.add(vi);
+                }
+            }
+        }
+        return true;
+    }
 
     void stranded(Board board){
         int w = board.w, h = board.h, n = w * h;
@@ -280,6 +315,7 @@ public final class Grow{
         //(pumps a strip serves: fed by their share of what comes into its intake (in proportion to what each takes);
         //what they pump goes out by the strip's outlet, never shut in by their stubs)
         Map<Integer, Float> stripShare = new HashMap<>();
+        Map<Integer, Inst> stripOf = new HashMap<>();
         if(Strips.ON){
             Map<String, Strips.Row> rowKeys = rowsByKey(board);
             Map<Strips.Row, Inst> strips = new HashMap<>();
@@ -300,8 +336,17 @@ public final class Grow{
                     if(r != null && row.in != null) need += r.at((Float)p0[6]).in.getOrDefault(row.in, 0f) * (Float)p0[5] + r.fixedIn.getOrDefault(row.in, 0f);
                 }
                 float in = row.in == null ? 0f : got.getOrDefault(((long)si.id * 1000) * 31 + row.in.hashCode(), 0f);
-                for(Inst i : e.getValue()) stripShare.put(i.id, need <= 1e-6f ? 1f : Math.min(1f, in / need));
+                for(Inst i : e.getValue()){
+                    stripShare.put(i.id, need <= 1e-6f ? 1f : Math.min(1f, in / need));
+                    stripOf.put(i.id, si);
+                }
             }
+        }
+        //(the lines that carry each thing's flows, in or out)
+        Map<Integer, List<Inst>> linesOf = new HashMap<>();
+        for(Inst i : ledger.insts) if(!i.removed && i.kind.equals("line")) for(Object[] f : i.flows){
+            linesOf.computeIfAbsent((Integer)f[1], k -> new ArrayList<>()).add(i);
+            linesOf.computeIfAbsent((Integer)f[3], k -> new ArrayList<>()).add(i);
         }
         //(the bodies that stand)
         Map<Inst, Body> bodies = new LinkedHashMap<>();
@@ -342,7 +387,10 @@ public final class Grow{
                     lined = true;
                     for(String r : p.recipe.at(p.yield).out.keySet()) if((Vars.content.item(r) != null || Vars.content.liquid(r) != null) && p.makes(r) > 1e-4f && handed.getOrDefault(((long)i.id * 1000 + k) * 31 + r.hashCode(), 0f) <= 1e-6f) lined = false;
                 }
-                if(k == 0 && state.work.containsKey(i.id) && lined) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
+                //(and only once it and its lines all stood through the time it was measured over: one measured while a
+                //line of it was still being built did not work for want of the line, which comes; taken for dead, it was
+                //taken down, and built again with the line a step later)
+                if(k == 0 && state.work.containsKey(i.id) && lined && settled(i, linesOf, stripOf)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
                 if(fed < 1f - 1e-4f) unfed.add(i.id);
                 if(k == 0){
                     //(one with a thing it takes that no line brings at all waits for a maker of it yet to come, whose line
@@ -753,6 +801,8 @@ public final class Grow{
         int id;
         String kind, unit;
         boolean built, removed;
+        /** The game time it was first found built at (-1: not yet). */
+        float builtAt = -1f;
         /** Its blocks: block, lowest corner x, y, turn, recipe (or null), work, yield, config (or null). */
         final List<Object[]> parts = new ArrayList<>();
         /** A line's pieces: kind, block, x, y, turn, fed from, hands to (bits), role, thing. */
@@ -782,6 +832,8 @@ public final class Grow{
          */
         final Map<String, Integer> failed = new TreeMap<>();
         int step;
+        /** The game time of the step that wrote it last (-1: none yet). */
+        float time = -1f;
         /** The id the next thing committed gets: ids are never given twice (a thing given back keeps its id from use). */
         int next = 1;
 
@@ -854,6 +906,8 @@ public final class Grow{
                 String[] w = line.trim().split("\\s+");
                 switch(w[0]){
                     case "step" -> l.step = Integer.parseInt(w[1]);
+                    case "time" -> l.time = Float.parseFloat(w[1]);
+                    case "builtAt" -> cur.builtAt = Float.parseFloat(w[1]);
                     case "next" -> l.next = Integer.parseInt(w[1]);
                     case "avoid" -> l.avoid.add(w[1].replace('|', ' '));
                     case "failed" -> l.failed.put(w[1].replace('|', ' '), Integer.parseInt(w[2]));
@@ -885,6 +939,7 @@ public final class Grow{
 
         void write(String file){
             StringBuilder s = new StringBuilder("# what the grown base has committed, step by step\nstep " + step + "\nnext " + nextId() + "\n");
+            if(time >= 0f) s.append(String.format(Locale.ROOT, "time %.1f%n", time));
             for(String a : avoid) s.append("avoid ").append(a.replace(' ', '|')).append('\n');
             for(var e : failed.entrySet()) s.append("failed ").append(e.getKey().replace(' ', '|')).append(' ').append(e.getValue()).append('\n');
             for(Inst i : insts){
@@ -897,6 +952,7 @@ public final class Grow{
                 for(int[] c : i.clear) s.append(String.format(Locale.ROOT, "clear %d %d %d %d%n", c[0], c[1], c[2], c[3]));
                 if(!i.lane.isEmpty()) s.append("lane ").append(String.join(",", i.lane.stream().map(String::valueOf).toList())).append('\n');
                 if(i.exclusive) s.append("exclusive\n");
+                if(i.builtAt >= 0f) s.append(String.format(Locale.ROOT, "builtAt %.1f%n", i.builtAt));
             }
             new Fi(file).writeString(s.toString());
         }
@@ -912,6 +968,20 @@ public final class Grow{
         /** How hard each machine that stands worked in the game lately (1 full), as measured: by thing committed. */
         final Map<Integer, Float> work = new HashMap<>();
         float buildSpeed = 1.2f, coreCap = 4000f, time;
+        /** What the core unit has built and taken down (build seconds), and the time it had a block to build, digging apart. */
+        float buildWork = -1f, buildBusy = -1f;
+
+        /**
+         * The core unit's build speed as measured, its flights between blocks in it: the build seconds it got done over its
+         * time at it, with a minute at the game's own speed besides, so that the first steps, measured little, plan near
+         * that speed.
+         */
+        float effectiveSpeed(){
+            if(buildWork < 0f || buildBusy < 0f) return buildSpeed;
+            return (buildWork + PRIOR * buildSpeed) / (buildBusy + PRIOR);
+        }
+
+        static final float PRIOR = 60f;
 
         static State read(String file){
             State s = new State();
@@ -926,6 +996,8 @@ public final class Grow{
                     case "begun" -> s.begun.add(Integer.parseInt(w[1]));
                     case "work" -> s.work.put(Integer.parseInt(w[1]), Float.parseFloat(w[2]));
                     case "buildSpeed" -> s.buildSpeed = Float.parseFloat(w[1]);
+                    case "buildWork" -> s.buildWork = Float.parseFloat(w[1]);
+                    case "buildBusy" -> s.buildBusy = Float.parseFloat(w[1]);
                     case "coreCap" -> s.coreCap = Float.parseFloat(w[1]);
                     case "time" -> s.time = Float.parseFloat(w[1]);
                     default -> {
@@ -994,6 +1066,7 @@ public final class Grow{
      */
     Model build(State st, int T, float[] L, int whole, String solverName, Map<Unit, Double> nWorth, Map<String, Double> sWorth){
         Model m = new Model();
+        kinds = null;
         MPSolver solver = m.solver = MPSolver.createSolver(solverName);
         m.solverName = solverName;
         m.T = T;
@@ -1068,12 +1141,14 @@ public final class Grow{
             res.addAll(u.cost.keySet());
         }
         MPObjective obj = solver.objective();
+        //(the core unit builds at its speed as measured, its flights in it: bp.measuredSpeed)
+        float speed = MEASURED_SPEED ? st.effectiveSpeed() : st.buildSpeed;
         for(int t = 1; t <= T; t++){
             //the core unit's time
             MPConstraint time = solver.makeConstraint(-inf, L[t]);
             for(Unit u : units){
-                time.setCoefficient(m.b.get(u)[t], u.seconds / st.buildSpeed);
-                time.setCoefficient(m.d.get(u)[t], u.seconds / st.buildSpeed);
+                time.setCoefficient(m.b.get(u)[t], u.seconds / speed);
+                time.setCoefficient(m.d.get(u)[t], u.seconds / speed);
             }
             for(MPVariable[] dg : m.dig.values()) time.setCoefficient(dg[t], 1);
             //power: made by what works; taken by what stands (a machine that has what it takes works, and draws its power,
@@ -1103,6 +1178,15 @@ public final class Grow{
                 for(Unit u : e.getValue()) pc.setCoefficient(credit(m, u, t), -1);
                 obj.setCoefficient(p, -L[t] * clsSeconds.get(e.getKey()) / Math.max(1f, total));
                 m.part.computeIfAbsent(e.getKey(), k -> new MPVariable[T + 1])[t] = p;
+            }
+            //(each kind of block of the final form at work by the end of the span, one of it at least: the measure a climb
+            //is judged by, kinds at full by the minute, worth so much a second as a share of the whole standing)
+            if(KIND_WORTH > 0) for(var e : kinds().entrySet()){
+                MPVariable y = solver.makeNumVar(0, 1, "");
+                MPConstraint c = solver.makeConstraint(-inf, 0);
+                c.setCoefficient(y, 1);
+                for(Unit u : e.getValue()) c.setCoefficient(credit(m, u, t), -1);
+                obj.setCoefficient(y, -L[t] * KIND_WORTH / kinds().size());
             }
             //least: the span's length while the whole does not stand, and while building is left, by how much is left;
             //what is taken down, its building lost
@@ -1190,6 +1274,23 @@ public final class Grow{
     /** Whether the final form counts a unit as it works (bp.creditWork), not as it stands. */
     static final boolean CREDIT_WORK = Boolean.parseBoolean(System.getProperty("bp.creditWork", "true"));
 
+    /** What a kind of block at work is worth a second, all kinds together, as a share of the whole standing (bp.kindWorth; 0 none). */
+    static final double KIND_WORTH = Double.parseDouble(System.getProperty("bp.kindWorth", "0"));
+
+    Map<Block, List<Unit>> kinds;
+
+    /** Each kind of block the units bring, a machine's and its heaters', with the units that bring it. */
+    Map<Block, List<Unit>> kinds(){
+        if(kinds != null) return kinds;
+        kinds = new LinkedHashMap<>();
+        for(Unit u : units){
+            Block bl = u.block != null ? u.block : u.recipe != null ? u.recipe.block : null;
+            if(bl != null) kinds.computeIfAbsent(bl, k -> new ArrayList<>()).add(u);
+            if(u.heater != null && u.heater.block != bl) kinds.computeIfAbsent(u.heater.block, k -> new ArrayList<>()).add(u);
+        }
+        return kinds;
+    }
+
     /** What of a unit counts toward the final form in a span: what of it works then, for one that works by anything. */
     MPVariable credit(Model m, Unit u, int t){
         boolean works = !u.rate.isEmpty() || Math.abs(u.power) > 1e-6f;
@@ -1273,7 +1374,7 @@ public final class Grow{
             if(plan.solved()) worth(plan, near, nWorth, sWorth);
             first = build(st, near, L, 1, System.getProperty("bp.mip", "SCIP"), nWorth, sWorth);
             if(plan.solved()) solve(first, think);
-            System.out.println(String.format(Locale.ROOT, "schedule: the plan %s, %d units, %d spans (%.0f s to %.0f s, %.0f s in all), objective %.3f (%.1f s); the first span %s (%.1f s)", plan.status.toString().toLowerCase(), units.size(), T, L[1], L[T], horizon, plan.objective(), plan.seconds, first.status == null ? "not planned" : first.status.toString().toLowerCase(), first.seconds));
+            System.out.println(String.format(Locale.ROOT, "schedule: the plan %s, %d units, %d spans (%.0f s to %.0f s, %.0f s in all), objective %.3f (%.1f s); the first span %s (%.1f s); the core unit builds at %.2f a second (%.2f as measured)", plan.status.toString().toLowerCase(), units.size(), T, L[1], L[T], horizon, plan.objective(), plan.seconds, first.status == null ? "not planned" : first.status.toString().toLowerCase(), first.seconds, MEASURED_SPEED ? st.effectiveSpeed() : st.buildSpeed, st.effectiveSpeed()));
             if(Boolean.getBoolean("bp.evalSplit") && first.solved()) evalSplit(st, T, L, first, think);
             if(Boolean.getBoolean("bp.showFirst") && plan.solved()){
                 //(a test: what the plan in shares builds in the first span, and what the near choice builds)
@@ -1286,6 +1387,19 @@ public final class Grow{
                 System.out.println("  the plan builds in spans 1/2: " + lp);
                 System.out.println("  the near choice builds: " + mip);
             }
+        }
+        //(a test: one unit's course in the plan and in the near choice, and what the plan says it is worth after; bp.watch)
+        if(System.getProperty("bp.watch") != null && plan.solved()) for(Unit u : units){
+            if(!u.key.contains(System.getProperty("bp.watch"))) continue;
+            StringBuilder sb = new StringBuilder("  watch " + u.key + ": had " + ledger.committed(u.key) + "; plan n/b/d/a:");
+            for(int t = 1; t <= plan.T; t++) sb.append(String.format(Locale.ROOT, " %d:%.2f/%.2f/%.2f/%.2f", t, plan.n.get(u)[t].solutionValue(), plan.b.get(u)[t].solutionValue(), plan.d.get(u)[t].solutionValue(), plan.a.get(u)[t].solutionValue()));
+            if(first.solved()){
+                sb.append("; near:");
+                for(int t = 1; t <= first.T; t++) sb.append(String.format(Locale.ROOT, " %d:%.2f/%.2f/%.2f/%.2f", t, first.n.get(u)[t].solutionValue(), first.b.get(u)[t].solutionValue(), first.d.get(u)[t].solutionValue(), first.a.get(u)[t].solutionValue()));
+            }
+            int k = Math.min(T, Integer.getInteger("bp.nearSpans", 2));
+            if(plan.T > k) sb.append(String.format(Locale.ROOT, "; worth after %d: flow %.4f act %.4f; dead %.2f, works now %.2f, grounded %.2f", k, plan.flow.get(u)[k + 1].dualValue(), plan.act.get(u)[k + 1].dualValue(), deadOf.getOrDefault(u, 0f), workingNow.getOrDefault(u, 0f), grounded.getOrDefault(u, -1f)));
+            System.out.println(sb);
         }
         if(!plan.solved() || !first.solved()) return out;
         //(what new makers the near spans build next: a machine built now that takes it may stand till they come)
@@ -2277,7 +2391,14 @@ public final class Grow{
         if(System.getProperty("bp.floor") != null) grow.readFloor(new Fi(System.getProperty("bp.floor")));
         State st = State.read(stateFile);
         grow.state = st;
-        for(Inst i : grow.ledger.insts) if(st.built.contains(i.id)) i.built = true;
+        //(what is found built, and when first: a machine's measured work tells of its lines only once they all stood
+        //through the time it was measured over, since the step before)
+        grow.prevTime = grow.ledger.time;
+        for(Inst i : grow.ledger.insts) if(st.built.contains(i.id)){
+            if(i.builtAt < 0f) i.builtAt = st.time;
+            i.built = true;
+        }
+        grow.ledger.time = st.time;
         //(units measured as bodies, on the map)
         Gen probe = new Gen(Problem.parse("world " + world + "\n"), dataDir);
         probe.balance = grow.plan;
