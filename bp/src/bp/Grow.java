@@ -1085,12 +1085,14 @@ public final class Grow{
             for(var e : classes.entrySet()){
                 MPConstraint c = solver.makeConstraint(-inf, 0);
                 c.setCoefficient(done, need.get(e.getKey()));
-                for(Unit u : e.getValue()) c.setCoefficient(m.n.get(u)[t], -1);
+                //(a machine of the final form counts as it works, the final form being every one at work at full: one that
+                //stands idle, a pump with no hydrogen, counts for nothing; a block that works by nothing, as it stands)
+                for(Unit u : e.getValue()) c.setCoefficient(credit(m, u, t), -1);
                 //(and how much of the class stands, at most what is wanted of it)
                 MPVariable p = solver.makeNumVar(0, need.get(e.getKey()), "");
                 MPConstraint pc = solver.makeConstraint(-inf, 0);
                 pc.setCoefficient(p, 1);
-                for(Unit u : e.getValue()) pc.setCoefficient(m.n.get(u)[t], -1);
+                for(Unit u : e.getValue()) pc.setCoefficient(credit(m, u, t), -1);
                 obj.setCoefficient(p, -L[t] * clsSeconds.get(e.getKey()) / Math.max(1f, total));
                 m.part.computeIfAbsent(e.getKey(), k -> new MPVariable[T + 1])[t] = p;
             }
@@ -1175,6 +1177,15 @@ public final class Grow{
         if(sWorth != null) for(var e : sWorth.entrySet()) if(m.stock.containsKey(e.getKey())) obj.setCoefficient(m.stock.get(e.getKey())[T], obj.getCoefficient(m.stock.get(e.getKey())[T]) + e.getValue());
         obj.setMinimization();
         return m;
+    }
+
+    /** Whether the final form counts a unit as it works (bp.creditWork), not as it stands. */
+    static final boolean CREDIT_WORK = Boolean.parseBoolean(System.getProperty("bp.creditWork", "true"));
+
+    /** What of a unit counts toward the final form in a span: what of it works then, for one that works by anything. */
+    MPVariable credit(Model m, Unit u, int t){
+        boolean works = !u.rate.isEmpty() || Math.abs(u.power) > 1e-6f;
+        return CREDIT_WORK && works ? m.a.get(u)[t] : m.n.get(u)[t];
     }
 
     void solve(Model m, float think){
@@ -1274,6 +1285,19 @@ public final class Grow{
             if(first.b.get(u)[2].solutionValue() <= 1e-3) continue;
             for(var e : u.rate.entrySet()) if(e.getValue() > 0f) soonMade.add(e.getKey());
         }
+        //(and what the near spans make more of next span than now, makers that stand working more: an electrolyzer that
+        //gets the water of a pump built now makes the hydrogen that pump waits for)
+        if(first.T >= 2){
+            Map<String, Double> now = new HashMap<>(), next = new HashMap<>();
+            for(Unit u : units) for(var e : u.rate.entrySet()) if(e.getValue() > 0f){
+                now.merge(e.getKey(), e.getValue() * first.a.get(u)[1].solutionValue(), Double::sum);
+                double later = first.a.get(u)[2].solutionValue();
+                //(and as the whole plan has it the span after)
+                if(plan.T >= 3) later = Math.max(later, plan.a.get(u)[3].solutionValue());
+                next.merge(e.getKey(), e.getValue() * later, Double::sum);
+            }
+            for(var e : next.entrySet()) if(e.getValue() > now.getOrDefault(e.getKey(), 0.0) + 1e-3) soonMade.add(e.getKey());
+        }
         for(Unit u : units){
             int add = (int)Math.round(first.b.get(u)[1].solutionValue()), drop = (int)Math.round(first.d.get(u)[1].solutionValue());
             //(to build some and take some down of one unit in a span is the same as the difference alone, for less)
@@ -1306,6 +1330,16 @@ public final class Grow{
                 for(var e : u.cost.entrySet()) want.merge(e.getKey(), e.getValue() * (need.get(c.getKey()) - got), Float::sum);
             }
             System.out.println("    their cost: " + want);
+            //(each liquid in the first spans: who makes it and who takes it, as the whole plan has them)
+            for(String lq : new String[]{"water", "hydrogen", "ozone"}) for(int t = 1; t <= Math.min(4, T); t++){
+                StringBuilder by = new StringBuilder();
+                for(Unit u : units){
+                    float r = u.rate.getOrDefault(lq, 0f);
+                    double a = plan.a.get(u)[t].solutionValue();
+                    if(r != 0f && a > 1e-3) by.append(String.format(" %s %+.1f", u.key, r * a));
+                }
+                System.out.println("    " + lq + " in span " + t + ":" + by);
+            }
             for(int t : new int[]{3, 6, 9}){
                 if(t > T) continue;
                 Map<String, Float> made = new TreeMap<>();

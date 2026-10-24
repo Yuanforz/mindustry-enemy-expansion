@@ -705,7 +705,7 @@ public final class Gen{
         if(lines) for(Router.Net n : bestNets){
             Set<String> got = check.reach.getOrDefault((n.cls == 3 ? "payload" : n.res) + " from " + where(n.from), Set.of());
             //(a line from a carrier, a module's port: traced on from it)
-            if(n.from.recipe == null && n.from.config != null && n.cls != 3 && (n.from.block instanceof mindustry.world.blocks.distribution.Duct || n.from.block instanceof mindustry.world.blocks.liquid.Conduit)){
+            if(n.from.recipe == null && n.from.config != null && n.cls != 3 && Board.isPortCarrier(n.from)){
                 mindustry.gen.Building c = Vars.world.build(n.from.ax(), n.from.ay());
                 if(c != null) got = Vars.content.item(n.res) != null ? check.traceItem(c, Vars.content.item(n.res)) : check.traceLiquid(c, Vars.content.liquid(n.res));
             }

@@ -245,14 +245,26 @@ public final class Check{
     public Set<String> traceLiquid(Building start, Liquid liquid){
         Set<String> ends = new LinkedHashSet<>();
         Set<Building> seen = new HashSet<>();
-        ArrayDeque<Building> queue = new ArrayDeque<>();
-        queue.add(start);
+        Set<String> seenJunction = new HashSet<>();
+        //(each carrier with the block it came from: a junction hands on straight across from that one)
+        ArrayDeque<Building[]> queue = new ArrayDeque<>();
+        queue.add(new Building[]{start, null});
         while(!queue.isEmpty()){
-            Building c = queue.poll();
-            if(!seen.add(c)) continue;
-            ends.add(Scratch.where(c));
-            for(Building o : liquidTo(c, liquid)){
-                if(liquidCarrier(o)) queue.add(o);
+            Building[] cq = queue.poll();
+            Building c = cq[0], prev = cq[1];
+            List<Building> next;
+            if(c.block instanceof LiquidJunction && prev != null){
+                int in = c.relativeTo(prev);
+                if(in < 0 || !seenJunction.add(c.pos() + ":" + in)) continue;
+                Building o = c.nearby((in + 2) % 4);
+                next = takesLiquid(o, c, liquid) ? List.of(o) : List.of();
+            }else{
+                if(!seen.add(c)) continue;
+                ends.add(Scratch.where(c));
+                next = liquidTo(c, liquid);
+            }
+            for(Building o : next){
+                if(liquidCarrier(o)) queue.add(new Building[]{o, c});
                 else ends.add(Scratch.where(o));
             }
         }
@@ -282,7 +294,14 @@ public final class Check{
     }
 
     static boolean takesLiquid(Building to, Building from, Liquid liquid){
-        return to != null && to.team == from.team && to.acceptLiquid(from, liquid);
+        if(to == null || to.team != from.team) return false;
+        //(a junction is asked nothing: what is handed into it goes to what lies across it, as that takes it, Building.moveLiquid
+        //by getLiquidDestination; a junction alone takes nothing, Building.acceptLiquid)
+        if(to.block instanceof LiquidJunction){
+            Building d = to.getLiquidDestination(from, liquid);
+            return d != to && d != null && d.team == from.team && d.acceptLiquid(from, liquid);
+        }
+        return to.acceptLiquid(from, liquid);
     }
 
     static List<Building> liquidTo(Building c, Liquid liquid){
