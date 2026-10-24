@@ -336,7 +336,13 @@ public final class Grow{
                 boolean served = k == 0 && stripShare.containsKey(i.id);
                 if(served) for(String r : ins) if(Vars.content.liquid(r) != null) in.put(r, p.takes(r) * stripShare.get(i.id));
                 float fed = fed(p, in);
-                if(k == 0 && state.work.containsKey(i.id)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
+                //(measured, unless something it makes has no line out: then it stood blocked, not unfed)
+                boolean lined = served;
+                if(!served){
+                    lined = true;
+                    for(String r : p.recipe.at(p.yield).out.keySet()) if((Vars.content.item(r) != null || Vars.content.liquid(r) != null) && p.makes(r) > 1e-4f && handed.getOrDefault(((long)i.id * 1000 + k) * 31 + r.hashCode(), 0f) <= 1e-6f) lined = false;
+                }
+                if(k == 0 && state.work.containsKey(i.id) && lined) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
                 if(fed < 1f - 1e-4f) unfed.add(i.id);
                 if(k == 0){
                     //(one with a thing it takes that no line brings at all waits for a maker of it yet to come, whose line
@@ -1581,8 +1587,10 @@ public final class Grow{
                 //(what it makes, as far as its lines bring it what it takes: one fed half makes half; and no more than it was
                 //seen to work in the game, whatever held it back)
                 float fed = fed(p, in);
-                //(a machine planned to work part of the time is seen at work that part: measured against that)
-                if(k == 0 && state.work.containsKey(i.id)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
+                //(a machine planned to work part of the time is seen at work that part: measured against that; not one with
+                //something it makes that no line takes: it stood blocked, it makes as much as it is fed once a line does)
+                Map<String, Integer> cl = coreLinks.getOrDefault(i.id * 1000 + k, Map.of());
+                if(k == 0 && state.work.containsKey(i.id) && handsAllOut(p, o, cl)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
                 for(String r : res){
                     sp.put(r, Math.max(0f, p.makes(r) * fed - o.getOrDefault(r, 0f)));
                     lk.put(r, Math.max(0f, p.takes(r) - in.getOrDefault(r, 0f)));
@@ -2075,6 +2083,15 @@ public final class Grow{
         return true;
     }
 
+    /** Whether a part has a line out for every item and liquid it makes (to a taker, or the core). */
+    static boolean handsAllOut(Body.Part p, Map<String, Float> out, Map<String, Integer> coreLinks){
+        for(String r : p.recipe.at(p.yield).out.keySet()){
+            if(Vars.content.item(r) == null && Vars.content.liquid(r) == null || p.makes(r) <= 1e-4f) continue;
+            if(out.getOrDefault(r, 0f) <= 1e-6f && coreLinks.getOrDefault(r, 0) == 0) return false;
+        }
+        return true;
+    }
+
     /** How much of what a part takes (items, liquids) its lines bring it, the least of them (1 for one that takes none). */
     static float fed(Body.Part p, Map<String, Float> in){
         float fed = 1f;
@@ -2178,17 +2195,27 @@ public final class Grow{
                 k--;
             }
         }
-        //(and the lines to and from them, and the lines that run on into a line taken down)
+        //(and the lines to and from them, and the lines that run on into a line taken down; not a line from one taken down
+        //that other lines kept run on into, to a taker that stays: it carries theirs still, and taken down it took them
+        //down too, every maker whose line joined it idle till lines of its own were laid again)
         boolean more = true;
         while(more){
             more = false;
             for(Inst in : ledger.insts){
                 if(in.removed || !in.kind.equals("line")) continue;
-                boolean touches = false;
-                for(Object[] f : in.flows) if(gone.contains((Integer)f[1]) || gone.contains((Integer)f[3])) touches = true;
-                for(int v : in.via) if(gone.contains(v)) touches = true;
-                for(int v : in.tapOf) if(gone.contains(v)) touches = true;
-                if(!touches) continue;
+                boolean fromGone = false, toGone = false, upGone = false;
+                for(Object[] f : in.flows){
+                    if(gone.contains((Integer)f[1])) fromGone = true;
+                    if(gone.contains((Integer)f[3])) toGone = true;
+                }
+                for(int v : in.via) if(gone.contains(v)) upGone = true;
+                for(int v : in.tapOf) if(gone.contains(v)) upGone = true;
+                if(!fromGone && !toGone && !upGone) continue;
+                if(fromGone && !toGone && !upGone){
+                    boolean carries = false;
+                    for(Inst o : ledger.insts) if(!o.removed && o != in && (o.via.contains(in.id) || o.tapOf.contains(in.id))) carries = true;
+                    if(carries) continue;
+                }
                 in.removed = true;
                 removed.add(in);
                 gone.add(in.id);
