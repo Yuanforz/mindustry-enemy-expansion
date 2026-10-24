@@ -230,6 +230,24 @@ public final class Grow{
      * have it idle and hand its water to something else, which no line did.
      */
     static final boolean INERTIA = Boolean.parseBoolean(System.getProperty("bp.inertia", "true"));
+    /** How many of a unit are committed and not built yet, as the model has them. */
+    int pendingOf(Model m, Unit u){
+        if(!m.q.containsKey(u)) return 0;
+        return (int)Math.round(m.q.get(u)[1].ub());
+    }
+
+    /** The build seconds of a thing's blocks (block build time over 60). */
+    static float buildSeconds(Inst i){
+        float s = 0f;
+        for(Object[] p : i.parts) s += Vars.content.block((String)p[0]).buildTime / 60f;
+        for(Object[] q : i.pieces) s += Vars.content.block((String)q[1]).buildTime / 60f;
+        return s;
+    }
+
+    /** Whether the near spans take down no more than the plan does by then (bp.nearDown). */
+    static final boolean NEAR_DOWN = Boolean.parseBoolean(System.getProperty("bp.nearDown", "false"));
+    /** Whether what is committed and not built yet takes the core unit's time first and works only once built (bp.pending). */
+    static final boolean PENDING = Boolean.parseBoolean(System.getProperty("bp.pending", "false"));
     /** Whether the core unit's time is planned at its build speed as measured (bp.measuredSpeed), not the game's own. */
     static final boolean MEASURED_SPEED = Boolean.parseBoolean(System.getProperty("bp.measuredSpeed", "false"));
     /** Things the schedule has new makers of built in its second span: a machine of this step that takes one may wait for it. */
@@ -408,9 +426,9 @@ public final class Grow{
                         alive = 1f;
                         for(var we : wired.entrySet()) alive = Math.min(alive, Math.min(1f, we.getValue() / p.takes(we.getKey())));
                     }
-                    grounded.merge(u, alive, Float::sum);
-                    //(and how much works now: its lines bring it what it takes, as measured)
-                    workingNow.merge(u, Math.max(0f, Math.min(1f, fed)), Float::sum);
+                    if(!PENDING || i.built) grounded.merge(u, alive, Float::sum);
+                    //(and how much works now: its lines bring it what it takes, as measured; one not built yet works not)
+                    if(!PENDING || i.built) workingNow.merge(u, Math.max(0f, Math.min(1f, fed)), Float::sum);
                 }
                 for(String r : outs){
                     boolean liquid = Vars.content.liquid(r) != null;
@@ -968,6 +986,8 @@ public final class Grow{
         /** How hard each machine that stands worked in the game lately (1 full), as measured: by thing committed. */
         final Map<Integer, Float> work = new HashMap<>();
         float buildSpeed = 1.2f, coreCap = 4000f, time;
+        /** Of each thing committed and not built, the build seconds of its blocks not standing, in the order the core unit goes through them. */
+        final LinkedHashMap<Integer, Float> left = new LinkedHashMap<>();
         /** What the core unit has built and taken down (build seconds), and the time it had a block to build, digging apart. */
         float buildWork = -1f, buildBusy = -1f;
 
@@ -997,6 +1017,7 @@ public final class Grow{
                     case "work" -> s.work.put(Integer.parseInt(w[1]), Float.parseFloat(w[2]));
                     case "buildSpeed" -> s.buildSpeed = Float.parseFloat(w[1]);
                     case "buildWork" -> s.buildWork = Float.parseFloat(w[1]);
+                    case "left" -> s.left.put(Integer.parseInt(w[1]), Float.parseFloat(w[2]));
                     case "buildBusy" -> s.buildBusy = Float.parseFloat(w[1]);
                     case "coreCap" -> s.coreCap = Float.parseFloat(w[1]);
                     case "time" -> s.time = Float.parseFloat(w[1]);
@@ -1021,6 +1042,12 @@ public final class Grow{
         final Map<Unit, MPConstraint[]> flow = new HashMap<>(), act = new HashMap<>();
         final Map<String, MPVariable[]> dig = new HashMap<>(), stock = new HashMap<>(), part = new HashMap<>();
         final Map<String, MPConstraint[]> bal = new HashMap<>();
+        /** Each span's time the core unit spends on what was committed before and is not built yet (no unit). */
+        float[] busy;
+        /** Of units with things committed not built yet: how many are built in each span; how many are given up. */
+        final Map<Unit, MPVariable[]> q = new HashMap<>();
+        final Map<Unit, MPVariable> x = new HashMap<>();
+        final Map<Unit, MPConstraint> all = new HashMap<>();
         MPSolver.ResultStatus status;
         double seconds;
 
@@ -1075,15 +1102,59 @@ public final class Grow{
         //back, Rules.deconstructRefundMultiplier, and takes the core unit as long); how many stand at its end; how much of
         //them works, no more than stood from its start and stays)
         float refund = Vars.state.rules.deconstructRefundMultiplier;
+        //(the core unit builds at its speed as measured, its flights in it: bp.measuredSpeed)
+        float speed = MEASURED_SPEED ? st.effectiveSpeed() : st.buildSpeed;
+        //(what is committed and not built yet. Of things that are no unit (lines, nodes, strips): the core unit builds them
+        //first, in the order given, at that speed, their time gone from the spans they fall in. Of each unit: how many,
+        //their build seconds left and done, what is left to pay of them; they stand only once built, the rest of their
+        //building and cost spent then, or are given up, what is built of them given back as the game gives back)
+        float[] busy = new float[T + 1];
+        Map<Unit, float[]> pend = new HashMap<>();
+        Map<Unit, Map<String, Float>> pendCost = new HashMap<>();
+        if(PENDING){
+            Map<String, Unit> byKey = new HashMap<>();
+            for(Unit u : units) byKey.put(u.key, u);
+            float[] start = new float[T + 2];
+            for(int t = 1; t <= T; t++) start[t + 1] = start[t] + L[t];
+            float clock = 0f;
+            for(Inst i : ledger.insts){
+                if(i.removed || i.built) continue;
+                Unit u = i.unit == null ? null : byKey.get(i.unit);
+                float total = buildSeconds(i);
+                Float left = st.left.get(i.id);
+                float l = left == null ? total : Math.min(total, left);
+                if(u == null){
+                    float a = clock, z = clock + l / speed;
+                    clock = z;
+                    for(int t = 1; t <= T; t++){
+                        float lo = Math.max(a, start[t]), hi = Math.min(z, start[t + 1]);
+                        if(hi > lo) busy[t] += hi - lo;
+                    }
+                    continue;
+                }
+                float[] pd = pend.computeIfAbsent(u, k -> new float[3]);
+                pd[0]++;
+                pd[1] += l;
+                pd[2] += total - l;
+                //(what is left to pay: its blocks' cost, as much as is left of its building)
+                Map<String, Float> c = pendCost.computeIfAbsent(u, k -> new TreeMap<>());
+                float share = total <= 1e-6f ? 1f : l / total;
+                for(Object[] q : i.parts) for(ItemStack is : Vars.content.block((String)q[0]).requirements) c.merge(is.item.name, is.amount * share, Float::sum);
+                for(Object[] q : i.pieces) for(ItemStack is : Vars.content.block((String)q[1]).requirements) c.merge(is.item.name, is.amount * share, Float::sum);
+            }
+        }
+        m.busy = busy;
         for(Unit u : units){
             int have = ledger.committed(u.key);
+            float[] pd = pend.get(u);
+            int pending = pd == null ? 0 : Math.round(pd[0]), built = have - pending;
             MPVariable[] v = new MPVariable[T + 1], w = new MPVariable[T + 1], up = new MPVariable[T + 1], down = new MPVariable[T + 1];
             MPConstraint[] fl = new MPConstraint[T + 1], ac = new MPConstraint[T + 1];
-            v[0] = solver.makeNumVar(have, have, "");
+            v[0] = solver.makeNumVar(built, built, "");
             int most = blocked(u) ? have : u.count;
             for(int t = 1; t <= T; t++){
                 boolean isWhole = t <= whole;
-                int lo = u.removable ? 0 : have;
+                int lo = u.removable ? 0 : built;
                 //(what this step found it could not lay out now: none more of it in the first span)
                 int hi = t == 1 && notNow.contains(u) ? Math.min(most, have) : most;
                 v[t] = isWhole ? solver.makeIntVar(lo, hi, "n_" + u.key + "_" + t) : solver.makeNumVar(lo, hi, "n_" + u.key + "_" + t);
@@ -1100,12 +1171,36 @@ public final class Grow{
                 c.setCoefficient(v[t - 1], -1);
                 c.setCoefficient(down[t], 1);
             }
+            //(those committed and not built yet: built in a span, or given up; in the plan all of them, in the near spans
+            //what is left of them worth what it is to the rest of the plan, its cost still to pay)
+            if(pending > 0){
+                MPVariable[] q = new MPVariable[T + 1];
+                MPConstraint all = solver.makeConstraint(nWorth == null ? pending : -inf, pending);
+                for(int t = 1; t <= T; t++){
+                    q[t] = t <= whole ? solver.makeIntVar(0, pending, "") : solver.makeNumVar(0, pending, "");
+                    all.setCoefficient(q[t], 1);
+                    fl[t].setCoefficient(q[t], -1);
+                }
+                MPVariable x = whole >= 1 ? solver.makeIntVar(0, u.removable ? pending : 0, "") : solver.makeNumVar(0, u.removable ? pending : 0, "");
+                all.setCoefficient(x, 1);
+                m.q.put(u, q);
+                m.x.put(u, x);
+                m.all.put(u, all);
+                //(what is left of them after the near spans is worth to the rest what one more of them committed and not
+                //built is worth to the plan: the dual of its row)
+                if(nWorth != null && pWorth != null && pWorth.containsKey(u)){
+                    double left = pWorth.get(u);
+                    solver.objective().setCoefficient(x, -left);
+                    for(int t = 1; t <= T; t++) solver.objective().setCoefficient(q[t], -left);
+                }
+            }
             //(what stands works as its lines feed it now, as measured: of its machines that stand, those fed by nothing do
             //not work until taken down and built again, with lines of their own; new ones work in full)
-            float dead = PRIME_DEAD && have > 0 && grounded.containsKey(u) ? have - Math.min(have, grounded.get(u)) : 0f;
+            float dead = PRIME_DEAD && built > 0 && grounded.containsKey(u) ? built - Math.min(built, grounded.get(u)) : 0f;
             deadOf.put(u, dead);
             if(dead > 1e-3f) for(int t = 1; t <= T; t++){
-                MPConstraint c = solver.makeConstraint(-inf, -dead);
+                float off = dead;
+                MPConstraint c = solver.makeConstraint(-inf, -off);
                 c.setCoefficient(w[t], 1);
                 c.setCoefficient(v[t - 1], -1);
                 //(those taken down before this span go first among the dead: what is taken down in it works not anyway)
@@ -1113,7 +1208,7 @@ public final class Grow{
             }
             //(what works now goes on working till taken down: at least so much of it at work each span, those taken down
             //apart; a shortfall, as when what fed it stops, at a great price)
-            float now = INERTIA && have > 0 ? Math.min(have, workingNow.getOrDefault(u, 0f)) : 0f;
+            float now = INERTIA && built > 0 ? Math.min(built, workingNow.getOrDefault(u, 0f)) : 0f;
             if(now > 1e-3f) for(int t = 1; t <= T; t++){
                 MPConstraint c = solver.makeConstraint(now, inf);
                 c.setCoefficient(w[t], 1);
@@ -1141,14 +1236,18 @@ public final class Grow{
             res.addAll(u.cost.keySet());
         }
         MPObjective obj = solver.objective();
-        //(the core unit builds at its speed as measured, its flights in it: bp.measuredSpeed)
-        float speed = MEASURED_SPEED ? st.effectiveSpeed() : st.buildSpeed;
         for(int t = 1; t <= T; t++){
-            //the core unit's time
-            MPConstraint time = solver.makeConstraint(-inf, L[t]);
+            //the core unit's time, but for what it has to build of what is committed
+            MPConstraint time = solver.makeConstraint(-inf, Math.max(0f, L[t] - busy[t]));
             for(Unit u : units){
                 time.setCoefficient(m.b.get(u)[t], u.seconds / speed);
                 time.setCoefficient(m.d.get(u)[t], u.seconds / speed);
+                //(of what is committed: building what is left of one, or taking down what of it stands)
+                if(m.q.containsKey(u)){
+                    float[] pd = pend.get(u);
+                    time.setCoefficient(m.q.get(u)[t], pd[1] / pd[0] / speed);
+                    if(t == 1) time.setCoefficient(m.x.get(u), pd[2] / pd[0] / speed);
+                }
             }
             for(MPVariable[] dg : m.dig.values()) time.setCoefficient(dg[t], 1);
             //power: made by what works; taken by what stands (a machine that has what it takes works, and draws its power,
@@ -1199,9 +1298,14 @@ public final class Grow{
             //(a body on the other's body, or on the tiles its beams pass over)
             if(x.tiles.length == 0 || y.tiles.length == 0 || !share(x.tiles, y.tiles) && !share(x.tiles, y.lane) && !share(x.lane, y.tiles)) continue;
             for(int t = 1; t <= T; t++){
-                MPConstraint c = solver.makeConstraint(-inf, 1);
-                c.setCoefficient(m.n.get(x)[t], 1);
-                c.setCoefficient(m.n.get(y)[t], 1);
+                //(what is committed and not built yet holds its ground too, till built or given up)
+                MPConstraint c = solver.makeConstraint(-inf, 1 - pendingOf(m, x) - pendingOf(m, y));
+                for(Unit z : new Unit[]{x, y}){
+                    c.setCoefficient(m.n.get(z)[t], 1);
+                    if(!m.q.containsKey(z)) continue;
+                    c.setCoefficient(m.x.get(z), -1);
+                    for(int tau = 1; tau <= t; tau++) c.setCoefficient(m.q.get(z)[tau], -1);
+                }
             }
         }
         for(String r : res){
@@ -1255,6 +1359,14 @@ public final class Grow{
                 if(m.dig.containsKey(r)) bal.setCoefficient(m.dig.get(r)[t], -st.dig.get(r));
                 for(Unit u : units){
                     float c = u.cost.getOrDefault(r, 0f);
+                    //(of what is committed: what is left to pay of one built, what was paid of one given up, given back)
+                    if(m.q.containsKey(u)){
+                        float pc = pendCost.getOrDefault(u, Map.of()).getOrDefault(r, 0f) / pend.get(u)[0];
+                        if(pc > 0f) bal.setCoefficient(m.q.get(u)[t], pc);
+                        float[] pd = pend.get(u);
+                        float paid = pd[1] + pd[2] <= 1e-6f ? 0f : pd[2] / (pd[1] + pd[2]);
+                        if(t == 1 && c > 0f) bal.setCoefficient(m.x.get(u), -c * refund * paid);
+                    }
                     if(c == 0f) continue;
                     bal.setCoefficient(m.b.get(u)[t], c);
                     bal.setCoefficient(m.d.get(u)[t], -c * refund);
@@ -1326,7 +1438,12 @@ public final class Grow{
      * duals of the rows of the second span they enter (Lagrange): a unit, those of the second span's count and work; an
      * item, that of the second span's stock (GLOP's duals: what the objective gains as a row's bound grows).
      */
+    /** What one more of each unit committed and not built yet is worth to the plan (the dual of its row; bp.pending). */
+    Map<Unit, Double> pWorth;
+
     void worth(Model plan, int k, Map<Unit, Double> nWorth, Map<String, Double> sWorth){
+        pWorth = new HashMap<>();
+        for(var e : plan.all.entrySet()) pWorth.put(e.getKey(), e.getValue().dualValue());
         if(plan.T <= k) return;
         for(Unit u : units) nWorth.put(u, plan.flow.get(u)[k + 1].dualValue() + plan.act.get(u)[k + 1].dualValue());
         for(var e : plan.bal.entrySet()) if(e.getValue()[k + 1] != null) sWorth.put(e.getKey(), e.getValue()[k + 1].dualValue());
@@ -1350,6 +1467,9 @@ public final class Grow{
         float horizon = 0f;
         for(int t = 1; t <= T; t++) horizon += L[t];
         Map<Unit, Integer> out = new LinkedHashMap<>();
+        //(what this plan takes down and gives up: its own, not a plan's before it in the step)
+        takeDown.clear();
+        cancel.clear();
         Model plan, first;
         boolean exact = System.getProperty("bp.schedule", "split").equals("exact");
         if(exact){
@@ -1373,6 +1493,19 @@ public final class Grow{
             Map<String, Double> sWorth = new HashMap<>();
             if(plan.solved()) worth(plan, near, nWorth, sWorth);
             first = build(st, near, L, 1, System.getProperty("bp.mip", "SCIP"), nWorth, sWorth);
+            //(the near spans take down no more than the plan does by then, rounded up: in whole numbers, the near choice
+            //took down what the plan keeps working all along, its building given back to pay for something else whole,
+            //and built it again the span after)
+            if(NEAR_DOWN && plan.solved()) for(Unit u : units){
+                if(!u.removable) continue;
+                if(first.x.containsKey(u) && plan.x.containsKey(u)) first.x.get(u).setUb(Math.min(first.x.get(u).ub(), Math.ceil(plan.x.get(u).solutionValue() - 1e-6)));
+                double planDown = 0.0;
+                for(int t = 1; t <= first.T; t++){
+                    planDown += plan.d.get(u)[t].solutionValue();
+                    MPConstraint c = first.solver.makeConstraint(-MPSolver.infinity(), Math.ceil(planDown - 1e-6));
+                    for(int tau = 1; tau <= t; tau++) c.setCoefficient(first.d.get(u)[tau], 1);
+                }
+            }
             if(plan.solved()) solve(first, think);
             System.out.println(String.format(Locale.ROOT, "schedule: the plan %s, %d units, %d spans (%.0f s to %.0f s, %.0f s in all), objective %.3f (%.1f s); the first span %s (%.1f s); the core unit builds at %.2f a second (%.2f as measured)", plan.status.toString().toLowerCase(), units.size(), T, L[1], L[T], horizon, plan.objective(), plan.seconds, first.status == null ? "not planned" : first.status.toString().toLowerCase(), first.seconds, MEASURED_SPEED ? st.effectiveSpeed() : st.buildSpeed, st.effectiveSpeed()));
             if(Boolean.getBoolean("bp.evalSplit") && first.solved()) evalSplit(st, T, L, first, think);
@@ -1399,6 +1532,20 @@ public final class Grow{
             }
             int k = Math.min(T, Integer.getInteger("bp.nearSpans", 2));
             if(plan.T > k) sb.append(String.format(Locale.ROOT, "; worth after %d: flow %.4f act %.4f; dead %.2f, works now %.2f, grounded %.2f", k, plan.flow.get(u)[k + 1].dualValue(), plan.act.get(u)[k + 1].dualValue(), deadOf.getOrDefault(u, 0f), workingNow.getOrDefault(u, 0f), grounded.getOrDefault(u, -1f)));
+            System.out.println(sb);
+        }
+        //(a test: what is committed and not built yet, and what the plan and the near choice make of it; bp.debugPending)
+        if(Boolean.getBoolean("bp.debugPending") && plan.solved() && first.solved()){
+            StringBuilder sb = new StringBuilder("  pending: busy");
+            for(int t = 1; t <= Math.min(4, plan.T); t++) sb.append(String.format(Locale.ROOT, " %.0f", plan.busy[t]));
+            for(Unit u : units){
+                if(!plan.q.containsKey(u)) continue;
+                sb.append(String.format(Locale.ROOT, "%n    %s: %d of %d; plan q", u.key, pendingOf(plan, u), ledger.committed(u.key)));
+                for(int t = 1; t <= Math.min(6, plan.T); t++) sb.append(String.format(Locale.ROOT, " %.2f", plan.q.get(u)[t].solutionValue()));
+                sb.append(String.format(Locale.ROOT, " x %.2f; near q", plan.x.get(u).solutionValue()));
+                for(int t = 1; t <= first.T; t++) sb.append(String.format(Locale.ROOT, " %.2f", first.q.get(u)[t].solutionValue()));
+                sb.append(String.format(Locale.ROOT, " x %.2f", first.x.get(u).solutionValue()));
+            }
             System.out.println(sb);
         }
         if(!plan.solved() || !first.solved()) return out;
@@ -1431,6 +1578,11 @@ public final class Grow{
             }
             if(add > 0) out.put(u, add);
             if(drop > 0) takeDown.put(u, drop);
+            //(of what is committed and not built yet, what is given up)
+            if(first.x.containsKey(u)){
+                int gone = (int)Math.round(first.x.get(u).solutionValue());
+                if(gone > 0) cancel.put(u, gone);
+            }
             if(Boolean.getBoolean("bp.debug") && (add > 0 || drop > 0)) System.out.println(String.format("    %s: had %d, built %d, taken down %d, then %d; works %.2f in span 1", u.key, ledger.committed(u.key), add, drop, Math.round(first.n.get(u)[1].solutionValue()), first.a.get(u)[1].solutionValue()));
         }
         float end = 0f;
@@ -1482,6 +1634,17 @@ public final class Grow{
         for(var e : first.dig.entrySet()) expected.merge(e.getKey(), st.dig.get(e.getKey()) * (float)e.getValue()[1].solutionValue() / L[1], Float::sum);
         expected.values().removeIf(v -> Math.abs(v) < 1e-3f);
         System.out.println("  expected into the core, a second: " + Recipe.fmt(new LinkedHashMap<>(expected)));
+        //(a test: of one thing, what each unit is expected to make or take of it in the first span; bp.expectOf)
+        if(System.getProperty("bp.expectOf") != null){
+            String r = System.getProperty("bp.expectOf");
+            StringBuilder by = new StringBuilder();
+            for(Unit u : units){
+                float rate = u.rate.getOrDefault(r, 0f);
+                double a = first.a.get(u)[1].solutionValue();
+                if(rate != 0f && a > 1e-3) by.append(String.format(Locale.ROOT, "%n    %s %+.2f (had %d, built %.0f, down %.0f, works %.2f, works now %.2f, grounded %.2f)", u.key, rate * a, ledger.committed(u.key), first.b.get(u)[1].solutionValue(), first.d.get(u)[1].solutionValue(), a, workingNow.getOrDefault(u, 0f), grounded.getOrDefault(u, -1f)));
+            }
+            System.out.println("  expected of " + r + " in the first span:" + by);
+        }
         return out;
     }
 
@@ -1565,6 +1728,8 @@ public final class Grow{
     final Map<String, Float> expected = new TreeMap<>();
     /** Ways up the first span takes down: how many of each. */
     final Map<Unit, Integer> takeDown = new LinkedHashMap<>();
+    /** Of each unit, how many of those committed and not built yet to give up (bp.pending). */
+    final Map<Unit, Integer> cancel = new LinkedHashMap<>();
 
     static boolean share(int[] a, int[] b){
         for(int x : a) for(int y : b) if(x == y) return true;
@@ -2296,12 +2461,26 @@ public final class Grow{
 
     void takeDown(){
         Set<Integer> gone = new HashSet<>();
+        //(what is given up of what is committed and not built yet: the last committed first)
+        for(var e : cancel.entrySet()){
+            int k = e.getValue();
+            for(int i = ledger.insts.size() - 1; i >= 0 && k > 0; i--){
+                Inst in = ledger.insts.get(i);
+                if(in.removed || in.built || !e.getKey().key.equals(in.unit)) continue;
+                in.removed = true;
+                removed.add(in);
+                gone.add(in.id);
+                k--;
+            }
+        }
         for(var e : takeDown.entrySet()){
             int k = e.getValue();
             //(those not fed first, then the last committed)
             for(int pass = 0; pass < 2; pass++) for(int i = ledger.insts.size() - 1; i >= 0 && k > 0; i--){
                 Inst in = ledger.insts.get(i);
                 if(in.removed || !e.getKey().key.equals(in.unit)) continue;
+                //(what stands, the model's own count apart from what is committed and not built yet)
+                if(PENDING && !in.built) continue;
                 if(pass == 0 && !unfed.contains(in.id)) continue;
                 in.removed = true;
                 removed.add(in);

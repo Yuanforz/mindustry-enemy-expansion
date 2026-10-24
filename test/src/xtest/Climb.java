@@ -280,6 +280,13 @@ public class Climb{
         for(Item item : Vars.content.items()) if(unit.canMine(item) && hand.wall(item, core) != null) s.append(String.format(Locale.ROOT, "dig %s %.3f%n", item.name, hand.digRate(item)));
         for(Job j : jobs) if(!j.remove && standing(j)) s.append("built ").append(j.id).append('\n');
         for(Job j : jobs) if(!j.remove && !standing(j) && begun(j)) s.append("begun ").append(j.id).append('\n');
+        //(what of each thing given is not built yet, its build seconds, in the order the core unit goes through them)
+        for(Job j : jobs){
+            if(j.remove || standing(j)) continue;
+            float left = 0f;
+            for(Object[] b : j.blocks) if(!built(b)) left += Vars.content.block((String)b[0]).buildTime / 60f;
+            s.append(String.format(Locale.ROOT, "left %d %.2f%n", j.id, left));
+        }
         s.append(String.format(Locale.ROOT, "buildSpeed %.3f%ncoreCap %d%ntime %.1f%n", unit.type.buildSpeed * Vars.state.rules.buildSpeed(us), core.storageCapacity, now));
         s.append(String.format(Locale.ROOT, "buildWork %.1f%nbuildBusy %.1f%n", buildWork, buildBusy));
         file.writeString(s.toString());
