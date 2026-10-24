@@ -152,3 +152,14 @@ Mindustry 模组 "enemy expansion"。这个分支做 **Operations**：一套基�
   ```
 - 弃用：`bp.Master layout`（一次性组合整张终局图：177 个体放置 640 s、布线 1090 s 仍有 387 格冲突，不收敛）。`Modular` 的模块仍可用于小问题。
 - 回归：`sh bp/regress.sh`（整块模式和模块模式各几个测试题）。
+
+## 10. 线三现状：大图、街区、泵排（2026-10-24）
+
+用户最近的要求（按时间）："不够好和直接，时间也太长"；"为了更简单实现总局目标，你搞一个大范围扩大，矿增加的地图测试"；"先跑通再优化"；"重做吧"（同意街区式布局）。汇报只说一个指标：立着几类方块（满效率几类）、按分钟，几行就够。另有一条仍然有效："继续持续优化，不准进行删除操作直到我的下一轮指示"（不删文件、不 `git rm/reset/clean`，用新目录、新标签）。
+
+- **测试图**：`bp.BigMap` 生成 300×300 平地、核心居中、每种地面资源若干片。现用 `build/bp-maps/big-3.msav`（间距 22，每种 5 片，最近一圈 20–33 格）。终局计划 `build/bp-maps/big-3s.plan`：`java -Dbp.balanceSeconds=300 ... bp.Master plan build/bp-data build/bp-maps/big-3.msav 100000 <out.plan> 40`（约 6 分钟）。地点、泵排的规则一改，计划要重算。
+- **布局层（PLAN §35）**：街道（`Streets`：每 22 格 3 格宽，核心四周 4 格一圈；新东西不压街，线在街上便宜）；泵排（`Strips`：池边一排泵上面三排编织的管子，一个进口一个出口，游戏里实测满效率）；地面地点各留一整面（`Sites.findApart`）；别的机器门前的线加价（`Board.markAprons`）；挡着已建东西的计划地点不再占地。
+- **速度**：摆放的快速估价只改回写过的格子（快 4–5 倍，结果相同）；全图铺线用"到目标最少花多少"引导（`Router.bound`）。剩下的大头是排程：后期每步首段整数规划用满 60 秒（Climb 最后一个参数）。
+- **已知的经济问题**：排程把电力当成"想开哪台开哪台"，游戏里只要有料的机器都在耗电，电不够时大家一起变慢；大图一局里电力大部分时间为负。还没改。
+- **跑一局**：`MAP=build/bp-maps/big-3.msav PLAN=build/bp-maps/big-3s.plan TC=<test-classes 快照> sh <scratchpad>/climb2.sh <标签> <分钟> [-Dbp.x=y]`；表：`table2.sh <标签...>`（每 5 分钟立着几类、均值、满效率、规划秒数、核心机空闲分钟）。单步重放：把 `steps/step-N.{ledger,state}` 和 `shapes.txt` 复制到新目录直接跑 `bp.Grow`。
+- **调试开关**：`-Dbp.debugFlood=true`（为什么够不到）、`-Dbp.debugStarts=true`、`-Dbp.slowLine=1`（超过 1 秒的线）、`-Dbp.checkEval=true`（摆放快算对整算）、`-Dbp.debug=true`（摆放的硬项、漏的细节）。
