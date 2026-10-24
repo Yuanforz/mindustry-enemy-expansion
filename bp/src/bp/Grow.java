@@ -1774,6 +1774,7 @@ public final class Grow{
             base.places.addAll(0, prob.fixed);
             before = g.verify(base, false, false);
         }
+        Set<Integer> spotsBefore = new HashSet<>(g.lastSpots);
         //the step's own
         Map<Body, Unit> fresh = new LinkedHashMap<>();
         int nid = ledger.nextId();
@@ -1943,6 +1944,27 @@ public final class Grow{
         if(!later.isEmpty()) System.out.println("  not laid now (between what stands): " + later);
         int bad = g.verify(s, false);
         System.out.println(String.format("  laid out; %d of the step's own wrong; %s", own, bad == 0 ? "clean by the game's rules" : bad + " things wrong by the game's rules" + (before > 0 ? " (" + before + " before it)" : "")));
+        //(what the game's rules find wrong now and not before, blamed on the step's machines there, or at the ends of the
+        //lines there and of the lines that do not reach where they were laid to: else a step that kept one such was given up
+        //whole, no machine to leave out, and planned the same again)
+        if(bad > before){
+            Set<Integer> fresh2 = new HashSet<>();
+            for(int sp : g.lastSpots) if(!spotsBefore.contains(sp)) fresh2.add(sp);
+            Map<Integer, Body.Part> partBy = new HashMap<>();
+            for(Body b : g.bodies) for(Body.Part p : b.parts) partBy.put(p.ax() * 100000 + p.ay(), p);
+            List<Router.Net> blame = new ArrayList<>(g.lastBadNets);
+            for(int sp : fresh2){
+                Body.Part p = partBy.get(sp);
+                if(p != null && (fresh.containsKey(p.body) || freshStrips.containsKey(p.body))) trouble.add(p.body);
+                int x = sp / 100000, y = sp % 100000;
+                for(Router.Net n : g.bestNets) for(Piece q : n.pieces) if(q.x == x && q.y == y && !blame.contains(n)) blame.add(n);
+            }
+            for(Router.Net n : blame){
+                if(fresh.containsKey(n.from.body) || freshStrips.containsKey(n.from.body)) trouble.add(n.from.body);
+                for(Body.Part t : n.to) if(fresh.containsKey(t.body) || freshStrips.containsKey(t.body)) trouble.add(t.body);
+            }
+            for(var e : freshStrips.entrySet()) if(trouble.contains(e.getKey())) for(var f : freshPumpRow.entrySet()) if(f.getValue() == e.getValue()) trouble.add(f.getKey());
+        }
         if(own > 0 || bad > before){
             //(what of the step is in it: left out, the rest laid out again)
             for(Body b : fresh.keySet()) if(trouble.contains(b)) drop.merge(fresh.get(b), 1, Integer::sum);

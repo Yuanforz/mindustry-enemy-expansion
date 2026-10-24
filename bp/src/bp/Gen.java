@@ -698,9 +698,15 @@ public final class Gen{
     }
 
     /** What is wrong by the game's rules: the check's own, and (lines) each line laid that does not reach as laid. */
+    /** Of the last check: where what it found wrong is (Check.spots), and the lines laid that do not reach a taker. */
+    Set<Integer> lastSpots = Set.of();
+    final List<Router.Net> lastBadNets = new ArrayList<>();
+
     int verify(Spec s, boolean print, boolean lines){
         Check check = new Check(new Scratch(s)).run();
         if(print) System.out.print(check.report());
+        lastSpots = new HashSet<>(check.spots);
+        lastBadNets.clear();
         int wrong = 0;
         if(lines) for(Router.Net n : bestNets){
             Set<String> got = check.reach.getOrDefault((n.cls == 3 ? "payload" : n.res) + " from " + where(n.from), Set.of());
@@ -712,6 +718,7 @@ public final class Gen{
             //(a taker no line was laid to is the router's to tell, not a line laid that goes wrong)
             for(Body.Part t : n.to) if(!n.unreached.contains(t) && !got.contains(where(t))){
                 wrong++;
+                if(!lastBadNets.contains(n)) lastBadNets.add(n);
                 if(print) System.out.println("  NOT AS LAID: " + n.res + " from " + where(n.from) + " does not reach " + where(t) + " (it reaches " + got + ")");
             }
         }

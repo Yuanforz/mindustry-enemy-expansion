@@ -36,6 +36,12 @@ public final class Check{
     final Scratch world;
     public final List<String> lines = new ArrayList<>();
     public int jams, unpowered, cold, mixed;
+    /** Where each thing found wrong is (x * 100000 + y of the block): a line that stops, a carrier mixed, a block without power or heat. */
+    public final Set<Integer> spots = new HashSet<>();
+
+    void spot(Building b){
+        if(b != null) spots.add(b.tileX() * 100000 + b.tileY());
+    }
     /** Blocks the game would not let be built where they stand, or not known. */
     public int misplaced;
     /** Where each thing made reaches: "thing from block@x,y" to the blocks it ends in. */
@@ -194,7 +200,10 @@ public final class Check{
                     if(!seen.add(c)) continue;
                     through.computeIfAbsent(c, k -> new LinkedHashSet<>()).add(item);
                     List<Building> next = handsTo(c, item);
-                    if(next.isEmpty()) stops.add(Scratch.where(c) + " (ahead: " + Scratch.where(c.front()) + ")");
+                    if(next.isEmpty()){
+                        stops.add(Scratch.where(c) + " (ahead: " + Scratch.where(c.front()) + ")");
+                        spot(c);
+                    }
                     for(Building o : next){
                         if(carrier(o)) queue.add(o);
                         else ends.add(o);
@@ -375,6 +384,7 @@ public final class Check{
         }
         for(var e : through.entrySet()) if(e.getValue().size() > 1){
             mixed++;
+            spot(e.getKey());
             List<String> names = new ArrayList<>();
             for(Liquid l : e.getValue()) names.add(l.name);
             lines.add("MIXED liquids: " + Scratch.where(e.getKey()) + " gets " + names + " (a conduit holds one liquid: the second is refused)");
@@ -393,6 +403,7 @@ public final class Check{
             boolean made = g.producers.size > 0 || g.batteries.contains(o -> o.block instanceof PowerSource);
             if(!made){
                 unpowered++;
+                spot(b);
                 lines.add("NO POWER: " + Scratch.where(b) + " (its grid has " + g.all.size + " blocks and nothing that makes power)");
             }
         }
@@ -439,7 +450,10 @@ public final class Check{
             Set<Building> path = new HashSet<>();
             path.add(b);
             float got = heatInto(b, path);
-            if(got < need - 1e-3f) cold++;
+            if(got < need - 1e-3f){
+                cold++;
+                spot(b);
+            }
             lines.add(String.format("%sheat %s: gets %.1f of %.1f", got < need - 1e-3f ? "COLD " : "", Scratch.where(b), got, need));
         }
     }
