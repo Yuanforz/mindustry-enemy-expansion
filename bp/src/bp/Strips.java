@@ -256,10 +256,15 @@ public final class Strips{
                 }
             }
         }
-        //(the strip on land, its end columns too; kept nearest the core first, entry nearest; none over another)
+        //(the strip on land, its end columns too, and the two tiles the lines from outside meet its ports on; kept
+        //nearest the core first, entry nearest; none over another, nor over another's meeting tiles)
         cand.removeIf(row -> {
             for(int c = -1; c <= row.k() * row.s(); c++) for(int l = 1; l <= 3; l++){
                 int[] t = row.tile(c, l);
+                if(!land(b, t[0], t[1])) return true;
+            }
+            for(int l = 2; l <= 3; l++){
+                int[] t = row.tile(-2, l);
                 if(!land(b, t[0], t[1])) return true;
             }
             return false;
@@ -276,6 +281,10 @@ public final class Strips{
             row.id = out.size();
             out.add(row);
             taken.addAll(row.tiles(b));
+            for(int l = 2; l <= 3; l++){
+                int[] t = row.tile(-2, l);
+                taken.add(b.idx(t[0], t[1]));
+            }
             for(int[] p : row.at) for(int y = p[1]; y < p[1] + s; y++) for(int x = p[0]; x < p[0] + s; x++) taken.add(b.idx(x, y));
         }
         return out;
@@ -283,6 +292,10 @@ public final class Strips{
 
     static boolean clash(Board b, Row row, Set<Integer> taken){
         for(int t : row.tiles(b)) if(taken.contains(t)) return true;
+        for(int l = 2; l <= 3; l++){
+            int[] t = row.tile(-2, l);
+            if(taken.contains(b.idx(t[0], t[1]))) return true;
+        }
         int s = row.s();
         for(int[] p : row.at) for(int y = p[1]; y < p[1] + s; y++) for(int x = p[0]; x < p[0] + s; x++) if(taken.contains(b.idx(x, y))) return true;
         return false;
