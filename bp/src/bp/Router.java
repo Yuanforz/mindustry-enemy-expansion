@@ -34,6 +34,8 @@ public final class Router{
          * opened toward this line ({piece, side}).
          */
         public final List<Object[]> taps = new ArrayList<>();
+        /** Conduits of lines that stand it crosses, each turned to a junction ({piece, the way this line goes through}). */
+        public final List<Object[]> crossings = new ArrayList<>();
         /** A drain: a line of conduits to an empty tile it leaks onto (Building.moveLiquidForward), no taker. */
         public boolean drain;
         /** Payloads the line must hold on its way (each payload conveyor holds one): for a taker that takes a batch at once. */
@@ -161,6 +163,8 @@ public final class Router{
     static final boolean NAIVE = Boolean.parseBoolean(System.getProperty("bp.naive", "true"));
     /** Whether a line may branch off a line that stands, of its maker and its thing (bp.taps). */
     static final boolean TAPS = Boolean.parseBoolean(System.getProperty("bp.taps", "true"));
+    /** Whether a line of conduits may cross a line of conduits that stands by a junction put in its place (bp.cross). */
+    static final boolean CROSS = Boolean.parseBoolean(System.getProperty("bp.cross", "true"));
     float pf = NAIVE ? 1e4f : 0.5f;
     /** How far a bridge reaches, of the bridges the lines use (DirectionBridge.range): of items, of liquids. */
     int range, lrange;
@@ -430,7 +434,10 @@ public final class Router{
     }
     int now;
 
-    /** A move: what is put at the state's tile. type 0 duct, 1 armoured, 2 bridge (j, f), 3 surge, 4 conduit, 5 bridge conduit. */
+    /**
+     * A move: what is put at the state's tile. type 0 duct, 1 armoured, 2 bridge (j, f), 3 surge, 4 conduit, 5 bridge
+     * conduit, 6 a conduit into a junction put in place of a conduit that stands across the way, and on out of it.
+     */
     static int move(int type, int e, int j, int f){
         return type | e << 3 | j << 5 | f << 8;
     }
@@ -453,7 +460,7 @@ public final class Router{
         int type = m & 7, e = m >> 3 & 3, j = m >> 5 & 7, f = m >> 8 & 3;
         List<Piece> out = new ArrayList<>(2);
         switch(type){
-            case 0, 1, 4 -> {
+            case 0, 1, 4, 6 -> {
                 Piece q = piece(type == 0 ? Kind.duct : type == 1 ? Kind.armored : Kind.conduit, x, y, e, net.id, net.res);
                 q.from = d;
                 q.outs = 1 << e;
@@ -489,6 +496,7 @@ public final class Router{
             int ux = x + Geo.dx(e) * j, uy = y + Geo.dy(e) * j;
             return new int[]{ux + Geo.dx(f), uy + Geo.dy(f), f};
         }
+        if(type == 6) return new int[]{x + 2 * Geo.dx(e), y + 2 * Geo.dy(e), e};
         return new int[]{x + Geo.dx(e), y + Geo.dy(e), e};
     }
 
@@ -518,6 +526,7 @@ public final class Router{
                 case 1 -> out.add(move(3, e, 0, 0));
                 default -> {
                     if(k == 0 || e == d) out.add(move(4, e, 0, 0));
+                    if(CROSS && (k == 0 || e == d)) out.add(move(6, e, 0, 0));
                     for(int j = 2; j <= lrange; j++) for(int f = 0; f < 4; f++) if(f != (e + 2) % 4) out.add(move(5, e, j, f));
                 }
             }
@@ -553,6 +562,10 @@ public final class Router{
             int idx = parent / 12;
             if(idx == tile) return true;
             int type = m & 7;
+            if(type == 6){
+                int e = m >> 3 & 3;
+                if(b.idx(idx % b.w + Geo.dx(e), idx / b.w + Geo.dy(e)) == tile) return true;
+            }
             if(type == 2 || type == 5){
                 int e = m >> 3 & 3, j = m >> 5 & 7;
                 int x = idx % b.w + Geo.dx(e) * j, y = idx / b.w + Geo.dy(e) * j;
@@ -994,6 +1007,14 @@ public final class Router{
                 int type = m & 7, e = m >> 3 & 3, j = m >> 5 & 7, ff = m >> 8 & 3;
                 int[] nx = next(st, m);
                 if(box != null && (nx[0] < box[0] || nx[1] < box[1] || nx[0] > box[2] || nx[1] > box[3])) continue;
+                //(across a line of conduits that stands, at right angles: its conduit there turned to a junction, which
+                //hands each line on straight, LiquidJunction; the game itself puts one so where a conduit is laid across
+                //another, Conduit.junctionReplacement)
+                Piece across = null;
+                if(type == 6){
+                    across = crossable(x + Geo.dx(e), y + Geo.dy(e), e);
+                    if(across == null) continue;
+                }
                 //(a drain ends in a conduit that leaks, Conduit.leaks: a bridge's end hands on without leaking, moveLiquidForward(false))
                 boolean goal = b.in(nx[0], nx[1]) && (sink == null ? leakable(nx[0], nx[1]) && type == 4 && blockOf(Kind.conduit) instanceof mindustry.world.blocks.liquid.Conduit cd && cd.leaks : inPart(nx[0], nx[1], sink));
                 //(a surge line of one tile loads nothing)
@@ -1030,6 +1051,7 @@ public final class Router{
                     low += cost(q.kind) + hist[qi] + pf * at[qi].size();
                 }
                 if(type == 2 || type == 5) low += this.w.tile() * (j - 1);
+                if(type == 6) low += cost(Kind.ljunction);
                 if(!hard){
                     float lowG = g[st] + low;
                     if(lowG >= bestGoal) continue;
@@ -1039,7 +1061,21 @@ public final class Router{
                     }
                 }
                 float c = 0f;
-                for(Piece q : ps) c += price(q, ps.size() == 2 ? ps.get(ps.size() - 1 - ps.indexOf(q)) : null);
+                int acrossOuts = across == null ? 0 : across.outs;
+                if(across != null){
+                    //(priced with the junction in place: the conduit before it hands into it, not into the other line)
+                    across.kind = Kind.ljunction;
+                    across.outs |= 1 << e;
+                }
+                try{
+                    for(Piece q : ps) c += price(q, ps.size() == 2 ? ps.get(ps.size() - 1 - ps.indexOf(q)) : null);
+                }finally{
+                    if(across != null){
+                        across.kind = Kind.conduit;
+                        across.outs = acrossOuts;
+                    }
+                }
+                if(type == 6) c += cost(Kind.ljunction);
                 if(c == Float.POSITIVE_INFINITY) continue;
                 //(a bridge's span is ground spent too: what it passes over is left in scraps no machine fits, and no other
                 //bridge of its kind may stand in line with it)
@@ -1064,6 +1100,7 @@ public final class Router{
         if(bestGoal == Float.MAX_VALUE) return false;
         //the line, back from the taker
         List<Piece> laid = new ArrayList<>();
+        List<int[]> crossAt = new ArrayList<>();
         int tapRef;
         if(goalSt == -1){
             tapRef = goalTap;
@@ -1072,6 +1109,10 @@ public final class Router{
             boolean last = true;
             while(true){
                 List<Piece> ps = pieces(net, st, m, last);
+                if((m & 7) == 6){
+                    int ci = st / 12, ce = m >> 3 & 3;
+                    crossAt.add(new int[]{ci % b.w + Geo.dx(ce), ci / b.w + Geo.dy(ce), ce});
+                }
                 last = false;
                 laid.addAll(0, ps);
                 int p = par[st];
@@ -1115,6 +1156,16 @@ public final class Router{
             net.pieces.add(q);
             place(q);
         }
+        //(the conduits that stand it crosses, turned to junctions: what each was kept, to be put back if this line is taken up)
+        for(int[] t : crossAt){
+            Piece f = crossable(t[0], t[1], t[2]);
+            if(f == null) continue;
+            crossed.put(f, new Object[]{f.kind, f.block, f.rot, f.outs});
+            f.kind = Kind.ljunction;
+            f.block = blockOf(Kind.ljunction);
+            f.outs |= 1 << t[2];
+            net.crossings.add(new Object[]{f, t[2]});
+        }
         if(goalJoin != null && goalSt >= 0) net.joins.put(sink, goalJoin);
         //(what of the line now goes wrong with the rest of itself, a bridge reaching one of its own unmeant: dearer next round)
         for(Piece q : laid){
@@ -1145,6 +1196,10 @@ public final class Router{
         int idx = st / 12;
         long bits = bit(idx);
         int type = m & 7;
+        if(type == 6){
+            int e = m >> 3 & 3, x = idx % b.w + Geo.dx(e), y = idx / b.w + Geo.dy(e);
+            if(b.in(x, y)) bits |= bit(b.idx(x, y));
+        }
         if(type == 2 || type == 5){
             int e = m >> 3 & 3, j = m >> 5 & 7;
             int x = idx % b.w, y = idx / b.w;
@@ -1212,10 +1267,43 @@ public final class Router{
             }
         }
         net.taps.clear();
+        for(Object[] t : net.crossings){
+            Piece f = (Piece)t[0];
+            Object[] o = crossed.remove(f);
+            if(o == null) continue;
+            f.kind = (Kind)o[0];
+            f.block = (Block)o[1];
+            f.rot = (Integer)o[2];
+            f.outs = (Integer)o[3];
+        }
+        net.crossings.clear();
     }
 
     /** Pieces of lines that stand turned to routers, with what they were: {kind, block, turn, hands to}. */
     public final Map<Piece, Object[]> tapped = new IdentityHashMap<>();
+    /** Conduits of lines that stand turned to junctions, with what they were: {kind, block, turn, hands to}. */
+    public final Map<Piece, Object[]> crossed = new IdentityHashMap<>();
+
+    /**
+     * The conduit of a line that stands a line going way e may cross at a tile: a conduit there alone, straight, at right
+     * angles to e, with its line running on both ways from it (so not the end of a drain), not turned to a router or a
+     * junction already; the game has a junction for it (Conduit.junctionReplacement). Null if none.
+     */
+    Piece crossable(int jx, int jy, int e){
+        if(!CROSS || !b.in(jx, jy)) return null;
+        int i = b.idx(jx, jy);
+        if(at[i].size() != 1) return null;
+        Piece f = at[i].get(0);
+        if(f.kind != Kind.conduit || f.line == null || tapped.containsKey(f) || crossed.containsKey(f)) return null;
+        if(f.from != f.rot || (f.rot & 1) == (e & 1)) return null;
+        if(!(f.block instanceof mindustry.world.blocks.liquid.Conduit cd) || cd.junctionReplacement == null) return null;
+        if(blockOf(Kind.ljunction) == null || Float.isInfinite(cost(Kind.ljunction))) return null;
+        int ax = jx + Geo.dx(f.rot), ay = jy + Geo.dy(f.rot), bx = jx - Geo.dx(f.rot), by = jy - Geo.dy(f.rot);
+        if(!b.in(ax, ay) || !b.in(bx, by)) return null;
+        if(at[b.idx(ax, ay)].isEmpty() && b.partAt[b.idx(ax, ay)] == null) return null;
+        if(at[b.idx(bx, by)].isEmpty() && b.partAt[b.idx(bx, by)] == null) return null;
+        return f;
+    }
     /** The part each piece of a line that stands is (a body's), for writing what stands out as it is now. */
     public final Map<Piece, Body.Part> partOfPiece = new IdentityHashMap<>();
 
@@ -1223,6 +1311,7 @@ public final class Router{
     public Map<Body.Part, Piece> retuned(){
         Map<Body.Part, Piece> out = new IdentityHashMap<>();
         for(Piece f : tapped.keySet()) if(partOfPiece.containsKey(f)) out.put(partOfPiece.get(f), f);
+        for(Piece f : crossed.keySet()) if(partOfPiece.containsKey(f)) out.put(partOfPiece.get(f), f);
         return out;
     }
 

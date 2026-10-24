@@ -217,6 +217,14 @@ public final class Grow{
      * second, of how many of the unit}. The schedule does not count it made.
      */
     final Map<Unit, Map<String, float[]>> stranded = new HashMap<>();
+    /** Of each unit that stands, how much works now, its machines together (what their lines bring them, as measured). */
+    final Map<Unit, Float> grounded = new HashMap<>();
+    /**
+     * Whether a liquid's takers in a span get no more than its makers that take no liquid make then, and what its other
+     * makers made the span before (what works now, for the first): a ring of makers that feed one another (a pump on
+     * hydrogen, an electrolyzer on its water) goes only once something from outside has set it going (bp.prime).
+     */
+    static final boolean PRIME = Boolean.parseBoolean(System.getProperty("bp.prime", "true"));
 
     void stranded(Board board){
         int w = board.w, h = board.h, n = w * h;
@@ -284,6 +292,7 @@ public final class Grow{
                 float fed = fed(p, in);
                 if(k == 0 && state.work.containsKey(i.id)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
                 if(fed < 1f - 1e-4f) unfed.add(i.id);
+                if(k == 0) grounded.merge(u, fed, Float::sum);
                 for(String r : outs){
                     boolean liquid = Vars.content.liquid(r) != null;
                     if(!liquid && Vars.content.item(r) == null) continue;
@@ -373,6 +382,12 @@ public final class Grow{
             }
         }
         if(count > 0) System.out.println("  made and not to be handed out (shut in): " + stranded.entrySet().stream().map(e -> e.getKey().key + " " + e.getValue().entrySet().stream().map(f -> f.getKey() + " " + f.getValue()[0]).toList()).toList());
+    }
+
+    /** Whether a unit makes what it makes taking no liquid in (a vent condenser, a pump on its own power). */
+    static boolean takesNoLiquid(Unit u){
+        for(var e : u.rate.entrySet()) if(e.getValue() < 0f && Vars.content.liquid(e.getKey()) != null) return false;
+        return true;
     }
 
     Gen probeGen;
@@ -861,6 +876,22 @@ public final class Grow{
                 c.setCoefficient(v[t - 1], -1);
                 c.setCoefficient(down[t], 1);
             }
+            //(what stands works as its lines feed it now, as measured: of its machines that stand, those fed by nothing do
+            //not work until taken down and built again, with lines of their own; new ones work in full)
+            float dead = PRIME && have > 0 && grounded.containsKey(u) ? have - Math.min(have, grounded.get(u)) : 0f;
+            if(dead > 1e-3f) for(int t = 1; t <= T; t++){
+                MPConstraint c = solver.makeConstraint(-inf, -dead);
+                c.setCoefficient(w[t], 1);
+                c.setCoefficient(v[t - 1], -1);
+                //(those taken down before this span go first among the dead: what is taken down in it works not anyway)
+                for(int tau = 1; tau < t; tau++) c.setCoefficient(down[tau], -1);
+            }
+            //(what is built now works from the next span: the layout lays it only with what feeds it now or comes with it)
+            if(PRIME && T >= 2){
+                MPConstraint c = solver.makeConstraint(0, inf);
+                c.setCoefficient(w[2], 1);
+                c.setCoefficient(up[1], -1);
+            }
             m.n.put(u, v);
             m.a.put(u, w);
             m.b.put(u, up);
@@ -944,6 +975,21 @@ public final class Grow{
                     lc.setCoefficient(m.n.get(u)[t - 1], sv[0] / sv[1]);
                     made.setCoefficient(lost, -1);
                 }
+                if(!item && PRIME){
+                    //(taken no faster than made by what takes no liquid, now, and by the rest the span before)
+                    MPConstraint lag = solver.makeConstraint(-inf, 0, "prime_" + r + "_" + t);
+                    double before = 0.0;
+                    for(Unit u : units){
+                        float rate = u.rate.getOrDefault(r, 0f);
+                        if(rate < 0f) lag.setCoefficient(m.a.get(u)[t], -rate);
+                        else if(rate > 0f){
+                            if(takesNoLiquid(u)) lag.setCoefficient(m.a.get(u)[t], -rate);
+                            else if(t > 1) lag.setCoefficient(m.a.get(u)[t - 1], -rate);
+                            else before += rate * Math.min(grounded.getOrDefault(u, 0f), (float)ledger.committed(u.key));
+                        }
+                    }
+                    lag.setBounds(-inf, before);
+                }
                 if(!item) continue;
                 made.setCoefficient(in, -1);
                 //(the stock: before + come in + dug - spent - burnt, at most what the core holds)
@@ -983,7 +1029,7 @@ public final class Grow{
         if(Boolean.getBoolean("bp.solverLog")) m.solver.enableOutput();
         long t0 = System.nanoTime();
         for(int k = 0; k < 3; k++, tol *= 10){
-            if(m.solverName.equals("GLOP")) m.solver.setSolverSpecificParametersAsString("solution_feasibility_tolerance: " + tol);
+            if(m.solverName.equals("GLOP")) m.solver.setSolverSpecificParametersAsString("solution_feasibility_tolerance: " + tol + " " + System.getProperty("bp.glopParams", ""));
             try{
                 m.status = m.solver.solve();
             }catch(IllegalArgumentException e){
@@ -1577,6 +1623,22 @@ public final class Grow{
             stood.built = false;
             Inst branch = ofNet.get(net.id);
             if(branch != null) branch.tapOf.add(stood.id);
+        }
+        //(a line that crosses one that stands: that one's conduit turned to a junction, to be built over it again; if that
+        //line is taken down, this one goes with it, as a branch does)
+        for(Router.Net net : g.bestNets) for(Object[] t : net.crossings){
+            Board.Piece f = (Board.Piece)t[0];
+            Inst stood = f.line == null ? null : ledger.get(f.line.id);
+            if(stood == null) continue;
+            for(Object[] q : stood.pieces) if((Integer)q[2] == f.x && (Integer)q[3] == f.y){
+                q[0] = f.kind.name();
+                q[1] = f.block.name;
+                q[4] = f.rot;
+                q[6] = f.outs;
+            }
+            stood.built = false;
+            Inst crosser = ofNet.get(net.id);
+            if(crosser != null) crosser.tapOf.add(stood.id);
         }
         //(a line that joins another runs on into it, laid now or standing)
         for(Router.Net net : g.bestNets) for(Piece q : net.joins.values()){

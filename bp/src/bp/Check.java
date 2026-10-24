@@ -315,22 +315,35 @@ public final class Check{
                 Set<Building> ends = new LinkedHashSet<>();
                 List<String> stops = new ArrayList<>();
                 Set<Building> seen = new HashSet<>();
-                ArrayDeque<Building> queue = new ArrayDeque<>();
+                //(each carrier with the block it came from: a junction hands on straight, to the side across from that one)
+                ArrayDeque<Building[]> queue = new ArrayDeque<>();
+                Set<String> seenJunction = new HashSet<>();
                 for(Building o : b.proximity){
                     //(a crafter puts each liquid out of its side only: GenericCrafter.liquidOutputDirections)
                     if(dir != -1 && (dir + b.rotation) % 4 != b.relativeTo(o)) continue;
                     if(!takesLiquid(o, b, liquid)) continue;
-                    if(liquidCarrier(o)) queue.add(o);
+                    if(liquidCarrier(o)) queue.add(new Building[]{o, b});
                     else ends.add(o);
                 }
                 while(!queue.isEmpty()){
-                    Building c = queue.poll();
-                    if(!seen.add(c)) continue;
-                    through.computeIfAbsent(c, k -> new LinkedHashSet<>()).add(liquid);
-                    List<Building> next = liquidTo(c, liquid);
+                    Building[] cq = queue.poll();
+                    Building c = cq[0], prev = cq[1];
+                    List<Building> next;
+                    if(c.block instanceof LiquidJunction){
+                        //(a junction keeps what crosses it apart: not mixed, each way followed on its own)
+                        int in = c.relativeTo(prev);
+                        if(in < 0 || !seenJunction.add(c.pos() + ":" + in)) continue;
+                        seen.add(c);
+                        Building o = c.nearby((in + 2) % 4);
+                        next = takesLiquid(o, c, liquid) ? List.of(o) : List.of();
+                    }else{
+                        if(!seen.add(c)) continue;
+                        through.computeIfAbsent(c, k -> new LinkedHashSet<>()).add(liquid);
+                        next = liquidTo(c, liquid);
+                    }
                     if(next.isEmpty() && !(c.block instanceof LiquidRouter)) stops.add(Scratch.where(c) + " (ahead: " + Scratch.where(c.front()) + (c.block instanceof Conduit cd && cd.leaks && c.front() == null ? ", it leaks there" : "") + ")");
                     for(Building o : next){
-                        if(liquidCarrier(o)) queue.add(o);
+                        if(liquidCarrier(o)) queue.add(new Building[]{o, c});
                         else if(o != b) ends.add(o);
                     }
                 }

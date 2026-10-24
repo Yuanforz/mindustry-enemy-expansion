@@ -108,15 +108,21 @@ public final class Final{
         //so many of them held room for a few machines only, and the plan fell short of what a field gives)
         Map<Recipe, List<Sites.Site>> sites = Boolean.parseBoolean(System.getProperty("bp.finalApart", "true")) ? new Sites(gen.board).findApart(bal.recipes, cx, cy, keep) : new Sites(gen.board).find(bal.recipes, cx, cy, keep);
         int n = 0;
+        //(a place far off costs the ground of the line that brings its yield in, a tile a tile of the way to the core, as
+        //a machine costs its own ground: else the plan took any of them alike, the far as the near)
+        float perStep = Float.parseFloat(System.getProperty("bp.placeDistance", "1"));
         for(var e : sites.entrySet()){
-            List<Float> ys = new ArrayList<>();
+            List<Float> ys = new ArrayList<>(), cost = new ArrayList<>();
             List<int[][]> ts = new ArrayList<>();
+            int s = e.getKey().size;
             for(Sites.Site st : e.getValue()){
                 ys.add(st.yield());
                 ts.add(new int[][]{st.body(), st.lane()});
+                cost.add(perStep * (Math.abs(st.x0() + s / 2f - cx) + Math.abs(st.y0() + s / 2f - cy)));
             }
             bal.places.put(e.getKey().name, ys);
             bal.placeTiles.put(e.getKey().name, ts);
+            if(perStep > 0f) bal.placeCost.put(e.getKey().name, cost);
             n += ys.size();
         }
         lastSites = sites;

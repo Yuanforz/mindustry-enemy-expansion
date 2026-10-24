@@ -545,6 +545,7 @@ public final class Gen{
     Spec layOut(long seed){
         long t0 = System.nanoTime();
         Placer placer = new Placer(board, bodies, groups, seed);
+        placer.home = core;
         for(var e : portPlaces.entrySet()) placer.restrict(e.getKey(), e.getValue());
         Spec best = null;
         int bestBad = Integer.MAX_VALUE;

@@ -48,6 +48,13 @@ public final class Placer{
     public float wHard = 1000f, wPort = Float.parseFloat(System.getProperty("bp.port", "30")), wCrowd = Float.parseFloat(System.getProperty("bp.crowd", "8")), wWire = 1f, wYield = 50f;
     /** Free tiles wanted about a part beyond its lines (raised where lines could not be laid). */
     public final Map<Body.Part, Integer> margin = new HashMap<>();
+    /**
+     * Where the builder is about (the core): each body that moves weighs its way from there, a little a tile, as the
+     * builder flies out to put it down; else a body with no line (a wall, a sign) stood anywhere alike, the far corners
+     * of the map as well as by the base.
+     */
+    public Body.Part home;
+    public float wTravel = Float.parseFloat(System.getProperty("bp.travel", "0.1"));
     public double cost;
     /** Bodies to be moved most (about what the lines fought over): chosen for a move most of the time. */
     public final Set<Body> focus = new LinkedHashSet<>();
@@ -293,6 +300,21 @@ public final class Placer{
                 int bg = Integer.MAX_VALUE;
                 for(Body.Part t : g.takers) if(t != m) bg = Math.min(bg, Router.touches(m, t, g.res, g.liquid) ? -1 : gap(m, t));
                 if(bg != Integer.MAX_VALUE && bg >= 0) wire += 0.5 * (bg + 1);
+            }
+        }
+        if(home != null && wTravel > 0f) for(Body body : movable){
+            Body.Part m = body.main();
+            wire += wTravel * (Math.abs((m.x0 + m.x1()) - (home.x0 + home.x1())) + Math.abs((m.y0 + m.y1()) - (home.y0 + home.y1()))) / 2.0;
+            //(and a block that makes nothing put against the core takes a tile every line into it may want: a port lost)
+            for(Body.Part p : body.parts){
+                if(p.recipe != null) continue;
+                int against = 0;
+                for(int y = p.y0; y <= p.y1(); y++) for(int x = p.x0; x <= p.x1(); x++){
+                    boolean nx = x == home.x0 - 1 || x == home.x1() + 1, ny = y == home.y0 - 1 || y == home.y1() + 1;
+                    boolean inX = x >= home.x0 && x <= home.x1(), inY = y >= home.y0 && y <= home.y1();
+                    if(nx && inY || ny && inX) against++;
+                }
+                wire += against * wPort / wWire;
             }
         }
         return wire;

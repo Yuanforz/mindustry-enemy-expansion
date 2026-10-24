@@ -35,6 +35,8 @@ public final class Board{
         duct(Carriers.Role.duct), armored(Carriers.Role.armored), router(Carriers.Role.router), bridgeIn(Carriers.Role.bridge), bridgeOut(Carriers.Role.bridge),
         surge(Carriers.Role.surge), conduit(Carriers.Role.conduit), lbridgeIn(Carriers.Role.liquidBridge), lbridgeOut(Carriers.Role.liquidBridge),
         lrouter(Carriers.Role.liquidRouter), node(Carriers.Role.node), power(Carriers.Role.powerSource),
+        /** A liquid junction where a line crosses a line of conduits that stands (LiquidJunction): each goes on straight. */
+        ljunction(Carriers.Role.liquidJunction),
         /** A payload conveyor (3x3 on Erekir), its tile the centre. */
         payload(Carriers.Role.payload),
         /** The empty tile a drain's last conduit leaks onto (no block; kept empty). */
@@ -81,7 +83,7 @@ public final class Board{
         }
 
         public boolean liquidCarrier(){
-            return kind == Kind.conduit || kind == Kind.lbridgeIn || kind == Kind.lbridgeOut || kind == Kind.lrouter;
+            return kind == Kind.conduit || kind == Kind.lbridgeIn || kind == Kind.lbridgeOut || kind == Kind.lrouter || kind == Kind.ljunction;
         }
 
         @Override
@@ -348,6 +350,8 @@ public final class Board{
             case router -> new int[]{q.rot, (q.rot + 1) % 4, (q.rot + 3) % 4};
             //(a liquid router hands to all about it, LiquidRouter: dumpLiquid)
             case lrouter -> new int[]{0, 1, 2, 3};
+            //(a junction hands on straight, each way something comes into it: the ways of the lines through it)
+            case ljunction -> java.util.stream.IntStream.range(0, 4).filter(d -> (q.outs & (1 << d)) != 0).toArray();
             case surge -> q.role == 2 ? new int[]{q.rot} : new int[0];
             default -> new int[0];
         };
@@ -369,6 +373,8 @@ public final class Board{
                 return dir == back;
             case lrouter:
                 return true;
+            case ljunction:
+                return (q.outs & (1 << ((dir + 2) % 4))) != 0;
             case surge:
                 return q.role == 0 && dir != q.rot;
             case conduit:
