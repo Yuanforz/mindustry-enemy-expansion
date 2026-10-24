@@ -230,6 +230,9 @@ public final class Gen{
             if(!item && !liquid && !Board.isPayload(k)) continue;
             Placer.Group g = new Placer.Group(k, liquid);
             for(Body body : bodies) for(Body.Part p : body.parts){
+                //(a machine a strip serves takes and gives this through the strip's ports, not by lines of its own: Strips)
+                if(served.getOrDefault(p, Set.of()).contains(k)) continue;
+                if(k.equals(portMakes.get(p))) g.makers.add(p);
                 if(p.makes(k) > 1e-6f || k.equals(p.config) && (p.block instanceof mindustry.world.blocks.sandbox.ItemSource || p.block instanceof mindustry.world.blocks.sandbox.LiquidSource)) g.makers.add(p);
                 if(p.takes(k) > 1e-6f || Board.isCore(p) && item && prob.goals.containsKey(k)) g.takers.add(p);
                 if(p.block instanceof mindustry.world.blocks.sandbox.LiquidVoid && liquid && drained(k) && p.config == null) g.takers.add(p);
@@ -528,6 +531,10 @@ public final class Gen{
 
     /** What a maker that is no machine gives a second (a module's port, in a layout of modules). */
     final Map<Body.Part, Float> supplyRate = new HashMap<>();
+    /** Machines a strip serves, with the things it takes to and from them (Strips): no line of those to or from them. */
+    final Map<Body.Part, Set<String>> served = new HashMap<>();
+    /** Ports that hand out a thing (a strip's outlet): makers of it. */
+    final Map<Body.Part, String> portMakes = new HashMap<>();
 
     /** The topology: the bodies placed, the lines laid, power; the best of the tries kept (bodies put back where it had them). */
     /**

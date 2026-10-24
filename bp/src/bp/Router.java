@@ -419,7 +419,13 @@ public final class Router{
     float price(Piece q, Piece partner){
         int i = b.idx(q.x, q.y);
         if(hard && (!at[i].isEmpty() || leaks(q, partner) > 0)) return Float.POSITIVE_INFINITY;
-        return cost(q.kind) + hist[i] + pf * (at[i].size() + leaks(q, partner)) + (b.price != null && !keptFor(q, i) ? b.price[i] : 0f);
+        return tileCost(q.kind, i) + hist[i] + pf * (at[i].size() + leaks(q, partner)) + (b.price != null && !keptFor(q, i) ? b.price[i] : 0f);
+    }
+
+    /** What a piece of a kind costs on a tile: less on a street (Streets). */
+    float tileCost(Kind k, int i){
+        float c = cost(k);
+        return b.street(i) ? c * Streets.COST : c;
     }
 
     int gap(int x, int y, Body.Part p){
@@ -915,6 +921,8 @@ public final class Router{
         int w = b.w;
         PriorityQueue<long[]> open = new PriorityQueue<>((p, q) -> Double.compare(Double.longBitsToDouble(p[0]), Double.longBitsToDouble(q[0])));
         float hmin = net.cls == 0 ? Math.min(cost(Kind.duct), (2f * cost(Kind.bridgeIn) + this.w.tile() * (range - 1)) / (range + 1)) : net.cls == 1 ? cost(Kind.surge) : Math.min(cost(Kind.conduit), (2f * cost(Kind.lbridgeIn) + this.w.tile() * (lrange - 1)) / (lrange + 1));
+        //(a tile of street costs less: the least a tile may cost, so that the estimate stays below)
+        if(b.street != null && b.streetCount > 0) hmin *= Math.min(1f, Streets.COST);
         //starts: the tiles about the maker it hands the thing to
         Body.Part from = net.from;
         int starts = 0;
@@ -1062,7 +1070,7 @@ public final class Router{
                 float low = 0f;
                 for(Piece q : ps){
                     int qi = b.idx(q.x, q.y);
-                    low += cost(q.kind) + hist[qi] + pf * at[qi].size();
+                    low += tileCost(q.kind, qi) + hist[qi] + pf * at[qi].size();
                 }
                 if(type == 2 || type == 5) low += this.w.tile() * (j - 1);
                 if(type == 6) low += cost(Kind.ljunction);
@@ -1506,6 +1514,9 @@ public final class Router{
     /** Takers a line cannot reach at all (no way, whatever is shared): not sought again. */
     final Map<Net, Set<Body.Part>> walledOff = new IdentityHashMap<>();
 
+    /** Lines that take longer than so many seconds to lay, said (bp.slowLine; 0 none). */
+    static final float SLOW = Float.parseFloat(System.getProperty("bp.slowLine", "0"));
+
     public boolean run(int maxRounds){
         if(NAIVE) maxRounds = 1;
         own = new boolean[b.w * b.h];
@@ -1537,7 +1548,10 @@ public final class Router{
                         net.unreached.add(sink);
                         continue;
                     }
-                    if(!(net.cls == 3 ? layPayload(net, sink) : lay(net, sink))){
+                    long tl = System.nanoTime();
+                    boolean laid = net.cls == 3 ? layPayload(net, sink) : lay(net, sink);
+                    if(SLOW > 0 && System.nanoTime() - tl > SLOW * 1e9) System.out.println(String.format("  slow line: %.1f s, %s to %s (gap %d), %s", (System.nanoTime() - tl) / 1e9, net, sink, gap(sink, net.from), laid ? "laid" : "not laid"));
+                    if(!laid){
                         net.unreached.add(sink);
                         if(net.cls != 3 && net.pieces.isEmpty()) walledOff.computeIfAbsent(net, k -> Collections.newSetFromMap(new IdentityHashMap<>())).add(sink);
                     }

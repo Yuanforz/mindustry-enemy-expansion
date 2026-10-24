@@ -207,6 +207,13 @@ public final class Board{
     public Recipe[] priceFor;
     /** Of each priced tile against a standing machine's side, the machine: its own lines pay nothing there (null: none). */
     public Body.Part[] portOwner;
+    /** The streets (Streets): no body laid now on one, a line there cheaper (null: none). */
+    public boolean[] street;
+    public int streetCount;
+
+    public boolean street(int i){
+        return street != null && street[i];
+    }
 
     /** Marks the ground the bodies keep clear (their areas) as no place for a solid block, and what they hold whole. */
     public void putClear(Collection<Body> bodies){
@@ -237,6 +244,8 @@ public final class Board{
         if(p.recipe == null && p.config != null && (p.block instanceof mindustry.world.blocks.distribution.Duct || p.block instanceof Conduit)){
             return dir == p.rot ? List.of(p.config) : List.of();
         }
+        //(a liquid router standing as a port, a strip's outlet: its thing to all about it, LiquidRouter)
+        if(p.recipe == null && p.config != null && p.block instanceof LiquidRouter) return List.of(p.config);
         //(a module's input port as the module is laid out: its thing only ahead, as the carrier it stands for)
         if(p.port) return dir == p.rot && (p.block instanceof ItemSource || p.block instanceof LiquidSource) ? List.of(p.config) : List.of();
         List<String> items = itemsOut(p), liquids = liquidsOut(p, dir);
@@ -324,12 +333,12 @@ public final class Board{
     /** Whether a part is a block that holds and hands items as a duct does (for an armoured duct's sides). */
     /** A carrier that stands as a part of a body: a module's port, its thing its config. */
     public static boolean isPortCarrier(Body.Part p){
-        return p.recipe == null && p.config != null && (p.block instanceof mindustry.world.blocks.distribution.Duct || p.block instanceof Conduit);
+        return p.recipe == null && p.config != null && (p.block instanceof mindustry.world.blocks.distribution.Duct || p.block instanceof Conduit || p.block instanceof LiquidRouter);
     }
 
     /** A carrier standing as a part, as a piece of a line (to ask what it takes from where). */
     public static Piece asPiece(Body.Part p){
-        Kind k = p.block instanceof mindustry.world.blocks.distribution.Duct d ? (d.armored ? Kind.armored : Kind.duct) : Kind.conduit;
+        Kind k = p.block instanceof mindustry.world.blocks.distribution.Duct d ? (d.armored ? Kind.armored : Kind.duct) : p.block instanceof LiquidRouter ? Kind.lrouter : Kind.conduit;
         return new Piece(k, p.block, p.x0, p.y0, p.rot, -1, p.config);
     }
 

@@ -167,6 +167,8 @@ public final class Grow{
         }
         Spec.Place core = g.prob.fixed.isEmpty() ? null : g.prob.fixed.get(0);
         int cx = core == null ? g.board.w / 2 : core.x(), cy = core == null ? g.board.h / 2 : core.y();
+        coreX = cx;
+        coreY = cy;
         int k = 0;
         int keep = Integer.getInteger("bp.ways", 12);
         for(var e : (APART ? new Sites(g.board).findApart(ground, cx, cy, keep) : new Sites(g.board).find(ground, cx, cy, keep)).entrySet()) for(Sites.Site site : e.getValue()){
@@ -267,6 +269,32 @@ public final class Grow{
         }
         Map<String, Unit> byKey = new HashMap<>();
         for(Unit u : units) byKey.put(u.key, u);
+        //(pumps a strip serves: fed by their share of what comes into its intake (in proportion to what each takes);
+        //what they pump goes out by the strip's outlet, never shut in by their stubs)
+        Map<Integer, Float> stripShare = new HashMap<>();
+        if(Strips.ON){
+            Map<String, Strips.Row> rowKeys = rowsByKey(board);
+            Map<Strips.Row, Inst> strips = new HashMap<>();
+            for(Inst i : ledger.insts) if(!i.removed && i.unit != null && rowKeys.containsKey(i.unit)) strips.put(rowKeys.get(i.unit), i);
+            Map<Strips.Row, List<Inst>> pumps = new HashMap<>();
+            for(Inst i : ledger.insts){
+                if(i.removed || i.unit == null || !byKey.containsKey(i.unit)) continue;
+                Object[] ro = rowOf(board, byKey.get(i.unit));
+                if(ro != null && strips.containsKey((Strips.Row)ro[0])) pumps.computeIfAbsent((Strips.Row)ro[0], k -> new ArrayList<>()).add(i);
+            }
+            for(var e : pumps.entrySet()){
+                Strips.Row row = e.getKey();
+                Inst si = strips.get(row);
+                float need = 0f;
+                for(Inst i : e.getValue()){
+                    Object[] p0 = i.parts.get(0);
+                    Recipe r = p0[4] == null ? null : recipes.get((String)p0[4]);
+                    if(r != null && row.in != null) need += r.at((Float)p0[6]).in.getOrDefault(row.in, 0f) * (Float)p0[5] + r.fixedIn.getOrDefault(row.in, 0f);
+                }
+                float in = row.in == null ? 0f : got.getOrDefault(((long)si.id * 1000) * 31 + row.in.hashCode(), 0f);
+                for(Inst i : e.getValue()) stripShare.put(i.id, need <= 1e-6f ? 1f : Math.min(1f, in / need));
+            }
+        }
         //(the bodies that stand)
         Map<Inst, Body> bodies = new LinkedHashMap<>();
         for(Inst i : ledger.insts){
@@ -297,6 +325,8 @@ public final class Grow{
                 Set<String> ins = new TreeSet<>(p.recipe.at(p.yield).in.keySet());
                 ins.addAll(p.recipe.fixedIn.keySet());
                 for(String r : ins) in.put(r, got.getOrDefault(((long)i.id * 1000 + k) * 31 + r.hashCode(), 0f));
+                boolean served = k == 0 && stripShare.containsKey(i.id);
+                if(served) for(String r : ins) if(Vars.content.liquid(r) != null) in.put(r, p.takes(r) * stripShare.get(i.id));
                 float fed = fed(p, in);
                 if(k == 0 && state.work.containsKey(i.id)) fed = Math.min(fed, Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)));
                 if(fed < 1f - 1e-4f) unfed.add(i.id);
@@ -333,6 +363,7 @@ public final class Grow{
                         spare -= unmade;
                         if(spare <= 1e-4f) continue;
                     }
+                    if(served) continue;
                     //(where a line of it could end: beside a block that lacks it, beside a place not built whose machine takes it)
                     boolean[] end = new boolean[n];
                     for(var oe : bodies.entrySet()) for(int k2 = 0; k2 < oe.getValue().parts.size(); k2++){
@@ -424,6 +455,17 @@ public final class Grow{
         if(u.site == null || ledger.committed(u.key) > 0) return false;
         if(ledger.avoid.contains(u.key)) return true;
         for(int t : u.tiles) if(occupied.contains(t)) return true;
+        Object[] ro = probeGen == null ? null : rowOf(probeGen.board, u);
+        if(ro != null){
+            //(a pump in a row: its stubs on free ground; its row's strip standing, or its ground free)
+            Strips.Row row = (Strips.Row)ro[0];
+            Board b = probeGen.board;
+            for(Object[] q : row.stubs((Integer)ro[1])) if(occupied.contains(b.idx((Integer)q[1], (Integer)q[2]))) return true;
+            boolean stands = false;
+            for(Inst i : ledger.insts) if(!i.removed && stripKey(row).equals(i.unit)) stands = true;
+            if(!stands) for(int t : row.infraTiles(b)) if(occupied.contains(t)) return true;
+            return false;
+        }
         for(int t : u.lane) if(solidOn.contains(t)) return true;
         return false;
     }
@@ -613,11 +655,77 @@ public final class Grow{
         if(u.site != null){
             Body b = new Body(id, u.recipe.name, true);
             b.add(u.block, 0, 0, u.site[2], u.recipe, u.work, null).yield = u.yield;
+            //(a pump in a row: its two stubs into the row's strip with it, Strips)
+            Object[] ro = rowOf(g.board, u);
+            if(ro != null) for(Object[] q : ((Strips.Row)ro[0]).stubs((Integer)ro[1])) addPiece(g, b, q, u.site[0], u.site[1]);
             b.put(u.site[0], u.site[1], 0);
             for(int t : u.lane) b.clearTiles.add(t);
             return b;
         }
         return machineBody(g, u, id);
+    }
+
+    /** The core, about which the streets and the rows of pumps are found. */
+    int coreX, coreY;
+    /** Of a layout: the strips that stand (their bodies), by inst; by row; the pumps of each row that stand. */
+    final Map<Inst, Body> standingStrips = new LinkedHashMap<>();
+    final Map<Strips.Row, Body> stripOf = new HashMap<>();
+    final Map<Strips.Row, List<Body.Part>> rowPumps = new HashMap<>();
+    /** Of each row whose strip stands: {what its pumps take, what they give as fed, what comes into the intake, what goes out of the outlet}. */
+    final Map<Strips.Row, float[]> rowNeed = new HashMap<>();
+    /** The strips laid with the step (their rows), and the row of each pump of the step in one. */
+    final Map<Body, Strips.Row> freshStrips = new LinkedHashMap<>();
+    final Map<Body, Strips.Row> freshPumpRow = new HashMap<>();
+
+    /** Of a unit on a place in a row of pumps (Strips), the row and which of it; null for any other. */
+    Object[] rowOf(Board b, Unit u){
+        if(u.site == null || u.recipe == null || !Strips.rowed(u.recipe)) return null;
+        return Strips.of(b, u.recipe, u.site[0], u.site[1], coreX, coreY);
+    }
+
+    /** What a row's strip is called in the ledger (its unit): the row by its recipe, first tile and ways. */
+    static String stripKey(Strips.Row row){
+        return "strip " + row.recipe.name + " " + row.fx + "," + row.fy + "," + row.dir + "," + row.along;
+    }
+
+    /** The rows of every recipe that stands in rows, by their strips' names. */
+    Map<String, Strips.Row> rowsByKey(Board b){
+        Map<String, Strips.Row> out = new LinkedHashMap<>();
+        for(Recipe r : recipes.values()) if(Strips.rowed(r)) for(Strips.Row row : Strips.rows(b, r, coreX, coreY)) out.put(stripKey(row), row);
+        return out;
+    }
+
+    /** A piece of a strip ({kind, x, y, turn, fed from, hands to, thing}) as a part of a body put at ox, oy. */
+    static Body.Part addPiece(Gen g, Body b, Object[] q, int ox, int oy){
+        Kind kind = (Kind)q[0];
+        Block bl = g.carriers.cheapest(kind.role, g.weights);
+        int x = (Integer)q[1], y = (Integer)q[2];
+        Body.Part part = b.add(bl, x - ox, y - oy, (Integer)q[3], null, 1f, null);
+        Piece pc = new Piece(kind, bl, x - ox, y - oy, (Integer)q[3], -1, (String)q[6]);
+        pc.from = (Integer)q[4];
+        pc.outs = (Integer)q[5];
+        part.piece = pc;
+        return part;
+    }
+
+    /**
+     * A row's strip as a body: its ports first (the intake, a conduit into the strip, a taker of what the pumps take; the
+     * outlet, a liquid router, a maker of what they pump: a router spills nothing where no line is laid from it yet),
+     * then the strip's pieces.
+     */
+    static Body stripBody(Gen g, Strips.Row row, int id){
+        Body b = new Body(id, stripKey(row), true);
+        List<Object[]> infra = row.infra();
+        int k = 0;
+        if(row.in != null){
+            Object[] q = infra.get(k++);
+            b.add(g.carriers.cheapest(Carriers.Role.conduit, g.weights), (Integer)q[1], (Integer)q[2], (Integer)q[3], null, 1f, row.in);
+        }
+        Object[] q = infra.get(k++);
+        b.add(g.carriers.cheapest(Carriers.Role.liquidRouter, g.weights), (Integer)q[1], (Integer)q[2], 0, null, 1f, row.out);
+        for(; k < infra.size(); k++) addPiece(g, b, infra.get(k), 0, 0);
+        b.put(0, 0, 0);
+        return b;
     }
 
     // ------------------------------------------------------------------ what is committed
@@ -1296,13 +1404,33 @@ public final class Grow{
      * machines placed, its machines on their places put there, lines laid from makers with some to spare to takers short,
      * and to the core what is made beyond; power to every new block that uses it. Committed to the ledger.
      */
+    /** The streets about the core (Streets), none on the places of machines on ground and the tiles kept for them. */
+    void streets(Gen g){
+        Set<Integer> kept = new HashSet<>();
+        for(Unit u : units){
+            if(u.site == null) continue;
+            if(u.tiles != null) for(int t : u.tiles) kept.add(t);
+            if(u.lane != null) for(int t : u.lane) kept.add(t);
+        }
+        //(and the strips of the rows of pumps)
+        if(Strips.ON) for(Strips.Row row : rowsByKey(g.board).values()) kept.addAll(row.tiles(g.board));
+        Spec.Place core = g.prob.fixed.isEmpty() ? null : g.prob.fixed.get(0);
+        int size = core == null ? 1 : Vars.content.block(core.block()).size;
+        Streets.mark(g.board, core == null ? g.board.w / 2 : core.x(), core == null ? g.board.h / 2 : core.y(), size, kept);
+    }
+
     boolean layOut(String dataDir, String world, Map<Unit, Integer> step, long seed){
+        standingStrips.clear();
+        rowPumps.clear();
+        freshStrips.clear();
+        freshPumpRow.clear();
         Problem prob = Problem.parse("world " + world + "\n");
         prob.name = "grow-" + ledger.step;
         //(what is made beyond what is taken goes to the core: the items the step's machines make, and what stands has
         //to spare)
         Gen g = new Gen(prob, dataDir);
         g.balance = plan;
+        streets(g);
         //(what can be had now: in the core, dug, or made by what is committed)
         Set<String> had = new HashSet<>(state.dig.keySet());
         for(var e : state.stock.entrySet()) if(e.getValue() >= 1f) had.add(e.getKey());
@@ -1406,6 +1534,50 @@ public final class Grow{
                 g.coreLinks.put(p, coreLinks.getOrDefault(i.id * 1000 + k, Map.of()));
                 g.fedMost.put(p, most.getOrDefault(i.id * 1000 + k, Map.of()));
             }
+            if(i.unit != null && i.unit.startsWith("strip ")) standingStrips.put(i, body);
+        }
+        //(rows of pumps whose strips stand: what the pumps that stand take through the intake and give out of the outlet)
+        Map<String, Strips.Row> rowKeys = Strips.ON ? rowsByKey(g.board) : Map.of();
+        Map<String, Unit> unitByKey = new HashMap<>();
+        for(Unit u : units) unitByKey.put(u.key, u);
+        stripOf.clear();
+        rowNeed.clear();
+        for(var e : standingStrips.entrySet()){
+            Strips.Row row = rowKeys.get(e.getKey().unit);
+            if(row == null) continue;
+            stripOf.put(row, e.getValue());
+            rowNeed.put(row, new float[4]);
+        }
+        for(Body body : new ArrayList<>(g.bodies)){
+            if(!body.standing || body.parts.isEmpty()) continue;
+            Body.Part p = body.main();
+            int[] w0 = whose.get(p);
+            if(w0 == null || p.recipe == null || !Strips.rowed(p.recipe)) continue;
+            Inst i = ledger.get(w0[0]);
+            Unit u = i == null || i.unit == null ? null : unitByKey.get(i.unit);
+            Object[] ro = u == null ? null : rowOf(g.board, u);
+            if(ro == null || !stripOf.containsKey((Strips.Row)ro[0])) continue;
+            Strips.Row row = (Strips.Row)ro[0];
+            g.served.put(p, row.in == null ? Set.of(row.out) : Set.of(row.in, row.out));
+            float[] io = rowNeed.get(row);
+            //({what the standing pumps take, what they would give at full each at the share of the intake its work allows}:
+            //the share known once the intake's flow is)
+            io[0] += row.in == null ? 0f : p.takes(row.in);
+            float worked = state.work.containsKey(i.id) ? Math.min(1f, state.work.get(i.id) / Math.max(1e-3f, p.work)) : 1f;
+            io[1] += p.makes(row.out) * worked;
+            rowPumps.computeIfAbsent(row, k -> new ArrayList<>()).add(p);
+        }
+        for(var e : stripOf.entrySet()){
+            Strips.Row row = e.getKey();
+            Body sb = e.getValue();
+            float[] io = rowNeed.get(row);
+            Body.Part intake = row.in == null ? null : sb.parts.get(0), outlet = sb.parts.get(row.in == null ? 0 : 1);
+            int[] wi = intake == null ? null : whose.get(intake), wo = whose.get(outlet);
+            float got = intake == null || wi == null ? 0f : into.getOrDefault(wi[0] * 1000 + wi[1], Map.of()).getOrDefault(row.in, 0f);
+            float fedRow = row.in == null || io[0] <= 1e-6f ? 1f : Math.min(1f, got / io[0]);
+            io[2] = got;
+            io[1] *= fedRow;
+            io[3] = wo == null ? 0f : outOf.getOrDefault(wo[0] * 1000 + wo[1], Map.of()).getOrDefault(row.out, 0f);
         }
         //(each line that stands: what it carries to whom, how much now (its own and the lines that run on into it) and at
         //most, so that a new line may run on into it)
@@ -1459,6 +1631,25 @@ public final class Grow{
         for(Unit u : units){
             if(u.site == null || !u.required || ledger.committed(u.key) > 0 || step.containsKey(u)) continue;
             for(int t : u.tiles) if(!stepSites.contains(t)) hold.holdLocal.add(new int[]{t % g.board.w, t / g.board.w, t % g.board.w, t / g.board.w});
+        }
+        //(the strips of the rows of pumps the plan has, or that stand: held whole, but for what the step lays there itself,
+        //a pump's stubs, the strip laid with the first pump of its row)
+        if(Strips.ON){
+            Set<Strips.Row> used = new LinkedHashSet<>(stripOf.keySet());
+            for(Unit u : units){
+                if(!u.required) continue;
+                Object[] ro = rowOf(g.board, u);
+                if(ro != null) used.add((Strips.Row)ro[0]);
+            }
+            for(Unit u : step.keySet()){
+                Object[] ro = rowOf(g.board, u);
+                if(ro == null) continue;
+                Strips.Row row = (Strips.Row)ro[0];
+                used.add(row);
+                for(Object[] q : row.stubs((Integer)ro[1])) stepSites.add(g.board.idx((Integer)q[1], (Integer)q[2]));
+                if(!stripOf.containsKey(row)) stepSites.addAll(row.infraTiles(g.board));
+            }
+            for(Strips.Row row : used) for(int t : row.tiles(g.board)) if(!stepSites.contains(t)) hold.holdLocal.add(new int[]{t % g.board.w, t / g.board.w, t % g.board.w, t / g.board.w});
         }
         hold.put(0, 0, 0);
         if(!hold.holdLocal.isEmpty()) g.bodies.add(hold);
@@ -1542,6 +1733,39 @@ public final class Grow{
             g.bodies.add(b);
             nid++;
         }
+        //(a pump of the step in a row: served by its row's strip, laid with the first of the row's pumps; the strips'
+        //ports: the intake takes what the row's pumps lack, the outlet gives what they make beyond what goes out already)
+        for(var e : new ArrayList<>(fresh.entrySet())){
+            Object[] ro = rowOf(g.board, e.getValue());
+            if(ro == null) continue;
+            Strips.Row row = (Strips.Row)ro[0];
+            Body.Part p = e.getKey().main();
+            if(!stripOf.containsKey(row)){
+                Body sb = stripBody(g, row, 200000 + nid++);
+                stripOf.put(row, sb);
+                rowNeed.put(row, new float[4]);
+                freshStrips.put(sb, row);
+                g.bodies.add(sb);
+            }
+            g.served.put(p, row.in == null ? Set.of(row.out) : Set.of(row.in, row.out));
+            float[] io = rowNeed.get(row);
+            io[0] += row.in == null ? 0f : p.takes(row.in);
+            io[1] += p.makes(row.out);
+            rowPumps.computeIfAbsent(row, k -> new ArrayList<>()).add(p);
+            freshPumpRow.put(e.getKey(), row);
+        }
+        for(var e : stripOf.entrySet()){
+            Strips.Row row = e.getKey();
+            Body sb = e.getValue();
+            float[] io = rowNeed.get(row);
+            Body.Part intake = row.in == null ? null : sb.parts.get(0), outlet = sb.parts.get(row.in == null ? 0 : 1);
+            if(intake != null){
+                g.portRate.put(intake, io[0]);
+                g.lacks.put(intake, Map.of(row.in, Math.max(0f, io[0] - io[2])));
+            }
+            g.portMakes.put(outlet, row.out);
+            g.spare.put(outlet, Map.of(row.out, Math.max(0f, io[1] - io[3])));
+        }
         //(the floor plan's places not had, held: no block nor line of the step on them, and their machines as ghosts)
         if(!slots.isEmpty()){
             for(Unit u : units){
@@ -1591,7 +1815,7 @@ public final class Grow{
         for(Body b : fresh.keySet()) for(Body.Part p : b.parts) freshAt.add(p.block.name + "@" + p.x0 + "," + p.y0);
         Set<Body> trouble = new HashSet<>();
         int own = g.overusedKept + g.leaksKept;
-        for(Body b : g.misplacedKept) if(fresh.containsKey(b)){
+        for(Body b : g.misplacedKept) if(fresh.containsKey(b) || freshStrips.containsKey(b)){
             own++;
             trouble.add(b);
         }
@@ -1635,6 +1859,14 @@ public final class Grow{
                 if(Vars.content.item(r) == null && Vars.content.liquid(r) == null || p.takes(r) <= 1e-6f) continue;
                 //(handed straight by a part of its own body: a heater's fuel is its own body's business, laid with it)
                 if(handedTo.getOrDefault(p, Map.of()).getOrDefault(r, 0f) > 1e-6f) continue;
+                //(a pump a strip serves: by the strip's intake, what comes into it now or by a line of the step)
+                Strips.Row row = freshPumpRow.get(b);
+                if(row != null && g.served.getOrDefault(p, Set.of()).contains(r)){
+                    Body sb = stripOf.get(row);
+                    Body.Part intake = sb == null || row.in == null ? null : sb.parts.get(0);
+                    float now = rowNeed.get(row)[2] + (intake == null ? 0f : handedTo.getOrDefault(intake, Map.of()).getOrDefault(r, 0f));
+                    if(now > 1e-6f) continue;
+                }
                 //(a maker of it the schedule builds next span: this one stands and waits, its line laid then)
                 if(soonMade.contains(r)){
                     later.add("waits for " + r + ": " + Gen.where(p));
@@ -1645,6 +1877,8 @@ public final class Grow{
                 later.add("nothing hands " + r + " to " + Gen.where(p));
             }
         }
+        //(a strip of the step in trouble, its line not laid: the pumps of its row the step has)
+        for(var e : freshStrips.entrySet()) if(trouble.contains(e.getKey())) for(var f : freshPumpRow.entrySet()) if(f.getValue() == e.getValue()) trouble.add(f.getKey());
         for(String u : g.unpoweredKept) if(freshAt.contains(u)){
             own++;
             for(Body b : fresh.keySet()) for(Body.Part p : b.parts) if(u.equals(p.block.name + "@" + p.x0 + "," + p.y0)) trouble.add(b);
@@ -1659,15 +1893,24 @@ public final class Grow{
             return false;
         }
         //committed: the step's bodies, its lines with what they carry, its nodes
-        for(Body b : fresh.keySet()){
+        List<Body> committing = new ArrayList<>(fresh.keySet());
+        committing.addAll(freshStrips.keySet());
+        for(Body b : committing){
             Inst i = new Inst();
             i.id = b.id - 200000;
-            i.kind = fresh.get(b).site != null ? "site" : b.main().recipe == null ? "single" : "machine";
-            i.unit = fresh.get(b).key;
-            for(int k = 0; k < b.parts.size(); k++){
-                Body.Part p = b.parts.get(k);
-                i.parts.add(new Object[]{p.block.name, p.x0, p.y0, p.rot, p.recipe == null ? null : p.recipe.name, p.work, p.yield, p.block.configurable ? p.config : null});
-                whose.put(p, new int[]{i.id, k});
+            Strips.Row srow = freshStrips.get(b);
+            i.kind = srow != null ? "strip" : fresh.get(b).site != null ? "site" : b.main().recipe == null ? "single" : "machine";
+            i.unit = srow != null ? stripKey(srow) : fresh.get(b).key;
+            //(a body's own pieces of line, a pump's stubs, a strip's: as pieces, the rest as parts; a port keeps its thing)
+            int k = 0;
+            for(Body.Part p : b.parts){
+                if(p.piece != null){
+                    Piece q = p.piece;
+                    i.pieces.add(new Object[]{q.kind.name(), p.block.name, p.ax(), p.ay(), p.rot, q.from, q.outs, q.role, q.res});
+                    continue;
+                }
+                i.parts.add(new Object[]{p.block.name, p.x0, p.y0, p.rot, p.recipe == null ? null : p.recipe.name, p.work, p.yield, p.block.configurable || Board.isPortCarrier(p) ? p.config : null});
+                whose.put(p, new int[]{i.id, k++});
             }
             for(int[] c : b.clearWorld) i.clear.add(c.clone());
             i.lane.addAll(b.clearTiles);
@@ -1780,9 +2023,22 @@ public final class Grow{
     State state;
 
     /** Committed things not begun (no block of them stands): given back to the plan, planned again with the rest. */
-    void release(State st){
+    void release(State st, Board board){
         Set<Inst> back = new LinkedHashSet<>();
         for(Inst i : ledger.insts) if(!i.removed && !i.built && !st.begun.contains(i.id)) back.add(i);
+        //(not a strip whose row has a pump kept: the pump takes and gives through it)
+        if(Strips.ON){
+            Map<String, Strips.Row> rowKeys = rowsByKey(board);
+            Map<String, Unit> byKey = new HashMap<>();
+            for(Unit u : units) byKey.put(u.key, u);
+            Set<Strips.Row> kept = new HashSet<>();
+            for(Inst i : ledger.insts){
+                if(i.removed || back.contains(i) || i.unit == null || !byKey.containsKey(i.unit)) continue;
+                Object[] ro = rowOf(board, byKey.get(i.unit));
+                if(ro != null) kept.add((Strips.Row)ro[0]);
+            }
+            back.removeIf(i -> i.unit != null && rowKeys.containsKey(i.unit) && kept.contains(rowKeys.get(i.unit)));
+        }
         //(not a line that a line kept runs on into, nor what it joins in turn; nor what a line kept carries from or to:
         //the line is there for it)
         boolean more = true;
@@ -1869,7 +2125,7 @@ public final class Grow{
             s.append("inst ").append(i.id).append(' ').append(i.kind).append(' ').append(i.unit == null ? "-" : i.unit.replace(' ', '|')).append('\n');
             for(Object[] p : i.parts){
                 Block bl = Vars.content.block((String)p[0]);
-                s.append(String.format(Locale.ROOT, "block %s %d %d %d %s%n", p[0], Geo.at((Integer)p[1], bl.size), Geo.at((Integer)p[2], bl.size), p[3], p[7] == null ? "-" : p[7]));
+                s.append(String.format(Locale.ROOT, "block %s %d %d %d %s%n", p[0], Geo.at((Integer)p[1], bl.size), Geo.at((Integer)p[2], bl.size), p[3], p[7] == null || !bl.configurable ? "-" : p[7]));
             }
             for(Object[] q : i.pieces) s.append(String.format(Locale.ROOT, "block %s %d %d %d -%n", q[1], q[2], q[3], q[4]));
         }
@@ -1904,12 +2160,12 @@ public final class Grow{
         State st = State.read(stateFile);
         grow.state = st;
         for(Inst i : grow.ledger.insts) if(st.built.contains(i.id)) i.built = true;
-        grow.release(st);
         //(units measured as bodies, on the map)
         Gen probe = new Gen(Problem.parse("world " + world + "\n"), dataDir);
         probe.balance = grow.plan;
         long tWorld = System.nanoTime();
         grow.ways(probe);
+        grow.release(st, probe.board);
         long tWays = System.nanoTime();
         grow.measure(probe);
         //(a unit measured as nothing finite cannot be planned with: said, and left out of the schedule's reach)

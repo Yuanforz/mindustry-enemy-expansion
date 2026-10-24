@@ -75,7 +75,7 @@ public final class Plot{
         for(int y = 0; y < h; y++) for(int x = 0; x < w; x++){
             int i = board.idx(x, y);
             var f = board.floorAt[i];
-            Color c = board.solidGround[i] ? new Color(0x4a3f3a) : f.isLiquid && f.liquidDrop != null ? of(f.liquidDrop.color).darker() : new Color(0x2c2c34);
+            Color c = board.solidGround[i] ? new Color(0x4a3f3a) : f.isLiquid && f.liquidDrop != null ? of(f.liquidDrop.color).darker() : board.street(i) ? new Color(0x34343f) : new Color(0x2c2c34);
             g.setColor(c);
             g.fillRect(x * T, (h - 1 - y) * T, T, T);
             g.setColor(new Color(0x34343d));

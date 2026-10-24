@@ -24,6 +24,8 @@ public final class Draw{
         Problem prob = Problem.parse("world " + args[1] + "\n");
         Gen g = new Gen(prob, args[0]);
         Grow.Ledger ledger = Grow.Ledger.read(args[2]);
+        //(the streets about the core, shaded)
+        if(!prob.fixed.isEmpty()) Streets.mark(g.board, prob.fixed.get(0).x(), prob.fixed.get(0).y(), Vars.content.block(prob.fixed.get(0).block()).size, Set.of());
         List<Body> bodies = new ArrayList<>();
         List<Router.Net> nets = new ArrayList<>();
         List<Piece> power = new ArrayList<>();
@@ -82,6 +84,19 @@ public final class Draw{
                 bodies.add(b);
                 things++;
                 blocks += b.parts.size();
+                //(a body's own pieces of line: a pump's stubs, a strip's)
+                Map<String, Router.Net> byRes = new LinkedHashMap<>();
+                for(Object[] q : i.pieces){
+                    Block bl = Vars.content.block((String)q[1]);
+                    String res = q[8] == null ? "?" : (String)q[8];
+                    Piece pc = new Piece(Kind.valueOf((String)q[0]), bl, (Integer)q[2], (Integer)q[3], (Integer)q[4], i.id, res);
+                    pc.from = (Integer)q[5];
+                    pc.outs = (Integer)q[6];
+                    pc.role = (Integer)q[7];
+                    byRes.computeIfAbsent(res, k -> new Router.Net(i.id, k, 2, null)).pieces.add(pc);
+                    pieces++;
+                }
+                nets.addAll(byRes.values());
             }
         }
         for(Body b : bodies) for(Body.Part p : b.parts){

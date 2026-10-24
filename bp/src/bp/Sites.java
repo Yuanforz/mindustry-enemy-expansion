@@ -37,6 +37,18 @@ public final class Sites{
             List<Site> all = new ArrayList<>();
             Block bl = r.block;
             int s = bl.size;
+            //(a pump only in a row along its liquid's edge, its share of the row's strip kept as its lane: Strips)
+            if(Strips.rowed(r)){
+                for(Strips.Row row : Strips.rows(b, r, cx, cy)) for(int i = 0; i < row.k(); i++){
+                    int[] p = row.at.get(i);
+                    Site site = at(r, p[0], p[1], 0);
+                    if(site == null) continue;
+                    all.add(new Site(r, p[0], p[1], 0, site.yield(), site.body(), row.share(b, i).stream().mapToInt(Integer::intValue).toArray()));
+                }
+                all.sort(Comparator.comparingDouble(st -> Math.abs(st.x0 + s / 2f - cx) + Math.abs(st.y0 + s / 2f - cy)));
+                out.put(r, new ArrayList<>(all.subList(0, Math.min(keep, all.size()))));
+                continue;
+            }
             boolean turns = bl instanceof BeamDrill || bl instanceof WallCrafter;
             for(int rot = 0; rot < (turns ? 4 : 1); rot++){
                 for(int y0 = 0; y0 + s <= b.h; y0++) for(int x0 = 0; x0 + s <= b.w; x0++){

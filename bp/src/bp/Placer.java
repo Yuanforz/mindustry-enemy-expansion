@@ -167,6 +167,11 @@ public final class Placer{
                 if(cover[i]++ > 0) hard += hb(5, 1, body, partAt[i] == null ? null : partAt[i].body);
                 if(partAt[i] == null) partAt[i] = p;
                 if(p.block.solid && (lane[i] || b.clear[i])) hard += hb(6, 1, body, laneOf[i]);
+                //(no body laid now on a street)
+                if(b.street(i) && !body.fixed && !body.standing){
+                    hard += hb(8, 1, body, null);
+                    if(why != null) why.add("on a street: " + p.block.name + "@" + p.x0 + "," + p.y0 + " of " + body.label);
+                }
             }
         }
         //(the ground a body holds whole: no block of another body on it; where nothing stands, taken, so that no line
@@ -223,6 +228,7 @@ public final class Placer{
         last[2] = port;
         last[3] = crowding;
         last[4] = yield;
+        dirtyAll = true;
         return wHard * hard + wWire * wire + wPort * port + wCrowd * crowding + wYield * yield;
     }
 
@@ -375,7 +381,8 @@ public final class Placer{
         if(o.body != p.body && o.piece != null){
             Board.Piece f = Body.fixed(o);
             int back = (d + 2) % 4;
-            if(Board.pieceTakes(f, back, p.piece != null ? Body.fixed(p) : null, p.piece != null ? null : p)) for(String y : given) if(!y.equals(f.res) && (mindustry.Vars.content.item(y) != null ? f.itemCarrier() : f.liquidCarrier())){
+            //(a junction mixes nothing: it hands each thing on straight, LiquidJunction; what lies beyond it is its business)
+            if(f.kind != Board.Kind.ljunction && Board.pieceTakes(f, back, p.piece != null ? Body.fixed(p) : null, p.piece != null ? null : p)) for(String y : given) if(!y.equals(f.res) && (mindustry.Vars.content.item(y) != null ? f.itemCarrier() : f.liquidCarrier())){
                 hard += hb(11, 1, p.body, o.body);
                 if(why != null) why.add(p + " of " + p.body.label + " hands " + y + " into " + o.block.name + "@" + o.x0 + "," + o.y0 + " carrying " + f.res);
             }
@@ -550,6 +557,9 @@ public final class Placer{
         movableBridges = false;
         for(Body body : movable) for(Body.Part p : body.parts) if(p.block instanceof mindustry.world.blocks.distribution.DirectionBridge) movableBridges = true;
         System.arraycopy(basePartAt, 0, partAt, 0, n);
+        dirtyAll = true;
+        staticOver = 0;
+        for(int i = 0; i < n; i++) if(baseCover[i] > 1) staticOver += baseCover[i] - 1;
         baseBridgeHard = 0;
         for(Body body : still) for(Body.Part p : body.parts) baseBridgeHard += bridgeTerm(p);
         //(between parts that do not move, what goes wrong where one hands toward the other)
@@ -578,6 +588,7 @@ public final class Placer{
 
     /** A tile what moves keeps clear: what is solid there of what does not move is now counted as on a lane of what moves. */
     void quickLane(int i, Body body){
+        touch(i);
         laneNow[i] = true;
         if(laneOf[i] == null || laneOf[i].standing && !body.standing) laneOf[i] = body;
         if(laneStamp[i] != stamp){
@@ -586,15 +597,56 @@ public final class Placer{
         }
     }
 
+    /**
+     * The tiles the quick count wrote since its arrays were last as what does not move left them (put back one by one at
+     * the next count, not the whole map copied: on a map of 300 squared that copying was most of the placing's time).
+     */
+    int[] touched = new int[4096];
+    int touchedN, touchEpoch = 1;
+    int[] touchMark;
+    /** Whether the arrays are to be copied whole (after a whole count, or a new preparing). */
+    boolean dirtyAll = true;
+    /** Of what does not move: the tiles held by more than one, counted over the map (the crowding there, no line spread). */
+    double staticOver;
+
+    void touch(int i){
+        if(touchMark[i] == touchEpoch) return;
+        touchMark[i] = touchEpoch;
+        if(touchedN == touched.length) touched = Arrays.copyOf(touched, touchedN * 2);
+        touched[touchedN++] = i;
+    }
+
+    void resetTouched(){
+        int n = b.w * b.h;
+        if(touchMark == null || touchMark.length != n){
+            touchMark = new int[n];
+            dirtyAll = true;
+        }
+        if(dirtyAll){
+            System.arraycopy(baseCover, 0, cover, 0, n);
+            System.arraycopy(basePartAt, 0, partAt, 0, n);
+            System.arraycopy(baseLane, 0, laneNow, 0, n);
+            System.arraycopy(baseLaneOf, 0, laneOf, 0, n);
+            System.arraycopy(baseZone, 0, zoneNow, 0, n);
+            Arrays.fill(crowd, 0f);
+            dirtyAll = false;
+        }else for(int k = 0; k < touchedN; k++){
+            int i = touched[k];
+            cover[i] = baseCover[i];
+            partAt[i] = basePartAt[i];
+            laneNow[i] = baseLane[i];
+            laneOf[i] = baseLaneOf[i];
+            zoneNow[i] = baseZone[i];
+            crowd[i] = 0f;
+        }
+        touchedN = 0;
+        touchEpoch++;
+    }
+
     double evaluateFast(){
         int w = b.w, h = b.h, n = w * h;
         stamp++;
-        System.arraycopy(baseCover, 0, cover, 0, n);
-        System.arraycopy(basePartAt, 0, partAt, 0, n);
-        System.arraycopy(baseLane, 0, laneNow, 0, n);
-        System.arraycopy(baseLaneOf, 0, laneOf, 0, n);
-        System.arraycopy(baseZone, 0, zoneNow, 0, n);
-        Arrays.fill(crowd, 0f);
+        resetTouched();
         quickHard = baseHard;
         double wire = 0, port = 0, crowding = 0, yield = 0;
         for(Body body : movable) for(int i : body.clearTiles) quickLane(i, body);
@@ -627,22 +679,30 @@ public final class Placer{
                     continue;
                 }
                 int i = b.idx(x, y);
+                touch(i);
                 if(cover[i]++ > 0) quickHard += hb(5, 1, body, partAt[i] == null ? null : partAt[i].body);
                 if(partAt[i] == null) partAt[i] = p;
                 if(p.block.solid && (laneNow[i] || b.clear[i])) quickHard += hb(6, 1, body, laneOf[i]);
+                if(b.street(i) && !body.fixed && !body.standing) quickHard += hb(8, 1, body, null);
             }
         }
         //(held ground of what does not move that something moved onto; held ground of what moves)
         for(int i : heldEmpty){
             if(partAt[i] != null) quickHard += heldCount[i];
-            else cover[i] = 1;
+            else{
+                touch(i);
+                cover[i] = 1;
+            }
         }
         for(Body body : movable) for(int[] r : body.holdWorld) for(int y = r[1]; y <= r[3]; y++) for(int x = r[0]; x <= r[2]; x++){
             if(!b.in(x, y)) continue;
             int i = b.idx(x, y);
             Body.Part o = partAt[i];
             if(o != null && o.body != body) quickHard += hb(7, 1, body, o.body);
-            else if(o == null) cover[i] = 1;
+            else if(o == null){
+                touch(i);
+                cover[i] = 1;
+            }
         }
         if(movableBridges){
             for(Body body : bodies) for(Body.Part p : body.parts) quickHard += bridgeTerm(p);
@@ -692,9 +752,13 @@ public final class Placer{
             }
         }
         for(Set<String> got : handed.values()) if(got.size() > 1) port += got.size() - 1;
-        for(int i = 0; i < n; i++){
-            float over = crowd[i] + cover[i] - 1f;
+        //(the crowding: what does not move, counted once; on the tiles written now, as they are now instead)
+        crowding = staticOver;
+        for(int k = 0; k < touchedN; k++){
+            int i = touched[k];
+            float over = crowd[i] + cover[i] - 1f, was = baseCover[i] - 1f;
             if(over > 0f) crowding += over;
+            if(was > 0f) crowding -= was;
         }
         last[0] = quickHard;
         last[1] = wire;
@@ -821,7 +885,11 @@ public final class Placer{
         float area = (float)(x1 - x0 + 1) * (y1 - y0 + 1);
         if(area <= 0) return;
         float each = len / area;
-        for(int y = y0; y <= y1; y++) for(int x = x0; x <= x1; x++) crowd[b.idx(x, y)] += each;
+        for(int y = y0; y <= y1; y++) for(int x = x0; x <= x1; x++){
+            int i = b.idx(x, y);
+            if(touchMark != null) touch(i);
+            crowd[i] += each;
+        }
     }
 
     int index(Body body, Places p){
@@ -970,7 +1038,7 @@ public final class Placer{
 
     /** Whether a part takes for good what a piece of a line hands it from its side toward dir: a line or a port of another thing, what swallows it. */
     boolean swallows(Body.Part p, Board.Piece from, int dir){
-        if(p.piece != null) return !from.res.equals(p.piece.res) && Board.pieceTakes(Body.fixed(p), dir, from, null);
+        if(p.piece != null) return p.piece.kind != Board.Kind.ljunction && !from.res.equals(p.piece.res) && Board.pieceTakes(Body.fixed(p), dir, from, null);
         if(Board.isPortCarrier(p)) return !from.res.equals(p.config) && Board.pieceTakes(Board.asPiece(p), dir, from, null);
         return b.swallows(p, from.res);
     }
