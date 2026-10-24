@@ -222,6 +222,14 @@ public final class Grow{
     final Map<Unit, Map<String, float[]>> stranded = new HashMap<>();
     /** Of each unit that stands, how much works now, its machines together (what their lines bring them, as measured). */
     final Map<Unit, Float> grounded = new HashMap<>();
+    /** Of each unit that stands, how much of it works now, its machines together (fed by its lines, as measured). */
+    final Map<Unit, Float> workingNow = new HashMap<>();
+    /**
+     * Whether what stands and works now goes on working, taking what it takes and drawing its power, till it is taken
+     * down (bp.inertia): a machine its lines feed works in the game whatever the plan would rather; the plan could
+     * have it idle and hand its water to something else, which no line did.
+     */
+    static final boolean INERTIA = Boolean.parseBoolean(System.getProperty("bp.inertia", "true"));
     /** Things the schedule has new makers of built in its second span: a machine of this step that takes one may wait for it. */
     final Set<String> soonMade = new HashSet<>();
     /**
@@ -347,6 +355,8 @@ public final class Grow{
                         for(var we : wired.entrySet()) alive = Math.min(alive, Math.min(1f, we.getValue() / p.takes(we.getKey())));
                     }
                     grounded.merge(u, alive, Float::sum);
+                    //(and how much works now: its lines bring it what it takes, as measured)
+                    workingNow.merge(u, Math.max(0f, Math.min(1f, fed)), Float::sum);
                 }
                 for(String r : outs){
                     boolean liquid = Vars.content.liquid(r) != null;
@@ -1019,6 +1029,17 @@ public final class Grow{
                 c.setCoefficient(v[t - 1], -1);
                 //(those taken down before this span go first among the dead: what is taken down in it works not anyway)
                 for(int tau = 1; tau < t; tau++) c.setCoefficient(down[tau], -1);
+            }
+            //(what works now goes on working till taken down: at least so much of it at work each span, those taken down
+            //apart; a shortfall, as when what fed it stops, at a great price)
+            float now = INERTIA && have > 0 ? Math.min(have, workingNow.getOrDefault(u, 0f)) : 0f;
+            if(now > 1e-3f) for(int t = 1; t <= T; t++){
+                MPConstraint c = solver.makeConstraint(now, inf);
+                c.setCoefficient(w[t], 1);
+                for(int tau = 1; tau <= t; tau++) c.setCoefficient(down[tau], 1);
+                MPVariable lack = solver.makeNumVar(0, now, "");
+                c.setCoefficient(lack, 1);
+                solver.objective().setCoefficient(lack, 10.0 * L[t]);
             }
             m.n.put(u, v);
             m.a.put(u, w);

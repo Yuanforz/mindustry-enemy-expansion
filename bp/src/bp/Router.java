@@ -1730,8 +1730,53 @@ public final class Router{
             pf = Math.min(pf * 1.3f, 50f);
         }
         rounds = Math.min(rounds, maxRounds);
-        return mend();
+        boolean clean = mend();
+        if(!clean && SETTLE) settle();
+        return clean;
     }
+
+    /** Whether a line still laid over another or leaking at the end is taken up, its takers not reached (bp.settle). */
+    static final boolean SETTLE = Boolean.parseBoolean(System.getProperty("bp.settle", "true"));
+
+    /**
+     * What is still wrong at the end, taken up a line at a time, the one with the most wrong first (and a line that ran on
+     * into one taken up): its takers not reached, so that the step's rules see it as a line not laid (between what stands:
+     * left for a later step; to or from a machine of the step: that machine left out and the rest laid again). Before, a
+     * leak blamed no machine, and a step that kept one was given up whole, every time: one run planned the same seven
+     * things for twenty minutes.
+     */
+    void settle(){
+        while(true){
+            count();
+            Map<Net, Integer> wrong = new HashMap<>();
+            for(int i = 0; i < at.length; i++) if(at[i].size() > 1) for(Piece q : at[i]) if(!q.fixed && byId.containsKey(q.net)) wrong.merge(byId.get(q.net), 1, Integer::sum);
+            for(Net net : nets) for(Piece q : net.pieces){
+                int l = leaks(q, partner(net, q));
+                if(l > 0) wrong.merge(net, l, Integer::sum);
+            }
+            //(a line that ran on into one taken up ends in nothing: taken up too, at once)
+            boolean broke = false;
+            for(Net net : nets) if(!settled.contains(net) && brokenJoins(net) > 0){
+                ripUp(net);
+                net.joins.clear();
+                net.unreached.addAll(net.to);
+                settled.add(net);
+                broke = true;
+            }
+            if(broke) continue;
+            if(wrong.isEmpty()) break;
+            Net worst = null;
+            for(var e : wrong.entrySet()) if(worst == null || e.getValue() > wrong.get(worst) || e.getValue().equals(wrong.get(worst)) && e.getKey().id < worst.id) worst = e.getKey();
+            ripUp(worst);
+            worst.joins.clear();
+            worst.unreached.addAll(worst.to);
+            if(worst.drain) worst.drained = false;
+            settled.add(worst);
+        }
+    }
+
+    /** The lines taken up at the end (settle). */
+    public final List<Net> settled = new ArrayList<>();
 
     /** Counts what is still wrong: tiles with two blocks, leaks, takers not reached; fills fought. */
     int count(){
