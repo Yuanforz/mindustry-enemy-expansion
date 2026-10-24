@@ -168,7 +168,8 @@ public final class Grow{
         Spec.Place core = g.prob.fixed.isEmpty() ? null : g.prob.fixed.get(0);
         int cx = core == null ? g.board.w / 2 : core.x(), cy = core == null ? g.board.h / 2 : core.y();
         int k = 0;
-        for(var e : (APART ? new Sites(g.board).findApart(ground, cx, cy, 6) : new Sites(g.board).find(ground, cx, cy, 6)).entrySet()) for(Sites.Site site : e.getValue()){
+        int keep = Integer.getInteger("bp.ways", 6);
+        for(var e : (APART ? new Sites(g.board).findApart(ground, cx, cy, keep) : new Sites(g.board).find(ground, cx, cy, keep)).entrySet()) for(Sites.Site site : e.getValue()){
             Unit u = new Unit();
             u.recipe = e.getKey();
             u.block = u.recipe.block;
@@ -227,6 +228,11 @@ public final class Grow{
      * hydrogen, an electrolyzer on its water) goes only once something from outside has set it going (bp.prime).
      */
     static final boolean PRIME = Boolean.parseBoolean(System.getProperty("bp.prime", "true"));
+    /** Of the above, the lag of a liquid's makers that take liquids (bp.primeLag), and what stands working as measured (bp.primeDead). */
+    /** Whether what stands draws its power as it stands, not as the plan would have it work (bp.powerBuilt). */
+    static final boolean POWER_BUILT = Boolean.parseBoolean(System.getProperty("bp.powerBuilt", "false"));
+    final Map<Unit, Float> deadOf = new HashMap<>();
+    static final boolean PRIME_LAG = PRIME && Boolean.parseBoolean(System.getProperty("bp.primeLag", "true")), PRIME_DEAD = PRIME && Boolean.parseBoolean(System.getProperty("bp.primeDead", "true"));
 
     void stranded(Board board){
         int w = board.w, h = board.h, n = w * h;
@@ -897,7 +903,8 @@ public final class Grow{
             }
             //(what stands works as its lines feed it now, as measured: of its machines that stand, those fed by nothing do
             //not work until taken down and built again, with lines of their own; new ones work in full)
-            float dead = PRIME && have > 0 && grounded.containsKey(u) ? have - Math.min(have, grounded.get(u)) : 0f;
+            float dead = PRIME_DEAD && have > 0 && grounded.containsKey(u) ? have - Math.min(have, grounded.get(u)) : 0f;
+            deadOf.put(u, dead);
             if(dead > 1e-3f) for(int t = 1; t <= T; t++){
                 MPConstraint c = solver.makeConstraint(-inf, -dead);
                 c.setCoefficient(w[t], 1);
@@ -932,9 +939,18 @@ public final class Grow{
                 time.setCoefficient(m.d.get(u)[t], u.seconds / st.buildSpeed);
             }
             for(MPVariable[] dg : m.dig.values()) time.setCoefficient(dg[t], 1);
-            //power
+            //power: made by what works; taken by what stands (a machine that has what it takes works, and draws its power,
+            //whatever the plan would have it do; one fed by nothing draws none, ConsumePower only as it works)
             MPConstraint power = solver.makeConstraint(0, inf);
-            for(Unit u : units) power.setCoefficient(m.a.get(u)[t], u.power);
+            double unfedDraw = 0.0;
+            for(Unit u : units){
+                if(u.power >= 0f || !POWER_BUILT) power.setCoefficient(m.a.get(u)[t], u.power);
+                else{
+                    power.setCoefficient(m.n.get(u)[t - 1], u.power);
+                    unfedDraw += u.power * deadOf.getOrDefault(u, 0f);
+                }
+            }
+            power.setBounds(unfedDraw, inf);
             //(the whole standing by the end of the span: no more than the least of every class's share standing)
             MPVariable done = solver.makeNumVar(0, 1, "done_" + t);
             for(var e : classes.entrySet()){
@@ -988,7 +1004,7 @@ public final class Grow{
                     lc.setCoefficient(m.n.get(u)[t - 1], sv[0] / sv[1]);
                     made.setCoefficient(lost, -1);
                 }
-                if(!item && PRIME){
+                if(!item && PRIME_LAG){
                     //(taken no faster than made by what takes no liquid, now, and by the rest the span before)
                     MPConstraint lag = solver.makeConstraint(-inf, 0, "prime_" + r + "_" + t);
                     double before = 0.0;
