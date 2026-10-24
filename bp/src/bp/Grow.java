@@ -1434,6 +1434,20 @@ public final class Grow{
             }
             line.cap = lineRate(i, g);
             line.load = load(i, runInto, new HashSet<>());
+            //(the makers whose things it carries, if all the lines into it carry its thing alone)
+            Set<Inst> feeding = new LinkedHashSet<>();
+            ArrayDeque<Inst> todo = new ArrayDeque<>(List.of(i));
+            boolean one = true;
+            while(!todo.isEmpty()){
+                Inst x = todo.poll();
+                if(!feeding.add(x)) continue;
+                for(Object[] f : x.flows) if(!res.equals(f[0])) one = false;
+                for(Inst y : runInto.getOrDefault(x.id, List.of())) if(y.tapOf.isEmpty() || !y.tapOf.contains(x.id)) todo.add(y);
+            }
+            if(one) for(Inst x : feeding) if(!x.flows.isEmpty()){
+                Body.Part m = partOf.get((long)(Integer)x.flows.get(0)[1] * 1000 + (Integer)x.flows.get(0)[2]);
+                if(m != null) line.feeders.add(m);
+            }
             e.getValue().line = line;
         }
         //(the final form's places not yet standing nor in this step: held, no line or block of the step on them)

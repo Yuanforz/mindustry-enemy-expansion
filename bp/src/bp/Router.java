@@ -73,6 +73,11 @@ public final class Router{
         /** Its maker (null: not known); whether it carries its maker's alone (no line runs on into it). */
         public Body.Part from;
         public boolean pure;
+        /**
+         * The makers whose things it carries (its own and those of the lines that run on into it), when all those lines
+         * carry the one thing it does: a new line of that thing from any of them may branch off it (else empty).
+         */
+        public final Set<Body.Part> feeders = new LinkedHashSet<>();
 
         public Standing(int id, String res){
             this.id = id;
@@ -751,6 +756,8 @@ public final class Router{
             if(o.line != null){
                 //(a line that stands, to this taker alone: what is handed it goes nowhere else)
                 if(!(coreBound(net) && o.line.coreBound() || o.res.equals(net.res) && o.line.onlyTo(sink))) continue;
+                //(not another thing into a line something branches off: the branch would take that too, a router hands on all)
+                if(!o.res.equals(net.res) && branched(o.line)) continue;
                 if(o.line.load + into(o.line, sink) + flowTo(net, sink) > o.line.cap + 1e-4f) continue;
                 return o;
             }
@@ -961,6 +968,8 @@ public final class Router{
         List<Object[]> stTaps = new ArrayList<>();
         if(TAPS && (net.cls == 0 || net.cls == 2) && sink != null) for(Piece f : standingOf(net.from)){
             if(!f.res.equals(net.res) || f.block == null) continue;
+            //(not off a line another thing runs on into now: the branch would take that too)
+            if(mixedNow(f.line)) continue;
             //(what it carries already and this line's besides, within what its slowest carrier carries)
             if(f.line.load + flowTo(net, sink) > f.line.cap + 1e-4f) continue;
             Kind tapKind = net.cls == 0 ? Kind.router : Kind.lrouter;
@@ -1279,6 +1288,27 @@ public final class Router{
         net.crossings.clear();
     }
 
+    /** Whether a line that stands has a piece turned to a router: now (a branch of this laying) or as it stands. */
+    boolean branched(Standing line){
+        for(Piece f : tapped.keySet()) if(f.line == line) return true;
+        Boolean was = branchedBefore.get(line);
+        if(was == null){
+            was = false;
+            for(List<Piece> on : at) for(Piece f : on) if(f.line == line && (f.kind == Kind.router || f.kind == Kind.lrouter)) was = true;
+            branchedBefore.put(line, was);
+        }
+        return was;
+    }
+
+    final Map<Standing, Boolean> branchedBefore = new IdentityHashMap<>();
+
+    /** Whether a line of another thing runs on into a line that stands, of this laying. */
+    boolean mixedNow(Standing line){
+        if(line == null) return false;
+        for(Net n : nets) for(Piece j : n.joins.values()) if(j.line == line && !n.res.equals(line.res)) return true;
+        return false;
+    }
+
     /** Pieces of lines that stand turned to routers, with what they were: {kind, block, turn, hands to}. */
     public final Map<Piece, Object[]> tapped = new IdentityHashMap<>();
     /** Conduits of lines that stand turned to junctions, with what they were: {kind, block, turn, hands to}. */
@@ -1322,7 +1352,12 @@ public final class Router{
         if(standingOf == null){
             standingOf = new IdentityHashMap<>();
             //(in the order of the tiles, so that the same ground gives the same search)
-            for(List<Piece> on : at) for(Piece f : on) if(f.fixed && f.line != null && f.line.pure && f.line.from != null && partOfPiece.containsKey(f)) standingOf.computeIfAbsent(f.line.from, k -> new ArrayList<>()).add(f);
+            for(List<Piece> on : at) for(Piece f : on){
+                if(!f.fixed || f.line == null || !partOfPiece.containsKey(f)) continue;
+                if(f.line.pure && f.line.from != null) standingOf.computeIfAbsent(f.line.from, k -> new ArrayList<>()).add(f);
+                //(a line others of its thing run on into carries theirs too: they may branch off it as well)
+                for(Body.Part m : f.line.feeders) if(m != f.line.from || !f.line.pure) standingOf.computeIfAbsent(m, k -> new ArrayList<>()).add(f);
+            }
         }
         return standingOf.getOrDefault(maker, List.of());
     }
